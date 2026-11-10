@@ -572,17 +572,18 @@ type Live struct {
 	// fdbMemo (#656): última boca REAL donde el FDB vio cada MAC (epoch ms).
 	// Los dispositivos callados (AV: TV, receptor, shield…) caducan su entrada
 	// FDB a los ~5 min sin hablar y "saltaban" del switch inferido al anchor
-	// del gateway entre ticks. La memo se usa SOLO como overlay de inferTopology
-	// (nunca para crear presencia/online) mientras la entrada sea fresca.
+	// del gateway entre ticks. Mientras la entrada sea fresca se lee en dos
+	// sitios: como overlay de inferTopology (overlayStickyFdb) y en el paso 5 de
+	// buildDevicesWithGraph, que mueve la atribución de un cliente cableado del
+	// gateway a la unidad donde la memo lo vio por última vez. Nunca crea
+	// presencia: el dispositivo ya debe estar online por sí mismo
+	// (wireless/FDB/ARP).
 	fdbMemo map[macaddr.MAC]fdbPortMemo
 
-	// uplinkPorts (#694): clasificación PERSISTENTE de puertos de subida por
-	// router (routerID → puertos que ALGUNA VEZ aprendieron una brMac de otro
-	// router). Sobrevive a los ticks donde la brMac del AP no está en el FDB
-	// del gateway y a los sondeos fallidos, de modo que el puerto gateway→AP
-	// siga tratándose como uplink y no como boca local (evita que el gateway
-	// pise la memo de un satélite y que el cliente salte al principal).
-	uplinkPorts map[string]map[string]bool
+	// portRoleMemo (#694): puertos raíz (subida) e interiores de bajada por
+	// router, conservados entre ticks mientras caducan las entradas FDB de las
+	// propias unidades.
+	portRoleMemo portRoleMemo
 
 	sfMu   sync.Mutex
 	sfCall *sfCall
@@ -662,7 +663,7 @@ func NewLive(cfg *config.Config, d *db.DB, initial []RouterConfig, pool *SSHPool
 		routerMacs:           map[string]macaddr.MAC{},
 		sshAuthFailAlerted:   map[string]bool{},
 		fdbMemo:              map[macaddr.MAC]fdbPortMemo{},
-		uplinkPorts:          map[string]map[string]bool{},
+		portRoleMemo:         portRoleMemo{},
 		portMon:              NewPortMonitor(cfg != nil && cfg.GhostPortEnabled),
 		suppression:          alerts.NewSuppressionGraph(),
 	}
@@ -3797,31 +3798,24 @@ func buildDiscoveryIfaces(p *routerPolled) []DiscoveryIface {
 	return out
 }
 
-// buildDevices: unión de leases + MACs vistas (wireless > FDB satélites >
+// buildDevicesWithGraph: unión de leases + MACs vistas (wireless > FDB satélites >
 // FDB gateway si no hay memoria) + device_attrib (index.js:396-460).
-func (l *Live) buildDevices(polled map[string]*routerPolled, wanPort string) []Device {
-	l.mu.Lock()
-	gw := l.gatewayCfg
-	l.mu.Unlock()
-	gwID := ""
-	if gw != nil {
-		gwID = gw.ID
-	}
-	devices, _ := l.buildDevicesWan(polled, gwID, wanPort)
+func (l *Live) buildDevicesWithGraph(polled map[string]*routerPolled, fg *fleetGraph, wanPort string) []Device {
+	devices, _ := l.buildDevicesWithGraphWan(polled, fg, fg.gatewayID, wanPort)
 	return devices
 }
 
-// buildDevicesWan es buildDevices y además devuelve wanSegment (#2183): las
-// MACs que el gateway aprendió en su boca WAN sin evidencia LAN, más el peer
-// de su ruta por defecto aunque no esté en esa boca (PPPoE). Casi ninguna
-// llega a ser un dispositivo (los vecinos del segmento van a wanIgnored y el
-// peer lo absorbe #1791), así que la purga del registro no puede
-// encontrarlas en la lista de dispositivos.
+// buildDevicesWithGraphWan es buildDevicesWithGraph y además devuelve
+// wanSegment (#2183): las MACs que el gateway aprendió en su boca WAN sin
+// evidencia LAN, más el peer de su ruta por defecto aunque no esté en esa boca
+// (PPPoE). Casi ninguna llega a ser un dispositivo (los vecinos del segmento
+// van a wanIgnored y el peer lo absorbe #1791), así que la purga del registro
+// no puede encontrarlas en la lista de dispositivos.
 //
 // gwID y wanPort los fija quien llama, a partir de la misma lectura del
 // gateway: si se leyera aquí otra vez, un SetRouters entre medias aplicaría
 // la boca WAN de un gateway al ARP de otro.
-func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort string) ([]Device, map[macaddr.MAC]bool) {
+func (l *Live) buildDevicesWithGraphWan(polled map[string]*routerPolled, fg *fleetGraph, gwID, wanPort string) ([]Device, map[macaddr.MAC]bool) {
 	leasesByMac := map[macaddr.MAC]DhcpLease{}
 	leaseRouter := map[macaddr.MAC]string{}
 	arpByMac := map[macaddr.MAC]string{}
@@ -4036,58 +4030,20 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 			}
 		}
 	}
-	// (2) FDB de satélites: pista solo de ESTE tick (no se guarda).
-	// REGLA DE RECONCILIACIÓN (issue #656): una MAC aprendida por un satélite
-	// en una boca que NO es su uplink (boca no-infra) es un cliente cableado
-	// directo de ESE satélite — el FDB la aprendió en un puerto físico suyo.
-	// Aunque el gateway también la vea en su FDB (porque el satélite está
-	// bridged al mismo segmento L2, como un dumb AP/bridge), la boca local
-	// del satélite es la evidencia más específica de dónde va el cable, así
-	// que se atribuye al satélite.
-	// El uplink queda excluido por infraPorts (boca donde se aprende una MAC
-	// de bridge de otro router = tránsito); aquí NO se cuenta.
-	// (3) FDB del gateway: solo las MACs que ningún satélite haya reclamado
-	// en una boca local, para no quedarse fuera si el gateway las ve en su
-	// propio FDB (misma LAN bridged).
-	// EXCEPCIÓN preservada: los routers agent-only (switches con agente
-	// propio) son la fuente más específica — sus dispositivos se conservan
-	// con RouterID del switch (esta ruta ya los trataba por separado).
-	// MACs de bridge de todos los routers sondeados: una boca de satélite
-	// que aprende una de ellas es un UPLINK (enlaza con otro equipo de red),
-	// y lo que aprende por ahí es el resto de la LAN en tránsito, no clientes
-	// locales. Sin esto, un switch agent-only (excepción de abajo) se
-	// atribuía toda la red vista por su uplink (#291).
-	brMacByRouter := map[macaddr.MAC]bool{}
-	for _, pr := range polled {
-		if pr.brMac.IsValid() {
-			brMacByRouter[pr.brMac] = true
-		}
-	}
-	for routerID, p := range polled {
-		if routerID == gwID {
+	// (2) y (3) Resolución del FDB cableado sobre el grafo de la flota (#656,
+	// #291): los puertos hoja ganan a los interiores, y un interior más profundo
+	// gana a uno menos profundo. Las reclamaciones interiores y las del gateway
+	// son evidencia débil y ceden ante las atribuciones wireless conocidas.
+	for mac, att := range resolveWiredFdb(polled, fg) {
+		if _, ok := seen[mac]; ok {
 			continue
 		}
-		infraPorts := l.uplinkPortsFor(routerID, p.fdb, brMacByRouter)
-		for mac, port := range p.fdb {
-			if infraPorts[port] {
-				continue // uplink: MACs en tránsito, no clientes de este equipo
-			}
-			if _, ok := seen[mac]; !ok {
-				seen[mac] = seenInfo{routerID: routerID, band: "cable"}
+		if !att.isLeaf || att.routerID == gwID {
+			if _, ok := known[mac]; ok {
+				continue
 			}
 		}
-	}
-	// (3) FDB del gateway: solo si no hay memoria (mala pista; no se guarda)
-	if gwID != "" {
-		if gwPolled := polled[gwID]; gwPolled != nil {
-			for mac := range gwPolled.fdb {
-				if _, ok := seen[mac]; !ok {
-					if _, ok := known[mac]; !ok {
-						seen[mac] = seenInfo{routerID: gwID, band: "cable"}
-					}
-				}
-			}
-		}
+		seen[mac] = seenInfo{routerID: att.routerID, band: "cable"}
 	}
 	// (4) ARP (#507): hosts cableados con IP estática visibles SOLO en la
 	// tabla ARP del router (ni wireless, ni FDB, ni lease, ni device_attrib).
@@ -4193,10 +4149,6 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 	l.mu.Unlock()
 	if gwID != "" && len(memo) > 0 {
 		gwPolled := polled[gwID]
-		gwInfraPorts := map[string]bool{}
-		if gwPolled != nil {
-			gwInfraPorts = l.uplinkPortsFor(gwID, gwPolled.fdb, brMacByRouter)
-		}
 		nowMs := time.Now().UnixMilli()
 		ttlMs := fdbStickyTTL.Milliseconds()
 		for mac, s := range seen {
@@ -4210,7 +4162,7 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 			// El gateway solo lo ve por el uplink (o no lo ve en su FDB): el
 			// cable está en el satélite según la última observación local.
 			if gwPolled != nil {
-				if port, inFdb := gwPolled.fdb[mac]; inFdb && !gwInfraPorts[port] {
+				if port, inFdb := gwPolled.fdb[mac]; inFdb && !fg.isInteriorPort(gwID, port) {
 					continue // boca local del gateway: evidencia fresca, no tocar
 				}
 			}
@@ -4865,31 +4817,14 @@ func (l *Live) buildOverview(ctx context.Context) (*Overview, error) {
 		l.mu.Unlock()
 		routerList = append(routerList, router)
 	}
-	// #656/#678: refrescar la memo sticky ANTES de buildDevices (su paso 5 la
-	// usa para atribuir al satélite los dispositivos callados) y usarla también
-	// como overlay de inferTopology (puerto/attachTo).
-	nowMs := time.Now().UnixMilli()
-	memo := l.updateFdbMemo(polled, nowMs)
-	// #1485: buildDevices necesita la boca WAN (ARP del primer salto del
-	// enlace); sale del estado WAN del propio sondeo del gateway.
-	wanPort := ""
-	if gw != nil {
-		if gp := polled[gw.ID]; gp != nil {
-			wanPort = gp.wanInfo.Port
-		}
-	}
-	gwID := ""
-	if gw != nil {
-		gwID = gw.ID
-	}
-	devices, wanSegment := l.buildDevicesWan(polled, gwID, wanPort)
-	stickyPolled := overlayStickyFdb(polled, memo, nowMs)
-	devices, distNodes := inferTopology(stickyPolled, devices)
-	// Capa 2 manual (issue #142): overrides de topología tras el autodiscover.
-	// Sin BD (tests/demo) → no-op.
 	var overrides []TopologyOverride
 	if l.db != nil {
 		overrides = loadTopologyOverrides(l.db)
+	}
+	fg, devices, distNodes, wanSegment := l.attributeDevicesWan(polled, routerList, overrides, time.Now().UnixMilli())
+	// Capa 2 manual (issue #142): overrides de topología tras el autodiscover.
+	// Sin BD (tests/demo) → no-op.
+	if l.db != nil {
 		devices, distNodes = applyTopologyOverrides(routerList, devices, distNodes, overrides)
 	}
 	// Capa 3 PVE (#561): si hay cluster Proxmox configurado, el inventario
@@ -4996,43 +4931,13 @@ func (l *Live) buildOverview(ctx context.Context) (*Overview, error) {
 	l.fillSparklineFromPorts(routerList)
 	adguard := l.pollAdGuard(ctx)
 	wireguard := l.pollWireGuard(devices)
-	// MACs registradas (routers.mac): permiten a fleetFdbEvidence anclar
-	// unidades sin bridge MAC utilizable (DSM: docker0 en bridgeDetect, sin
-	// lldpd) desde el FDB del switch que aprende su NIC (p. ej. NAS en xg4).
-	registeredMacs := make(map[string]macaddr.MAC, len(routerList))
-	for _, r := range routerList {
-		if r.MAC.IsValid() {
-			registeredMacs[r.ID] = r.MAC
-		}
+	gwID := ""
+	if gw != nil {
+		gwID = gw.ID
 	}
-	// #1279: uplinks resueltos por LLDP (regla de puerto raíz); mandan sobre
-	// la evidencia FDB/device en BuildTopoSemantics. Se calcula ANTES que la
-	// FDB para sembrar profundidades: un switch core cuya MAC de chasis nadie
-	// aprende no tiene candidato padre por FDB y, sin semilla, su profundidad
-	// queda desconocida y las unidades cableadas en él caen al gateway.
-	lldpEvidence := fleetLldpEvidence(polled, gwID)
-	seedDepth := map[string]int{}
-	{
-		seedDepth[gwID] = 0
-		for pass := 0; pass <= len(lldpEvidence); pass++ {
-			changed := false
-			for child, ev := range lldpEvidence {
-				if d, ok := seedDepth[ev.parent]; ok {
-					if _, has := seedDepth[child]; !has || seedDepth[child] > d+1 {
-						seedDepth[child] = d + 1
-						changed = true
-					}
-				}
-			}
-			if !changed {
-				break
-			}
-		}
-	}
-	fdbEvidence := fleetFdbEvidence(polled, gwID, registeredMacs, seedDepth)
-	// #1321: los attaches manuales (#142) cuya MAC es la bridge de una unidad
-	// de flota fijan su uplink por encima de toda inferencia.
-	overrideUplinks := fleetOverrideEvidence(overrides, routerList)
+	lldpEvidence := fg.lldpEv
+	fdbEvidence := fg.fdbEv
+	overrideUplinks := fg.overrideEv
 	wan := l.defaultWan(gw)
 	for _, r := range routerList {
 		if r.ID == gwID && r.Status == "offline" {
@@ -5452,7 +5357,7 @@ func (l *Live) GetRouterDetail(ctx context.Context, id string) (*RouterDetail, e
 		return out
 	}
 	clients := []Device{}
-	detDevices, _ := inferTopology(polledAll, l.buildDevices(polledAll, ""))
+	_, detDevices, _ := l.attributeDevices(polledAll, nil, nil, time.Now().UnixMilli())
 	// #954: first/last seen también en los clientes del detalle del router.
 	// #1818: mismo gate de permanencia que el overview.
 	detDevices = l.settleTransient(detDevices, time.Now().UnixMilli())
@@ -5608,6 +5513,37 @@ func (l *Live) latencySpark24h(routerID string) []float64 {
 	return out
 }
 
+// attributeDevices atribuye los dispositivos de un sondeo: árbol de flota,
+// memo sticky de la FDB, devices y topología inferida. El overview, el detalle
+// de router y /api/devices pasan por aquí para atribuir igual.
+//
+//   - #656/#678: la memo sticky se refresca ANTES de buildDevices (su paso 5
+//     la usa para atribuir al satélite los dispositivos callados) y sirve
+//     también de overlay de inferTopology (puerto/attachTo).
+//   - #1485: buildDevices necesita la boca WAN del gateway (ARP del primer
+//     salto del enlace); sin ella la ONT bridged sale como cliente cableado.
+//
+// routerList y overrides pueden ser nil: buildFleetGraph los deriva del sondeo
+// y de la BD.
+func (l *Live) attributeDevices(polled map[string]*routerPolled, routerList []Router, overrides []TopologyOverride, nowMs int64) (*fleetGraph, []Device, []DistributionNode) {
+	fg, devices, dists, _ := l.attributeDevicesWan(polled, routerList, overrides, nowMs)
+	return fg, devices, dists
+}
+
+// attributeDevicesWan es attributeDevices y además devuelve el conjunto
+// wanSegment (#2183) para que buildOverview purgue esas MACs del registro.
+func (l *Live) attributeDevicesWan(polled map[string]*routerPolled, routerList []Router, overrides []TopologyOverride, nowMs int64) (*fleetGraph, []Device, []DistributionNode, map[macaddr.MAC]bool) {
+	fg := l.buildFleetGraph(polled, routerList, overrides, nowMs)
+	memo := l.updateFdbMemoWithGraph(polled, fg, nowMs)
+	wanPort := ""
+	if gp := polled[fg.gatewayID]; gp != nil {
+		wanPort = gp.wanInfo.Port
+	}
+	devices, wanSegment := l.buildDevicesWithGraphWan(polled, fg, fg.gatewayID, wanPort)
+	devices, dists := inferTopologyWithGraph(overlayStickyFdb(polled, memo, nowMs), devices, fg)
+	return fg, devices, dists, wanSegment
+}
+
 // attributedDevices builds the device list with everything that decides who
 // a device belongs to and whether it is online: inference over the sticky
 // FDB overlay, then the Proxmox and UniFi seals. The seals are not optional
@@ -5617,33 +5553,9 @@ func (l *Live) attributedDevices() []Device {
 	l.mu.Lock()
 	polled := cloneLastPolled(l.lastPolled)
 	l.mu.Unlock()
-	// #656/#678: memo sticky fresca ANTES de buildDevices (atribución) y como
-	// overlay de inferTopology (paridad con el overview), ANTES del sellado PVE
-	// (que sobreescribe attachTo con ground truth del cluster).
-	detailNowMs := time.Now().UnixMilli()
-	detailMemo := l.updateFdbMemo(polled, detailNowMs)
-	// #1485 también en el detalle: sin la boca WAN, el bloque de ARP WAN-side
-	// no sella WanSide y /api/devices discrepa del overview (la ONT bridged
-	// vuelve como cliente cableado del gateway y el mapa pierde el chip del
-	// peer WAN). Misma resolución que en buildOverview.
-	detailWanPort := ""
-	l.mu.Lock()
-	gwCfg := l.gatewayCfg
-	l.mu.Unlock()
-	if gwCfg != nil {
-		if gp := polled[gwCfg.ID]; gp != nil {
-			detailWanPort = gp.wanInfo.Port
-		}
-	}
-	detailGwID := ""
-	if gwCfg != nil {
-		detailGwID = gwCfg.ID
-	}
-	detailDevices, _ := l.buildDevicesWan(polled, detailGwID, detailWanPort)
-	devices, _ := inferTopology(
-		overlayStickyFdb(polled, detailMemo, detailNowMs),
-		detailDevices,
-	)
+	// #656/#678: misma atribución que el overview, ANTES del sellado PVE (que
+	// sobreescribe attachTo con ground truth del cluster).
+	_, devices, _ := l.attributeDevices(polled, nil, nil, time.Now().UnixMilli())
 	// #1292: lápidas fuera de la lista del detalle (la fuente viva puede
 	// seguir emitiendo la MAC borrada).
 	devices = l.filterTombstoned(devices)

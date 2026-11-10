@@ -111,7 +111,7 @@ func TestUpdateFdbMemoDeterministicWinner(t *testing.T) {
 	apMAC := macaddr.MustParse("AA:AA:AA:AA:AA:AA")
 	cliMAC := macaddr.MustParse("44:44:44:44:44:44")
 	// Clasificación persistente: lan4 del gateway es el uplink hacia el AP.
-	l.uplinkPorts["gateway"] = map[string]bool{"lan4": true}
+	l.portRoleMemo[routerPort{"gateway", "lan4"}] = rememberedRole{roleDown, now}
 	polled := map[string]*routerPolled{
 		"gateway": {cfg: RouterConfig{ID: "gateway", IsGateway: true}, brMac: gwMAC,
 			fdb: map[macaddr.MAC]string{gwMAC: "lan1", cliMAC: "lan4"}},
