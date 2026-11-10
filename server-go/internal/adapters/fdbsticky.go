@@ -6,14 +6,17 @@
 // "saltaban" del switch inferido donde están cableados físicamente.
 //
 // Solución: recordar la última boca REAL donde se vio cada MAC (fdbMemo, con
-// TTL) y usar ese recuerdo como OVERLAY de inferTopology, SOLO para MACs que
-// el FDB actual ya no tiene. La memo nunca crea presencia: si el dispositivo
-// no está online por sí mismo (wireless/FDB/ARP), no se dibuja. El FDB real
+// TTL). La memo se usa como OVERLAY de inferTopology, SOLO para MACs que el
+// FDB actual ya no tiene, y en el paso 5 de buildDevicesWithGraph para corregir
+// la atribución de los clientes cableados que el gateway solo ve por un uplink
+// (#678). La memo nunca crea presencia: si el dispositivo no está online
+// por sí mismo (wireless/FDB/ARP), no se dibuja. El FDB real
 // siempre manda sobre el recuerdo.
 package adapters
 
 import (
 	"maps"
+	"strings"
 	"time"
 )
 
@@ -27,67 +30,107 @@ type fdbPortMemo struct {
 	routerID string
 	port     string
 	ts       int64 // epoch ms
+	leaf     bool  // true si se aprendió en un puerto hoja y no en un enlace interior
 }
 
-// uplinkPortsLocked devuelve los puertos de un router que son uplinks: la unión
-// de los persistidos (que ALGUNA VEZ aprendieron una brMac de otro router) y los
-// detectados en el FDB de este tick. Los detectados se graban en el set
-// persistente para sobrevivir a ticks sin la brMac y a sondeos fallidos (#694).
-// Asume que l.mu está tomado.
-func (l *Live) uplinkPortsLocked(routerID string, fdb map[string]string, brMacs map[string]bool) map[string]bool {
-	if l.uplinkPorts == nil {
-		l.uplinkPorts = map[string]map[string]bool{}
+type fdbAttachment struct {
+	routerID string
+	port     string
+	isLeaf   bool
+	depth    int
+}
+
+// betterAttachment ordena los candidatos de anclaje FDB de una misma MAC de
+// cliente: un puerto hoja gana a uno interior de bajada; entre interiores gana
+// la unidad más profunda; entre hojas, un satélite gana al gateway.
+func betterAttachment(cand, cur fdbAttachment, gatewayID string) bool {
+	if cand.isLeaf != cur.isLeaf {
+		return cand.isLeaf
 	}
-	memo := l.uplinkPorts[routerID]
-	if memo == nil {
-		memo = map[string]bool{}
-		l.uplinkPorts[routerID] = memo
+	if !cand.isLeaf && cand.depth != cur.depth {
+		return cand.depth > cur.depth
 	}
-	ports := make(map[string]bool, len(memo)+2)
-	for p := range memo {
-		ports[p] = true
+	if (cand.routerID == gatewayID) != (cur.routerID == gatewayID) {
+		return cand.routerID != gatewayID
 	}
-	for mac, port := range fdb {
-		if brMacs[mac] {
-			ports[port] = true
-			memo[port] = true
+	if cand.depth != cur.depth {
+		return cand.depth > cur.depth
+	}
+	return cand.routerID < cur.routerID
+}
+
+// resolveWiredFdb resuelve cada MAC de cliente vista este tick en el FDB de
+// alguna unidad a un único anclaje ganador (routerID, puerto) usando el árbol
+// de conexiones de la flota.
+func resolveWiredFdb(polled map[string]*routerPolled, fg *fleetGraph) map[string]fdbAttachment {
+	out := map[string]fdbAttachment{}
+
+	// Un descendiente con fdb == nil no puede descontar sus propios clientes
+	// hoja, así que se bloquean los residuos interiores en todo puerto por
+	// encima de él.
+	blocked := map[string]map[string]bool{}
+	for v := range fg.parent {
+		if p := polled[v]; p != nil && p.fdb != nil {
+			continue
+		}
+		for cur, step := v, 0; step <= len(fg.parent); step++ {
+			ev, ok := fg.parent[cur]
+			if !ok || ev.parent == "" || ev.parent == cur {
+				break
+			}
+			if ev.port != "" {
+				if blocked[ev.parent] == nil {
+					blocked[ev.parent] = map[string]bool{}
+				}
+				blocked[ev.parent][ev.port] = true
+			}
+			cur = ev.parent
 		}
 	}
-	return ports
+
+	for routerID, p := range polled {
+		if p == nil {
+			continue
+		}
+		d := fg.depth[routerID]
+		for mac, port := range p.fdb {
+			role := fg.roles.role(routerID, port)
+			if port == "" || port == "wan" || role == roleRoot {
+				continue
+			}
+			if fg.ownerOf[strings.ToUpper(mac)] != "" {
+				continue
+			}
+			isLeaf := role != roleDown
+			if !isLeaf && blocked[routerID][port] {
+				continue
+			}
+			cand := fdbAttachment{
+				routerID: routerID,
+				port:     port,
+				isLeaf:   isLeaf,
+				depth:    d,
+			}
+			if cur, exists := out[mac]; !exists || betterAttachment(cand, cur, fg.gatewayID) {
+				out[mac] = cand
+			}
+		}
+	}
+	return out
 }
 
-// uplinkPortsFor es la variante de uplinkPortsLocked para callers sin l.mu.
-func (l *Live) uplinkPortsFor(routerID string, fdb map[string]string, brMacs map[string]bool) map[string]bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.uplinkPortsLocked(routerID, fdb, brMacs)
-}
-
-// updateFdbMemo refresca la memo con el FDB real de este tick y poda las
-// entradas caducadas. Devuelve el snapshot de la memo (para el overlay).
-//
-// Higiene (#678): solo se memorizan observaciones en bocas LOCALES (las que no
-// aprenden la MAC de bridge de otro router = no son uplinks). Así la memo
-// significa "dónde está enchufado el cable" y no se contamina con el tránsito
-// que ve el gateway por su uplink (que si no pisaba la observación local del AP
-// y hacía que un cliente del AP pareciera del router principal).
-//
-// #694: la clasificación de uplink usa el set PERSISTENTE (uplinkPortsLocked),
-// no solo las brMacs presentes en este tick. Así el puerto gateway→AP sigue
-// siendo uplink aunque la brMac del AP no esté en el FDB del gateway ese tick,
-// y el gateway deja de pisar la observación local del satélite (el ganador deja
-// de depender del orden aleatorio de iteración del mapa).
-func (l *Live) updateFdbMemo(polled map[string]*routerPolled, nowMs int64) map[string]fdbPortMemo {
+// updateFdbMemoWithGraph refresca la memo sticky del FDB con los anclajes
+// resueltos en este tick y poda las entradas caducadas (#656, #678, #694).
+func (l *Live) updateFdbMemoWithGraph(polled map[string]*routerPolled, fg *fleetGraph, nowMs int64) map[string]fdbPortMemo {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.fdbMemo == nil {
 		l.fdbMemo = map[string]fdbPortMemo{}
 	}
-	brMacs := map[string]bool{}
 	online := map[string]bool{}
 	for _, p := range polled {
-		if p.brMac != "" {
-			brMacs[p.brMac] = true
+		if p == nil {
+			continue
 		}
 		for mac := range p.arp {
 			online[mac] = true
@@ -98,16 +141,20 @@ func (l *Live) updateFdbMemo(polled map[string]*routerPolled, nowMs int64) map[s
 			}
 		}
 	}
-	for routerID, p := range polled {
-		infraPorts := l.uplinkPortsLocked(routerID, p.fdb, brMacs)
-		for mac, port := range p.fdb {
-			if infraPorts[port] {
-				continue // tránsito por el uplink: no es dónde va el cable
+	ttlMs := fdbStickyTTL.Milliseconds()
+	// Una memo hoja vigente no se pisa con un residuo interior cuando un cliente
+	// callado caduca en su puerto hoja antes de que el switch de arriba lo olvide.
+	for mac, att := range resolveWiredFdb(polled, fg) {
+		prev, exists := l.fdbMemo[mac]
+		if !exists || nowMs-prev.ts > ttlMs || att.isLeaf || !prev.leaf {
+			l.fdbMemo[mac] = fdbPortMemo{
+				routerID: att.routerID,
+				port:     att.port,
+				ts:       nowMs,
+				leaf:     att.isLeaf,
 			}
-			l.fdbMemo[mac] = fdbPortMemo{routerID: routerID, port: port, ts: nowMs}
 		}
 	}
-	ttlMs := fdbStickyTTL.Milliseconds()
 	for mac, m := range l.fdbMemo {
 		if nowMs-m.ts > ttlMs {
 			if online[mac] {

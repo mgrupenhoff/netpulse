@@ -85,13 +85,17 @@ func fdbPortOf(fdb map[string]string, mac string) (string, bool) {
 }
 
 // keptMacsForPort: MACs del puerto `port` que cuentan como clientes reales
-// del router (excluye las bridge-MACs de routers y los clientes de OTROS
+// del router (excluye las MACs de identidad de la flota y los clientes de OTROS
 // routers: los clientes wifi de un AP aparecen en el FDB del gateway por el
-// puerto del uplink).
-func keptMacsForPort(portMACs []string, routerID string, byMAC map[string]int, devices []Device, routerMACs map[string]bool) []string {
+// puerto del uplink). Con requireDevice=true (puertos interiores de bajada),
+// una MAC sin Device atribuido al router no cuenta: ese puerto ve tránsito de
+// todo el subárbol aguas abajo (MACs bloqueadas, filtradas o de infraestructura)
+// y no debe inventar un switch inferido vacío.
+func keptMacsForPort(portMACs []string, routerID string, byMAC map[string]int, devices []Device, routerMACs map[string]bool, requireDevice bool) []string {
 	kept := make([]string, 0, len(portMACs))
+	seenDev := map[int]bool{}
 	for _, mac := range portMACs {
-		if routerMACs[mac] {
+		if routerMACs[strings.ToUpper(mac)] {
 			continue
 		}
 		if idx, ok := byMAC[mac]; ok {
@@ -102,6 +106,12 @@ func keptMacsForPort(portMACs []string, routerID string, byMAC map[string]int, d
 			if d.Band != "cable" && d.Band != "—" {
 				continue
 			}
+			if seenDev[idx] {
+				continue
+			}
+			seenDev[idx] = true
+		} else if requireDevice {
+			continue
 		}
 		kept = append(kept, mac)
 	}
@@ -117,7 +127,7 @@ func keptMacsForPort(portMACs []string, routerID string, byMAC map[string]int, d
 func leafSwitchClients(portMACs []string, byMAC map[string]int, devices []Device, routerMACs map[string]bool) []string {
 	kept := make([]string, 0, len(portMACs))
 	for _, mac := range portMACs {
-		if routerMACs[mac] {
+		if routerMACs[strings.ToUpper(mac)] {
 			continue
 		}
 		if idx, ok := byMAC[mac]; ok {
@@ -204,7 +214,7 @@ func inferLldpLinks(polled map[string]*routerPolled, devices []Device, byMAC map
 			if handled[routerID][nb.Port] {
 				continue
 			}
-			kept := keptMacsForPort(byPort[nb.Port], routerID, byMAC, devices, routerMACs)
+			kept := keptMacsForPort(byPort[nb.Port], routerID, byMAC, devices, routerMACs, false)
 			if len(kept) == 0 {
 				continue
 			}
@@ -319,44 +329,11 @@ func claimSwitchFdbClients(polled map[string]*routerPolled, devices []Device, di
 	}
 	sort.Strings(ids)
 
-	// Uplinks por precedencia (override > lldp > fdb) y profundidad desde el
-	// gateway para el desempate entre switches.
-	up := map[string]topoParent{}
-	for rid, ev := range fdbEv {
-		if rid != gatewayID {
-			up[rid] = ev
-		}
-	}
-	for rid, ev := range lldpEv {
-		if rid != gatewayID {
-			up[rid] = ev // el LLDP pisa la FDB (#1279)
-		}
-	}
-	for rid, ev := range overrideEv {
-		if rid != gatewayID && ev.parent != rid {
-			up[rid] = ev // el override manual lo pisa todo (#1321)
-		}
-	}
-	depth := map[string]int{gatewayID: 0}
-	for iter := 0; iter <= len(ids); iter++ {
-		changed := false
-		for _, rid := range ids {
-			if rid == gatewayID {
-				continue
-			}
-			ev, ok := up[rid]
-			if !ok {
-				continue
-			}
-			if d, seen := depth[ev.parent]; seen && depth[rid] < d+1 {
-				depth[rid] = d + 1
-				changed = true
-			}
-		}
-		if !changed {
-			break
-		}
-	}
+	// Profundidad desde el gateway según el uplink elegido (override > lldp >
+	// fdb) para el desempate entre switches. Un switch sin camino al gateway
+	// (sin evidencia, cadena cortada o ciclo) no tiene profundidad: cuenta 0 y
+	// pierde frente a cualquiera anclado.
+	depth := uplinkDepths(gatewayID, ids, mergeUplinks(gatewayID, fdbEv, lldpEv, overrideEv))
 
 	// Reclamos por MAC: el switch más profundo gana.
 	type swClaim struct {
@@ -440,19 +417,42 @@ func containsMAC(macs []string, mac string) bool {
 	return false
 }
 
-// inferTopology enriquece devices con Port/AttachTo e infiere los
+// inferTopologyWithGraph enriquece devices con Port/AttachTo e infiere los
 // DistributionNode del FDB sondeado. `polled` lleva fdb (MAC→puerto, ya
 // filtrado a lanN/wan por parseBridgeFdb) y brMac por router.
-func inferTopology(polled map[string]*routerPolled, devices []Device) ([]Device, []DistributionNode) {
+// Se saltan los puertos raíz de fg, y una unidad no gateway solo puede inferir
+// un switch en un puerto que fg clasifica como de bajada. Con un &fleetGraph{}
+// vacío no se salta nada y solo el gateway infiere switches (el comportamiento
+// previo al grafo).
+func inferTopologyWithGraph(polled map[string]*routerPolled, devices []Device, fg *fleetGraph) ([]Device, []DistributionNode) {
 	byMAC := make(map[string]int, len(devices))
 	for i, d := range devices {
 		byMAC[d.MAC] = i
+		// #1151: las MACs enlazadas fusionadas en un canónico siguen
+		// apareciendo en el FDB; resolverlas aquí evita contarlas como
+		// clientes desconocidos del puerto de tránsito.
+		for _, alias := range d.AliasMacs {
+			if _, exists := byMAC[alias]; !exists {
+				byMAC[alias] = i
+			}
+		}
 	}
 	routerMACs := map[string]bool{}
 	for _, p := range polled {
 		if p.brMac != "" {
-			routerMACs[p.brMac] = true
+			routerMACs[strings.ToUpper(p.brMac)] = true
 		}
+		// #1765: las demás interfaces propias de cada unidad (p. ej. eth0 del
+		// AP) tampoco son clientes, aunque un vecino las aprenda en su FDB.
+		for _, mac := range p.selfMacs {
+			if m := strings.ToUpper(strings.TrimSpace(mac)); m != "" {
+				routerMACs[m] = true
+			}
+		}
+	}
+	// Las claves de ownerOf ya vienen normalizadas (setOwner en buildFleetGraph).
+	for mac := range fg.ownerOf {
+		routerMACs[mac] = true
 	}
 
 	var dists []DistributionNode
@@ -481,10 +481,13 @@ func inferTopology(polled map[string]*routerPolled, devices []Device) ([]Device,
 		ports := slices.Sorted(maps.Keys(byPort))
 
 		for _, port := range ports {
+			if fg.isRootPort(routerID, port) {
+				continue
+			}
 			if lldpHandled[routerID][port] {
 				continue
 			}
-			kept := keptMacsForPort(byPort[port], routerID, byMAC, devices, routerMACs)
+			kept := keptMacsForPort(byPort[port], routerID, byMAC, devices, routerMACs, fg.isDownPort(routerID, port))
 			if len(kept) == 0 {
 				continue
 			}
@@ -538,7 +541,7 @@ func inferTopology(polled map[string]*routerPolled, devices []Device) ([]Device,
 			// LLDP-first (inferLldpLinks); este puerto solo llega aquí sin
 			// evidencia LLDP, así que sigue el flujo FDB (hipervisor ya
 			// descartado arriba).
-			if routerID != gatewayID && !polled[routerID].cfg.AgentOnly {
+			if routerID != gatewayID && !polled[routerID].cfg.AgentOnly && !fg.canInferSwitch(routerID, port) {
 				// AP con puerto multi-MAC sin evidencia de hipervisor: es casi
 				// seguro su uplink (aprende las MACs de toda la LAN). No se
 				// afirma switch local ni se anota puerto: los clientes quedan

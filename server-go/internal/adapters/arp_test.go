@@ -371,3 +371,30 @@ func TestBuildDevicesAbsorbsSwitchMgmtMac(t *testing.T) {
 		t.Fatalf("devices: %+v, want solo el cliente normal", devs)
 	}
 }
+
+// #1485 en las tres vías: attributeDevices saca la boca WAN del sondeo del
+// gateway. GetRouterDetail pasaba "" y la ONT bridged salía en los clientes
+// del gateway sin WanSide; el overview y /api/devices ya la pasaban.
+func TestAttributeDevicesWanSideArp(t *testing.T) {
+	l := NewLive(nil, nil, nil, nil)
+	cfg := RouterConfig{ID: "gw", Name: "Gateway", IsGateway: true}
+	l.gatewayCfg = &cfg
+	const ont = "C0:49:43:A3:D1:34"
+	p := &routerPolled{
+		cfg:     cfg,
+		arp:     map[string]string{ont: "192.168.1.1"},
+		arpDevs: map[string]string{ont: "eth2"},
+	}
+	p.wanInfo.Port = "eth2"
+
+	_, devs, _ := l.attributeDevices(map[string]*routerPolled{"gw": p}, nil, nil, 1000)
+	for _, d := range devs {
+		if d.MAC == ont {
+			if !d.WanSide {
+				t.Fatalf("ONT: %+v, esperaba WanSide (ARP en la boca WAN del gateway)", d)
+			}
+			return
+		}
+	}
+	t.Fatalf("la ONT no aparece en devices: %+v", devs)
+}
