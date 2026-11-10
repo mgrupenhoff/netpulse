@@ -99,7 +99,7 @@ func TestUpdateFdbMemoDeterministicWinner(t *testing.T) {
 	l := NewLive(nil, nil, []RouterConfig{{ID: "gateway", Name: "GW", IsGateway: true}}, nil)
 	now := int64(1_700_000_000_000)
 	// Clasificación persistente: lan4 del gateway es el uplink hacia el AP.
-	l.uplinkPorts["gateway"] = map[string]bool{"lan4": true}
+	l.portRoleMemo[routerPort{"gateway", "lan4"}] = rememberedRole{roleDown, now}
 	polled := map[string]*routerPolled{
 		"gateway": {cfg: RouterConfig{ID: "gateway", IsGateway: true}, brMac: "GG:GG:GG:GG:GG:GG",
 			fdb: map[string]string{"GG:GG:GG:GG:GG:GG": "lan1", "44:44:44:44:44:44": "lan4"}},
