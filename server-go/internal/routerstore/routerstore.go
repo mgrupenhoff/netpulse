@@ -28,7 +28,7 @@ const probeTimeout = 4 * time.Second
 // ListRouters devuelve la tabla routers ordenada is_gateway DESC,
 // created_at ASC, con is_gateway como booleano.
 func ListRouters(db *sql.DB) []adapters.RouterConfig {
-	rows, err := db.Query("SELECT id, name, host, type, is_gateway, agent_only, firmware_target, created_at, snmp_enabled, snmp_community, snmp_port, snmp_poll_interval, agent_interval, ssh_port, temp_threshold, console_polling, disabled, inventory_mode, snmp_version, snmp_v3_user, snmp_v3_security_level, snmp_v3_auth_proto, snmp_v3_auth_pass, snmp_v3_priv_proto, snmp_v3_priv_pass FROM routers ORDER BY is_gateway DESC, created_at ASC")
+	rows, err := db.Query("SELECT id, name, host, type, is_gateway, agent_only, firmware_target, created_at, snmp_enabled, snmp_community, snmp_port, snmp_poll_interval, agent_interval, ssh_port, temp_threshold, console_polling, disabled, inventory_mode, discovery_overrides, snmp_version, snmp_v3_user, snmp_v3_security_level, snmp_v3_auth_proto, snmp_v3_auth_pass, snmp_v3_priv_proto, snmp_v3_priv_pass FROM routers ORDER BY is_gateway DESC, created_at ASC")
 	if err != nil {
 		return []adapters.RouterConfig{}
 	}
@@ -37,9 +37,9 @@ func ListRouters(db *sql.DB) []adapters.RouterConfig {
 	for rows.Next() {
 		var r adapters.RouterConfig
 		var gw, ao, snmpEn, snmpPort, snmpInterval, agentInterval, sshPort, consolePoll, disabled int
-		var name, ft, snmpComm, mode sql.NullString
+		var name, ft, snmpComm, mode, rawOverrides sql.NullString
 		var tt sql.NullInt64
-		if err := rows.Scan(&r.ID, &name, &r.Host, &r.Type, &gw, &ao, &ft, &r.CreatedAt, &snmpEn, &snmpComm, &snmpPort, &snmpInterval, &agentInterval, &sshPort, &tt, &consolePoll, &disabled, &mode,
+		if err := rows.Scan(&r.ID, &name, &r.Host, &r.Type, &gw, &ao, &ft, &r.CreatedAt, &snmpEn, &snmpComm, &snmpPort, &snmpInterval, &agentInterval, &sshPort, &tt, &consolePoll, &disabled, &mode, &rawOverrides,
 			&r.SnmpVersion, &r.SnmpV3User, &r.SnmpV3SecurityLevel, &r.SnmpV3AuthProto, &r.SnmpV3AuthPass, &r.SnmpV3PrivProto, &r.SnmpV3PrivPass); err != nil {
 			continue
 		}
@@ -61,6 +61,9 @@ func ListRouters(db *sql.DB) []adapters.RouterConfig {
 				r.InventoryMode = "auto"
 			}
 		}
+		if rawOverrides.String != "" {
+			r.DiscoveryOverrides = parseDiscoveryOverrides(rawOverrides.String)
+		}
 		// #2042: versión SNMP. Filas anteriores a la columna caen al default
 		// de la migración, pero un NULL/"" se normaliza aquí (v2c = el
 		// comportamiento histórico con comunidad).
@@ -80,6 +83,37 @@ func ListRouters(db *sql.DB) []adapters.RouterConfig {
 		out = append(out, r)
 	}
 	return out
+}
+
+// cleanOverrideMap filtra un mapa de overrides dejando solo claves no vacías
+// con un modo explícito (On u Off). Devuelve nil si queda vacío.
+func cleanOverrideMap(m map[string]adapters.DiscoveryMode) map[string]adapters.DiscoveryMode {
+	if len(m) == 0 {
+		return nil
+	}
+	clean := make(map[string]adapters.DiscoveryMode, len(m))
+	for k, v := range m {
+		if k != "" && v.Explicit() {
+			clean[k] = v
+		}
+	}
+	if len(clean) == 0 {
+		return nil
+	}
+	return clean
+}
+
+// parseDiscoveryOverrides lee la columna discovery_overrides con la forma
+// {"networks":{...},"devices":{...}}. JSON corrupto o con otra forma → vacío.
+func parseDiscoveryOverrides(raw string) adapters.DiscoveryOverrides {
+	var ov adapters.DiscoveryOverrides
+	if err := json.Unmarshal([]byte(raw), &ov); err != nil {
+		return adapters.DiscoveryOverrides{}
+	}
+	return adapters.DiscoveryOverrides{
+		Networks: cleanOverrideMap(ov.Networks),
+		Devices:  cleanOverrideMap(ov.Devices),
+	}
 }
 
 var slugNonAlnum = regexp.MustCompile(`[^a-z0-9]+`)
@@ -306,6 +340,9 @@ type UpdateInput struct {
 	// InventoryMode (#1917): "auto" | "agent" | "ssh". nil = no tocar. Cuando
 	// viene, deriva agent_only (solo "agent" deja la unidad sin SSH).
 	InventoryMode *string
+	// DiscoveryOverrides: nil = no tocar; no-nil (incluso vacío) = reemplaza
+	// todos los overrides de descubrimiento por red y por dispositivo.
+	DiscoveryOverrides *adapters.DiscoveryOverrides
 	// Disabled (issue #1085): nil = no tocar; true = pausar la unidad
 	// (sin sondeo ni alertas, insignia y fuera de desplegables).
 	Disabled *bool
@@ -397,6 +434,20 @@ func UpdateRouter(db *sql.DB, id string, in UpdateInput) (adapters.RouterConfig,
 		}
 		sets = append(sets, "inventory_mode = ?", "agent_only = ?")
 		args = append(args, mode, ao)
+	}
+	if in.DiscoveryOverrides != nil {
+		raw := ""
+		clean := adapters.DiscoveryOverrides{
+			Networks: cleanOverrideMap(in.DiscoveryOverrides.Networks),
+			Devices:  cleanOverrideMap(in.DiscoveryOverrides.Devices),
+		}
+		if !clean.IsZero() {
+			if b, err := json.Marshal(clean); err == nil {
+				raw = string(b)
+			}
+		}
+		sets = append(sets, "discovery_overrides = ?")
+		args = append(args, raw)
 	}
 	if in.Disabled != nil {
 		v := 0

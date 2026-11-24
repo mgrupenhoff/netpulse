@@ -26,6 +26,7 @@ import type {
   Device,
   DeviceQuery,
   DeviceTotals,
+  DiscoveryIface,
   DistributionNode,
   HealthScore,
   OverviewBundle,
@@ -107,6 +108,8 @@ export interface RouterDetailData {
   /** Las varias conexiones a internet del router, si reporta más de una.
    *  Solo lectura: las gestiona el panel del propio router. */
   multiWan?: MultiWanInfo
+  /** Descubrimiento de clientes por red lógica de OpenWrt (o dispositivo Linux de respaldo). */
+  discovery?: DiscoveryIface[]
   /** Salud del sondeo SNMP (#930): contadores de éxito/fallo por router.
    *  Ausente en routers que no se sondean por SNMP. */
   snmpOk?: number
@@ -1409,6 +1412,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         wireguard?: WireGuardStats
         vlans?: VlanPort[]
         networks?: NetworkInfo[]
+        discovery?: DiscoveryIface[]
         multiWan?: MultiWanInfo
         snmpOk?: number
         snmpFail?: number
@@ -1431,6 +1435,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         wireguard: json.wireguard,
         vlans: json.vlans,
         networks: json.networks,
+        discovery: json.discovery,
         multiWan: json.multiWan,
         snmpOk: json.snmpOk,
         snmpFail: json.snmpFail,

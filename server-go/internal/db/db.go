@@ -700,6 +700,7 @@ func Open(dir string, opts ...OpenOption) (*DB, error) {
 	// agent_only), "ssh" = nunca esperar agente: se inventaria por SSH y no
 	// alerta por la ausencia de un agente que no va a existir.
 	migrate(sqldb, "routers", "inventory_mode", "ALTER TABLE routers ADD COLUMN inventory_mode TEXT NOT NULL DEFAULT ''")
+	migrate(sqldb, "routers", "discovery_overrides", "ALTER TABLE routers ADD COLUMN discovery_overrides TEXT NOT NULL DEFAULT ''")
 	// issue #196: bridgeMAC persistido del router (exclusión de "desconocido").
 	migrate(sqldb, "routers", "mac", "ALTER TABLE routers ADD COLUMN mac TEXT")
 	// Ancho de canal de los vecinos (#1087), con el agente nuevo; 0 = viejo.

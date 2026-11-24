@@ -794,6 +794,68 @@ type FleetFdbProvider interface {
 	FleetFdbUplinks(infraID, infraMAC string) map[string]FdbUplink
 }
 
+// DiscoveryMode es el modo de descubrimiento de clientes elegido para una red o
+// un dispositivo. Solo se guardan los explícitos (On, Off); ausente = Auto.
+type DiscoveryMode string
+
+const (
+	DiscoveryAuto DiscoveryMode = "auto"
+	DiscoveryOn   DiscoveryMode = "on"
+	DiscoveryOff  DiscoveryMode = "off"
+)
+
+// Explicit indica si el modo es un ajuste explícito (On u Off).
+func (m DiscoveryMode) Explicit() bool {
+	return m == DiscoveryOn || m == DiscoveryOff
+}
+
+// Resolve devuelve si con este modo los vecinos cuentan como clientes, dado lo
+// que vale Automático (auto) para esa fila.
+func (m DiscoveryMode) Resolve(auto bool) bool {
+	switch m {
+	case DiscoveryOn:
+		return true
+	case DiscoveryOff:
+		return false
+	}
+	return auto
+}
+
+// DiscoveryKind distingue las filas del panel de descubrimiento.
+type DiscoveryKind string
+
+const (
+	DiscoveryKindNetwork DiscoveryKind = "network" // red lógica de OpenWrt
+	DiscoveryKindDevice  DiscoveryKind = "device"  // dispositivo fuera de toda red
+)
+
+// DiscoveryOverrides guarda el modo explícito de descubrimiento de clientes por
+// red lógica de OpenWrt y por dispositivo Linux (On | Off; ausente = Auto).
+type DiscoveryOverrides struct {
+	Networks map[string]DiscoveryMode `json:"networks,omitempty"` // red -> modo
+	Devices  map[string]DiscoveryMode `json:"devices,omitempty"`  // dispositivo -> modo
+}
+
+// IsZero indica si no hay ningún override explícito guardado, para omitir el
+// campo al serializar a JSON con omitzero.
+func (d DiscoveryOverrides) IsZero() bool {
+	return len(d.Networks) == 0 && len(d.Devices) == 0
+}
+
+// DiscoveryIface describe el estado de descubrimiento de clientes en una red
+// lógica de OpenWrt o en un dispositivo Linux de respaldo para el detalle del
+// router (GET /api/routers/{id}).
+type DiscoveryIface struct {
+	Kind       DiscoveryKind `json:"kind"`
+	Name       string        `json:"name"`              // red o dispositivo
+	Devices    []string      `json:"devices,omitempty"` // solo kind=network
+	Up         *bool         `json:"up,omitempty"`      // solo kind=network
+	Mode       DiscoveryMode `json:"mode"`              // lo guardado
+	Auto       bool          `json:"auto"`
+	Effective  bool          `json:"effective"`
+	Neighbours int           `json:"neighbours"`
+}
+
 type RouterDetail struct {
 	Router   Router     `json:"router"`
 	Ports    []EthPort  `json:"ports"`
@@ -813,6 +875,9 @@ type RouterDetail struct {
 	// the router never reported any; an empty uplink list = it reported
 	// and there is nothing to show, which is what removes the panel.
 	MultiWan *MultiWanInfo `json:"multiWan,omitempty"`
+	// Discovery: estado y override de descubrimiento de clientes por red lógica
+	// de OpenWrt (o dispositivo Linux de respaldo). nil si aún no hay sondeo.
+	Discovery []DiscoveryIface `json:"discovery,omitempty"`
 	// --- salud del sondeo SNMP (#930): solo routers sondeados por SNMP ---
 	// Contadores de éxito/fallo del poll SNMP por router (omitempty: ausente
 	// en routers que no se sondean por SNMP).
@@ -1096,7 +1161,10 @@ type RouterConfig struct {
 	// o "ssh" (nunca esperar agente: inventario por SSH, sin alerta de caida
 	// del agente). Derivado de agent_only cuando la fila es anterior.
 	InventoryMode string `json:"inventory_mode,omitempty"`
-	CreatedAt     int64  `json:"created_at"` // epoch ms
+	// DiscoveryOverrides: modo de descubrimiento de clientes por red lógica y
+	// por dispositivo Linux ("on" | "off"; ausente = "auto").
+	DiscoveryOverrides DiscoveryOverrides `json:"discovery_overrides,omitzero"`
+	CreatedAt          int64              `json:"created_at"` // epoch ms
 	// FirmwareTarget: versión objetivo configurada por el admin (issue #241).
 	// "" = sin comprobar (el live no emite aviso de firmware).
 	FirmwareTarget string `json:"firmware_target,omitempty"`

@@ -15,6 +15,7 @@ import (
 	"maps"
 	"math"
 	"runtime/debug"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -157,6 +158,11 @@ type routerPolled struct {
 	// arpDevs: MAC→interfaz de la tabla ARP (#1485). Permite distinguir el
 	// ARP aprendido en el puerto WAN (primer salto del enlace) del de la LAN.
 	arpDevs map[string]string
+	// uplinkDevs: interfaces del uplink de la unidad (L3 y boca), aunque no
+	// sea el gateway. A diferencia de wanInfo (solo gateway, #1383) sirven
+	// solo para no tomar por clientes a los vecinos del uplink, y son
+	// estructurales: un push event-driven sin sección WAN conserva las últimas.
+	uplinkDevs []string
 	// selfMacs: MACs de identidad del propio equipo aprendidas en sus puertos
 	// internos/CPU (#1489). No son clientes y se absorben aunque las vea otro
 	// miembro de la flota.
@@ -177,6 +183,10 @@ type routerPolled struct {
 	fdbVlans map[string]int
 	// networks: redes logicas declaradas en UCI (#1889).
 	networks []probe.UciNetwork
+	// netIfaces: interfaces lógicas en ejecución de `ubus call
+	// network.interface dump` (lan, wan, wwan, wg0...), usadas por el panel
+	// y las reglas de descubrimiento de clientes.
+	netIfaces []probe.NetIface
 	// wifiNet: ifname inalambrico -> red UCI (#1942). Mismo anti-parpadeo
 	// que networks: se conserva la ultima lectura buena.
 	wifiNet map[string]string
@@ -252,6 +262,8 @@ type extrasSnapshot struct {
 	fdbVlans map[string]int
 	// networks: última lista buena de redes UCI (#1889).
 	networks []probe.UciNetwork
+	// netIfaces: última lista buena de interfaces lógicas en ejecución.
+	netIfaces []probe.NetIface
 	// wifiNet: último mapa ifname -> red UCI bueno (#1942).
 	wifiNet map[string]string
 	// wirelessSide: último hint bueno de MACs detrás de radios propias
@@ -264,6 +276,9 @@ type extrasSnapshot struct {
 	// the page every time a device associates. Unlike wanInfo, which is a
 	// live address and must never be recycled, this is structural.
 	multiWan *MultiWanInfo
+	// uplinkDevs: las últimas interfaces de uplink conocidas (ver
+	// routerPolled.uplinkDevs). Estructurales, como multiWan.
+	uplinkDevs []string
 	// system (#441): última sección system BUENA del payload del agente.
 	// Los pushes event-driven (wireless-only) van sin ella; sin este cache
 	// las vitales del router parpadeaban a 0 entre pushes completos.
@@ -308,9 +323,9 @@ type lldpCacheEntry struct {
 // cambia cada tick; un sondeo cada 60 s sobra y evita martillear ubus.
 const wanInfoCacheTTL = 60 * time.Second
 
-// wanInfoCacheEntry: WanInfo cacheado del gateway (issue #276).
+// wanInfoCacheEntry: WanInfo e interfaces lógicas cacheados por router (issue #276).
 type wanInfoCacheEntry struct {
-	info probe.WanInfo
+	dump probe.InterfaceDump
 	at   time.Time
 }
 
@@ -879,10 +894,21 @@ func (l *Live) SetRouters(list []RouterConfig) {
 		}
 	}
 	// lastPolled se reemplaza, no se borra en el sitio: pollAll devuelve el
-	// mismo mapa a buildOverview, que lo recorre sin l.mu.
+	// mismo mapa a buildOverview, que lo recorre sin l.mu. Se refresca cfg en
+	// una copia superficial para que el detalle y buildDevices apliquen al
+	// instante los cambios de configuración sin esperar al próximo sondeo.
+	cfgByID := make(map[string]RouterConfig, len(l.routers))
+	for _, r := range l.routers {
+		cfgByID[r.ID] = r
+	}
 	nextPolled := make(map[string]*routerPolled, len(l.lastPolled))
 	for id, p := range l.lastPolled {
-		if ids[id] {
+		if cfg, ok := cfgByID[id]; ok {
+			if p != nil {
+				cp := *p
+				cp.cfg = cfg
+				p = &cp
+			}
 			nextPolled[id] = p
 		}
 	}
@@ -950,21 +976,34 @@ func (l *Live) probeBackhaul(routerID string, client *OpenWrtClient) string {
 	return value
 }
 
-// probeWanInfo: estado de la conexión WAN del gateway (issue #276) con caché
-// de 60 s. En routers sin interfaz wan (APs) devuelve WanInfo vacío. Fallo de
-// ubus → vacío cacheado (el detalle sigue mostrando lo demás, sin romper).
-func (l *Live) probeWanInfo(routerID string, client *OpenWrtClient) probe.WanInfo {
+// sshUplinkDevs: los dispositivos de uplink de una unidad sondeada por SSH.
+// Si la lectura de ubus no trae uplink (un fallo transitorio, que además se
+// cachea un minuto) se conserva la última lista buena, igual que en la vía del
+// agente: sin ella, Automático contaría como clientes a los vecinos de la red
+// de arriba.
+func sshUplinkDevs(wan probe.WanInfo, cached []string) []string {
+	if wan.Device != "" || wan.Port != "" {
+		return []string{wan.Device, wan.Port}
+	}
+	return cached
+}
+
+// probeWanInfo: estado de la conexión WAN e interfaces lógicas del router
+// (issue #276) con caché de 60 s. En routers sin interfaz wan (APs) devuelve
+// Wan vacío pero conserva sus interfaces lógicas. Fallo de ubus → vacío
+// cacheado (el detalle sigue mostrando lo demás, sin romper).
+func (l *Live) probeWanInfo(routerID string, client *OpenWrtClient) probe.InterfaceDump {
 	l.mu.Lock()
 	e, ok := l.wanInfoCache[routerID]
 	l.mu.Unlock()
 	if ok && time.Since(e.at) < wanInfoCacheTTL {
-		return e.info
+		return e.dump
 	}
-	info := client.GetWanInfo()
+	dump := client.GetInterfaceDump()
 	l.mu.Lock()
-	l.wanInfoCache[routerID] = wanInfoCacheEntry{info: info, at: time.Now()}
+	l.wanInfoCache[routerID] = wanInfoCacheEntry{dump: dump, at: time.Now()}
 	l.mu.Unlock()
-	return info
+	return dump
 }
 
 // probeLldp: vecinos LLDP del router con caché de 45 s (tier lento, como los
@@ -1373,7 +1412,7 @@ func (l *Live) pollRouter(ctx context.Context, cfg RouterConfig) (*routerPolled,
 		l.mu.Unlock()
 		hasWan := p.wanInfo.Proto != "" || p.wanInfo.IP != "" || p.wanInfo.Gateway != ""
 		if gw != nil && cfg.ID == gw.ID && client != nil && !hasWan {
-			p.wanInfo = l.probeWanInfo(cfg.ID, client)
+			p.wanInfo = l.probeWanInfo(cfg.ID, client).Wan
 		}
 		// #1726: si la unidad también tiene SNMP configurado, completar con
 		// SNMP lo que el payload no puede dar (velocidad de boca, errores,
@@ -1418,7 +1457,8 @@ func (l *Live) pollRouter(ctx context.Context, cfg RouterConfig) (*routerPolled,
 	temp, _ := client.GetTempC()
 	// NetDev: total agregado + rates POR IFACE (#305) en una sola lectura.
 	netAgg, ifRates := client.GetNetDev()
-	wanIface := l.probeWanInfo(cfg.ID, client)
+	ifDump := l.probeWanInfo(cfg.ID, client)
+	wanIface, netIfaces := ifDump.Wan, ifDump.Ifaces
 	// #2048: el tráfico del router es el de su WAN, no la suma de todas las
 	// bocas (que cuenta la bajada dos veces: entra por la WAN y sale por la
 	// LAN). Sin WAN identificable se mantiene el agregado.
@@ -1498,6 +1538,11 @@ func (l *Live) pollRouter(ctx context.Context, cfg RouterConfig) (*routerPolled,
 	if nets := client.GetNetworks(); nets != nil {
 		networksGood = nets
 	}
+	netIfacesGood := cached.netIfaces
+	if netIfaces != nil {
+		netIfacesGood = netIfaces
+	}
+	uplinkDevsGood := sshUplinkDevs(wanIface, cached.uplinkDevs)
 	// #1942: la config wireless dice a que red pertenece cada iface AP, la
 	// unica fuente que atribuye clientes WiFi sin adivinar por el puerto.
 	wifiNetGood := cached.wifiNet
@@ -1505,7 +1550,7 @@ func (l *Live) pollRouter(ctx context.Context, cfg RouterConfig) (*routerPolled,
 		wifiNetGood = wifiNetworkMap(parseUciWireless(raw))
 	}
 	l.mu.Lock()
-	l.extrasCache[cfg.ID] = &extrasSnapshot{ports: portsGood, radios: radiosGood, wireless: wirelessGood, fdb: fdbGood, fdbVlans: fdbVlansGood, luci: luciGood, vlans: vlansGood, networks: networksGood, wifiNet: wifiNetGood}
+	l.extrasCache[cfg.ID] = &extrasSnapshot{ports: portsGood, radios: radiosGood, wireless: wirelessGood, fdb: fdbGood, fdbVlans: fdbVlansGood, luci: luciGood, vlans: vlansGood, networks: networksGood, netIfaces: netIfacesGood, wifiNet: wifiNetGood, uplinkDevs: uplinkDevsGood}
 	l.mu.Unlock()
 
 	// Uso de RAM: #513. Si el agente reporta memory.used (procesos) lo
@@ -1524,10 +1569,10 @@ func (l *Live) pollRouter(ctx context.Context, cfg RouterConfig) (*routerPolled,
 	} else if gw != nil {
 		latencyMs, _ = client.GetGatewayLatency(gw.Host)
 	}
-	// Estado WAN solo en el gateway (issue #276), tier lento cacheado.
+	// Estado WAN solo en el gateway (issue #276), reutilizando el dump ya leído.
 	var wanInfo probe.WanInfo
 	if isGw {
-		wanInfo = l.probeWanInfo(cfg.ID, client)
+		wanInfo = wanIface
 	}
 
 	cpuV := 0
@@ -1558,7 +1603,7 @@ func (l *Live) pollRouter(ctx context.Context, cfg RouterConfig) (*routerPolled,
 		wireless: wirelessGood, ports: portsGood, radios: radiosGood,
 		fdb: withoutBatadvBla(fdbGood), fdbVlans: fdbVlansGood, wirelessSide: wsGood, brMac: brMac, latencyMs: latencyMs, lossPct: lossPct,
 		backhaul: backhaul, lldp: lldp, lldpUnavailable: lldpUnavailable,
-		luci: luciGood, wanInfo: wanInfo, vlans: vlansGood, networks: networksGood, wifiNet: wifiNetGood,
+		luci: luciGood, wanInfo: wanInfo, uplinkDevs: uplinkDevsGood, vlans: vlansGood, networks: networksGood, netIfaces: netIfacesGood, wifiNet: wifiNetGood,
 		polledAt: l.now().UnixMilli(),
 	}, nil
 }
@@ -3543,6 +3588,201 @@ func wgDuration(d time.Duration) string {
 	return fmt.Sprintf("%dh %dm", h, m)
 }
 
+// arpUplinkDevs: las interfaces por las que la unidad sale a internet (la L3
+// del uplink, la boca por debajo y las de cada uplink multi-WAN). Un bridge
+// no cuenta: en un AP el uplink es la propia LAN (br-lan con DHCP cliente) y
+// sus vecinos sí son clientes.
+func arpUplinkDevs(p *routerPolled) map[string]bool {
+	devs := map[string]bool{}
+	add := func(dev string) {
+		if dev != "" && !strings.HasPrefix(dev, "br-") {
+			devs[dev] = true
+		}
+	}
+	add(p.wanInfo.Device)
+	add(p.wanInfo.Port)
+	for _, d := range p.uplinkDevs {
+		add(d)
+	}
+	if p.multiWan != nil {
+		for _, u := range p.multiWan.Uplinks {
+			add(u.Port)
+		}
+	}
+	return devs
+}
+
+// netIfaceAuto devuelve false si alguno de los dispositivos Linux de la red
+// lógica está en uplinks; en caso contrario true.
+func netIfaceAuto(ni probe.NetIface, uplinks map[string]bool) bool {
+	for _, d := range ni.Devices {
+		if uplinks[d] {
+			return false
+		}
+	}
+	return true
+}
+
+// discoveryVerdict es cómo queda un dispositivo al combinar las filas del
+// panel que lo cubren (varias redes pueden compartirlo, como wan y wan6 sobre
+// la misma boca). Va de menor a mayor precedencia: se queda la mayor, así que
+// un ajuste explícito manda sobre Automático y, entre explícitos, Off gana a On.
+type discoveryVerdict int
+
+const (
+	verdictNone    discoveryVerdict = iota // sin ninguna fila que cubra el dispositivo
+	verdictAutoOn                          // Automático: cuenta clientes
+	verdictAutoOff                         // Automático: no cuenta (uplink)
+	verdictOn                              // On explícito
+	verdictOff                             // Off explícito: nada lo supera
+)
+
+// allowed indica si con este veredicto los vecinos cuentan como clientes.
+func (v discoveryVerdict) allowed() bool {
+	return v == verdictAutoOn || v == verdictOn
+}
+
+// rowVerdict es el veredicto de una sola fila con el modo guardado y lo que
+// vale Automático para ella.
+func rowVerdict(mode DiscoveryMode, auto bool) discoveryVerdict {
+	switch mode {
+	case DiscoveryOff:
+		return verdictOff
+	case DiscoveryOn:
+		return verdictOn
+	}
+	if auto {
+		return verdictAutoOn
+	}
+	return verdictAutoOff
+}
+
+// resolveDiscovery combina las filas que cubren el dispositivo dev de la
+// unidad p: todas las redes que lo usan o, si no está en ninguna, su fila de
+// dispositivo. Sin dispositivo (dev == "", agente antiguo) cuenta como
+// siempre. uplinks puede ser nil y entonces se calcula aquí.
+func resolveDiscovery(p *routerPolled, dev string, uplinks map[string]bool) discoveryVerdict {
+	if p == nil || dev == "" {
+		return verdictAutoOn
+	}
+	if uplinks == nil {
+		uplinks = arpUplinkDevs(p)
+	}
+	v := verdictNone
+	for _, ni := range p.netIfaces {
+		if !slices.Contains(ni.Devices, dev) {
+			continue
+		}
+		v = max(v, rowVerdict(p.cfg.DiscoveryOverrides.Networks[ni.Name], netIfaceAuto(ni, uplinks)))
+		if v == verdictOff {
+			return verdictOff // ninguna otra red puede cambiarlo
+		}
+	}
+	if v != verdictNone {
+		return v
+	}
+	return rowVerdict(p.cfg.DiscoveryOverrides.Devices[dev], !uplinks[dev])
+}
+
+// discoveryExplicitOn indica si dev queda decidido por un On explícito (alguna
+// fila que lo cubre está en On y ninguna en Off).
+func discoveryExplicitOn(p *routerPolled, dev string) bool {
+	return resolveDiscovery(p, dev, nil) == verdictOn
+}
+
+// newDiscoveryRow construye una fila del panel normalizando el modo guardado
+// y calculando su estado efectivo.
+func newDiscoveryRow(kind DiscoveryKind, name string, saved DiscoveryMode, auto bool, neighbours int) DiscoveryIface {
+	mode := DiscoveryAuto
+	if saved.Explicit() {
+		mode = saved
+	}
+	return DiscoveryIface{
+		Kind:       kind,
+		Name:       name,
+		Mode:       mode,
+		Auto:       auto,
+		Effective:  mode.Resolve(auto),
+		Neighbours: neighbours,
+	}
+}
+
+// buildDiscoveryIfaces construye la tabla de descubrimiento del detalle del
+// router (GET /api/routers/{id}): primero una fila "network" por cada entrada
+// de p.netIfaces en su orden, y después una fila "device" (ordenada por
+// nombre) por cada dispositivo fuera de cualquier red visto en arpDevs,
+// uplinks u overrides de dispositivos. Devuelve nil si p es nil o no hay filas.
+func buildDiscoveryIfaces(p *routerPolled) []DiscoveryIface {
+	if p == nil {
+		return nil
+	}
+	uplinks := arpUplinkDevs(p)
+	neighbours := map[string]int{}
+	for mac := range p.arp {
+		if p.arpStale[mac] {
+			continue
+		}
+		if dev := p.arpDevs[mac]; dev != "" {
+			neighbours[dev]++
+		}
+	}
+
+	coveredDevs := map[string]bool{}
+	seenNets := map[string]bool{}
+	out := make([]DiscoveryIface, 0, len(p.netIfaces))
+	for _, ni := range p.netIfaces {
+		seenNets[ni.Name] = true
+		nb := 0
+		for _, d := range ni.Devices {
+			coveredDevs[d] = true
+			nb += neighbours[d]
+		}
+		row := newDiscoveryRow(DiscoveryKindNetwork, ni.Name, p.cfg.DiscoveryOverrides.Networks[ni.Name], netIfaceAuto(ni, uplinks), nb)
+		up := ni.Up
+		row.Devices = ni.Devices
+		row.Up = &up
+		out = append(out, row)
+	}
+	// Overrides guardados de redes que ahora no aparecen en p.netIfaces:
+	// se emiten igual que los de dispositivos para poder verlos, quitarlos y
+	// no borrarlos al guardar cambios desde el panel.
+	var missingNets []string
+	for name, m := range p.cfg.DiscoveryOverrides.Networks {
+		if name != "" && m.Explicit() && !seenNets[name] {
+			missingNets = append(missingNets, name)
+		}
+	}
+	sort.Strings(missingNets)
+	for _, name := range missingNets {
+		out = append(out, newDiscoveryRow(DiscoveryKindNetwork, name, p.cfg.DiscoveryOverrides.Networks[name], true, 0))
+	}
+
+	devSet := map[string]bool{}
+	addDev := func(dev string) {
+		if dev != "" && !coveredDevs[dev] {
+			devSet[dev] = true
+		}
+	}
+	for _, dev := range p.arpDevs {
+		addDev(dev)
+	}
+	for dev := range uplinks {
+		addDev(dev)
+	}
+	for dev, m := range p.cfg.DiscoveryOverrides.Devices {
+		if m.Explicit() {
+			addDev(dev)
+		}
+	}
+	for _, dev := range slices.Sorted(maps.Keys(devSet)) {
+		out = append(out, newDiscoveryRow(DiscoveryKindDevice, dev, p.cfg.DiscoveryOverrides.Devices[dev], !uplinks[dev], neighbours[dev]))
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // buildDevices: unión de leases + MACs vistas (wireless > FDB satélites >
 // FDB gateway si no hay memoria) + device_attrib (index.js:396-460).
 func (l *Live) buildDevices(polled map[string]*routerPolled, wanPort string) []Device {
@@ -3848,7 +4088,7 @@ func (l *Live) buildDevices(polled map[string]*routerPolled, wanPort string) []D
 	// pública compartida son decenas de equipos ajenos.
 	wanIgnored := map[string]bool{}
 	if gwID != "" && wanPort != "" {
-		if gwP := polled[gwID]; gwP != nil {
+		if gwP := polled[gwID]; gwP != nil && !discoveryExplicitOn(gwP, wanPort) {
 			peerIP := strings.TrimSpace(gwP.wanInfo.Gateway)
 			for mac, dev := range gwP.arpDevs {
 				if dev != wanPort {
@@ -3883,7 +4123,9 @@ func (l *Live) buildDevices(polled map[string]*routerPolled, wanPort string) []D
 	}
 	sort.Strings(arpRouterIDs)
 	for _, routerID := range arpRouterIDs {
-		for mac := range polled[routerID].arp {
+		p := polled[routerID]
+		uplinks := arpUplinkDevs(p)
+		for mac := range p.arp {
 			if _, ok := seen[mac]; ok {
 				continue
 			}
@@ -3891,6 +4133,13 @@ func (l *Live) buildDevices(polled map[string]*routerPolled, wanPort string) []D
 				continue
 			}
 			if !arpConfirmed[mac] {
+				continue
+			}
+			// Un vecino aprendido en una red o dispositivo con el descubrimiento
+			// desactivado (por defecto, el uplink de la unidad) no es cliente.
+			// El del gateway ya lo recogió arriba #1485 como WanSide salvo que
+			// haya un override explícito "on" para wanPort.
+			if !resolveDiscovery(p, p.arpDevs[mac], uplinks).allowed() {
 				continue
 			}
 			seen[mac] = seenInfo{routerID: routerID, band: "cable"}
@@ -5248,6 +5497,7 @@ func (l *Live) GetRouterDetail(ctx context.Context, id string) (*RouterDetail, e
 		Router: router, Ports: enriched, Radios: radios, Backhaul: nil,
 		Series:  PerfSeries{H1: seriesOf("1h"), H24: seriesOf("24h"), D7: seriesOf("7d")},
 		Clients: clients, Extras: extras, Vlans: vlans, Networks: networks, MultiWan: multiWan,
+		Discovery: buildDiscoveryIfaces(p),
 	}
 	// #930: contadores de salud SNMP del router (solo si se sondea por SNMP).
 	if cfg.SnmpEnabled {

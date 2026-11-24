@@ -944,6 +944,11 @@ func (l *Live) polledFromAgent(cfg RouterConfig, p *probe.Payload) *routerPolled
 	// nunca -- y su panel de conexión se quedaba vacío.
 	if w := p.Data.Wan; w != nil {
 		out.wanInfo = *w
+		out.uplinkDevs = []string{w.Device, w.Port}
+	} else if cached != nil {
+		// Push event-driven (solo wireless + ARP): sin las interfaces del
+		// uplink, sus vecinos volverían a salir como clientes cableados.
+		out.uplinkDevs = cached.uplinkDevs
 	}
 	// MultiWan: the several internet connections and which one carries
 	// traffic. Only a router whose own panel manages them reports it; an
@@ -966,6 +971,14 @@ func (l *Live) polledFromAgent(cfg RouterConfig, p *probe.Payload) *routerPolled
 		out.networks = p.Data.Networks
 	} else if cached != nil {
 		out.networks = cached.networks
+	}
+	// Interfaces lógicas en ejecución (`ubus call network.interface dump`):
+	// mismo anti-parpadeo que networks para que un push event-driven no
+	// pierda las filas por red del panel de descubrimiento.
+	if len(p.Data.NetIfaces) > 0 {
+		out.netIfaces = p.Data.NetIfaces
+	} else if cached != nil {
+		out.netIfaces = cached.netIfaces
 	}
 	// #1942: el mapa ifname -> red viaja en la seccion wireless del payload.
 	if wm := wifiNetworkMap(dot11rIfacesFromPayload(p)); wm != nil {
@@ -1146,8 +1159,8 @@ func (l *Live) polledFromAgent(cfg RouterConfig, p *probe.Payload) *routerPolled
 		lldpSnap = cached.lldp // conserva la última sección buena (#489)
 	}
 	l.extrasCache[cfg.ID] = &extrasSnapshot{ports: out.ports, radios: out.radios,
-		wireless: out.wireless, fdb: out.fdb, fdbVlans: out.fdbVlans, networks: out.networks, wifiNet: out.wifiNet, wirelessSide: out.wirelessSide, luci: out.luci, system: sysSnap, systemKind: sysSnapKind, lldp: lldpSnap,
-		clientBw: out.clientBw, vlans: out.vlans, multiWan: out.multiWan}
+		wireless: out.wireless, fdb: out.fdb, fdbVlans: out.fdbVlans, networks: out.networks, netIfaces: out.netIfaces, wifiNet: out.wifiNet, wirelessSide: out.wirelessSide, luci: out.luci, system: sysSnap, systemKind: sysSnapKind, lldp: lldpSnap,
+		clientBw: out.clientBw, vlans: out.vlans, multiWan: out.multiWan, uplinkDevs: out.uplinkDevs}
 	l.mu.Unlock()
 
 	// Solo con un payload NUEVO alimentamos las series y el monitor de

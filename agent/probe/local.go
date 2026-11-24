@@ -399,7 +399,7 @@ func (p *Prober) Build(ctx context.Context, router, version string) *Payload {
 		Version: version,
 	}
 	// Wan antes que FDB: probeFDB usa la boca del uplink para marcarla.
-	pl.Data.Wan = p.probeWan(ctx)
+	pl.Data.Wan, pl.Data.NetIfaces = p.probeWan(ctx)
 	pl.Data.Vlans, pl.Data.Networks = p.probeVlans(ctx)
 	pl.Data.System = p.probeSystem(ctx)
 	pl.Data.Wireless = p.probeWireless(ctx, true)
@@ -835,21 +835,23 @@ func (p *Prober) probeDHCP(ctx context.Context) *DHCPData {
 }
 
 // probeWan: estado del uplink (proto, IP pública, gateway, DNS y la boca por
-// la que sale), eligiendo la interfaz por su ruta por defecto y no por
-// llamarse "wan". nil cuando no hay nada utilizable: un AP sin uplink, o un
-// equipo sin ubus. Guarda el resultado para probeFDB.
-func (p *Prober) probeWan(ctx context.Context) *WanInfo {
+// la que sale) e interfaces lógicas de `ubus call network.interface dump`,
+// eligiendo el uplink por su ruta por defecto y no por llamarse "wan". WanInfo
+// es nil cuando no hay uplink utilizable (un AP o un equipo sin ubus), pero
+// conserva las interfaces lógicas. Guarda el uplink para probeFDB.
+func (p *Prober) probeWan(ctx context.Context) (*WanInfo, []NetIface) {
 	p.lastWan = nil
 	out := p.runBest(ctx, CmdNetworkDump, 0)
 	if out == "" {
-		return nil
+		return nil, nil
 	}
-	info := ParseWanStatusPreferring([]byte(out), p.activeUplink())
+	dump := ParseInterfaceDump([]byte(out), p.activeUplink())
+	info := dump.Wan
 	if info.Proto == "" && info.IP == "" && info.Gateway == "" && info.Port == "" {
-		return nil
+		return nil, dump.Ifaces
 	}
 	p.lastWan = &info
-	return &info
+	return &info, dump.Ifaces
 }
 
 // probeFDB: MACs aprendidas (brctl) + puertos ethernet (layout + /sys).
@@ -1354,17 +1356,13 @@ func (p *Prober) probeArp(ctx context.Context) (arp map[string]string, stale []s
 			// #2109: el mismo recheck sobre la tabla NDP. Un host solo-IPv6
 			// (SLAAC, sin lease ni tráfico v4) no tiene entrada en `ip -4
 			// neigh`, así que esta pasada es la única que puede confirmarlo.
-			for mac, ip := range p.confirmStaleNeighbours6(ctx, due) {
-				if _, ok := m[mac]; !ok {
-					m[mac] = ip
-				}
-				delete(st, mac)
-			}
+			devs = ParseIPNeighDevs(out)
+			MergeConfirmedNeighbours(m, st, devs, p.confirmStaleNeighbours6(ctx, due))
 			for mac := range st {
 				stale = append(stale, mac)
 			}
 			sort.Strings(stale) // stable payloads, so a diff means a change
-			return m, stale, ParseIPNeighDevs(out)
+			return m, stale, devs
 		}
 	}
 	out := p.runBest(ctx, CmdProcArp, 3*time.Second)
@@ -1472,15 +1470,38 @@ func (p *Prober) confirmStaleNeighbours(ctx context.Context, arp map[string]stri
 	return arp, stale, out
 }
 
+// ConfirmedNeighbour (#2109): un vecino IPv6 que el recheck NDP confirmó, con
+// su dirección y la interfaz en la que el kernel lo tiene (vacía si `ip -6
+// neigh` no la declaró). Lo comparten el agente y la pasada por SSH.
+type ConfirmedNeighbour struct {
+	IP  string
+	Dev string
+}
+
+// MergeConfirmedNeighbours incorpora vecinos confirmados por NDP a los mapas
+// ARP (m, stale, devs): conserva la IP y la interfaz IPv4 si ya existen y saca
+// cada MAC confirmada de stale. Compartido entre el agente y la vía SSH.
+func MergeConfirmedNeighbours(arp map[string]string, stale map[string]bool, devs map[string]string, confirmed map[string]ConfirmedNeighbour) {
+	for mac, n := range confirmed {
+		if _, ok := arp[mac]; !ok {
+			arp[mac] = n.IP
+		}
+		if devs[mac] == "" && n.Dev != "" {
+			devs[mac] = n.Dev
+		}
+		delete(stale, mac)
+	}
+}
+
 // confirmStaleNeighbours6 (#2109): lo mismo sobre `ip -6 neigh`. Mismo tope y
 // mismo throttle, un echo por vecino STALE. La diferencia es que una
 // direccion link-local solo se alcanza indicando la interfaz, que el propio
 // `ip -6 neigh` declara (`dev br-lan`).
 //
-// Devuelve MAC → dirección confirmada. Best effort: sin tabla, sin vecinos o
-// sin respuesta, nada. No toca `arp`: quien llama decide qué hacer con la
-// pareja confirmada.
-func (p *Prober) confirmStaleNeighbours6(ctx context.Context, due bool) map[string]string {
+// Devuelve MAC → vecino confirmado (dirección e interfaz). Best effort: sin
+// tabla, sin vecinos o sin respuesta, nada. No toca `arp`: quien llama decide
+// qué hacer con el vecino confirmado.
+func (p *Prober) confirmStaleNeighbours6(ctx context.Context, due bool) map[string]ConfirmedNeighbour {
 	if p.run == nil || !due {
 		return nil
 	}
@@ -1524,13 +1545,13 @@ func (p *Prober) confirmStaleNeighbours6(ctx context.Context, due bool) map[stri
 	wg.Wait()
 
 	fresh, stillStale := ParseIPNeigh(p.runBest(ctx, CmdIpNeigh6, 3*time.Second))
-	confirmed := map[string]string{}
+	confirmed := map[string]ConfirmedNeighbour{}
 	for _, t := range targets {
 		if stillStale[t.mac] {
 			continue
 		}
 		if ip := fresh[t.mac]; ip != "" {
-			confirmed[t.mac] = ip
+			confirmed[t.mac] = ConfirmedNeighbour{IP: ip, Dev: t.dev}
 		}
 	}
 	return confirmed

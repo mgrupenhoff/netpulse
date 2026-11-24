@@ -420,3 +420,46 @@ func TestBuildDevicesWanSideOnlyDefaultRoutePeer(t *testing.T) {
 		}
 	}
 }
+
+// Un vecino aprendido en el uplink de una unidad que no es el gateway (un
+// router de viaje colgado de una Wi-Fi ajena) es un equipo de esa red, no un
+// cliente: antes salía como cableado desconocido y disparaba su alerta. Los
+// vecinos de su LAN siguen apareciendo.
+func TestBuildDevicesSkipsArpOnUplink(t *testing.T) {
+	l := NewLive(nil, nil, nil, nil)
+	polled := map[string]*routerPolled{
+		"travel": {
+			cfg:     RouterConfig{ID: "travel", Name: "travel", Host: "192.168.2.1"},
+			wanInfo: probe.WanInfo{Proto: "dhcp", Device: "phy1-sta0", Port: "phy1-sta0"},
+			arp: map[string]string{
+				"AA:BB:CC:00:00:01": "10.20.0.177",
+				"AA:BB:CC:00:00:02": "192.168.2.50",
+			},
+			arpDevs: map[string]string{
+				"AA:BB:CC:00:00:01": "phy1-sta0",
+				"AA:BB:CC:00:00:02": "br-lan",
+			},
+		},
+	}
+	devs := l.buildDevices(polled, "")
+	if len(devs) != 1 || devs[0].MAC != "AA:BB:CC:00:00:02" {
+		t.Fatalf("esperaba solo el vecino de la LAN, got %+v", devs)
+	}
+}
+
+// En un AP el uplink es la propia LAN (br-lan con DHCP cliente): sus vecinos
+// sí son clientes y no se descartan.
+func TestBuildDevicesKeepsArpOnBridgeUplink(t *testing.T) {
+	l := NewLive(nil, nil, nil, nil)
+	polled := map[string]*routerPolled{
+		"ap": {
+			cfg:     RouterConfig{ID: "ap", Name: "AP", Host: "192.168.2.3"},
+			wanInfo: probe.WanInfo{Proto: "dhcp", Device: "br-lan", Port: "br-lan"},
+			arp:     map[string]string{"AA:BB:CC:00:00:03": "192.168.2.60"},
+			arpDevs: map[string]string{"AA:BB:CC:00:00:03": "br-lan"},
+		},
+	}
+	if devs := l.buildDevices(polled, ""); len(devs) != 1 {
+		t.Fatalf("el vecino de la LAN de un AP debe aparecer, got %+v", devs)
+	}
+}
