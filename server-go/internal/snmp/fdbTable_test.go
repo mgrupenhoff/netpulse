@@ -3,6 +3,7 @@ package snmp
 import (
 	"testing"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gosnmp/gosnmp"
 )
 
@@ -45,13 +46,13 @@ func TestFdbEntriesDot1d(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("esperaba 3 entradas, obtuve %d: %+v", len(got), got)
 	}
-	if got[0].MAC != "8C:16:18:BB:1E:0C" || got[0].BridgePortIndex != 3 || got[0].IfIndex != 103 {
+	if got[0].MAC != macaddr.MustParse("8C:16:18:BB:1E:0C") || got[0].BridgePortIndex != 3 || got[0].IfIndex != 103 {
 		t.Errorf("entrada 0 inesperada: %+v", got[0])
 	}
-	if got[1].MAC != "00:0C:22:38:4E:5A" || got[1].BridgePortIndex != 7 || got[1].IfIndex != 7 {
+	if got[1].MAC != macaddr.MustParse("00:0C:22:38:4E:5A") || got[1].BridgePortIndex != 7 || got[1].IfIndex != 7 {
 		t.Errorf("entrada 1 inesperada: %+v", got[1])
 	}
-	if got[2].MAC != "00:04:4B:E9:B2:1D" || got[2].BridgePortIndex != 49167 || got[2].IfIndex != 49167 {
+	if got[2].MAC != macaddr.MustParse("00:04:4B:E9:B2:1D") || got[2].BridgePortIndex != 49167 || got[2].IfIndex != 49167 {
 		t.Errorf("entrada 2 inesperada: %+v", got[2])
 	}
 }
@@ -68,7 +69,7 @@ func TestFdbEntriesDot1q(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("esperaba 1 entrada, obtuve %d: %+v", len(got), got)
 	}
-	if got[0].MAC != "8C:16:18:BB:1E:0C" || got[0].BridgePortIndex != 5 || got[0].IfIndex != 205 {
+	if got[0].MAC != macaddr.MustParse("8C:16:18:BB:1E:0C") || got[0].BridgePortIndex != 5 || got[0].IfIndex != 205 {
 		t.Errorf("entrada inesperada: %+v", got[0])
 	}
 }

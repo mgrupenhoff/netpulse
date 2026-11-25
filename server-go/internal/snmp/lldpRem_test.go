@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gosnmp/gosnmp"
 )
 
@@ -47,7 +48,7 @@ func TestLldpRemEntriesLgs310c(t *testing.T) {
 	want := LldpRemEntry{
 		LocalPortNum: 5,
 		IfIndex:      5,
-		ChassisMac:   "78:55:36:02:58:BA",
+		ChassisMac:   macaddr.MustParse("78:55:36:02:58:BA"),
 		Chassis:      "ryzen-ai",
 		Mgmt:         "192.168.1.80",
 		Caps:         []string{"Wlan"},
@@ -85,7 +86,7 @@ func TestLldpRemEntriesChassisNoMac(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("esperaba 1 vecino, obtuve %d", len(got))
 	}
-	if got[0].Chassis != "switch-sotano" || got[0].ChassisMac != "" {
+	if got[0].Chassis != "switch-sotano" || got[0].ChassisMac.IsValid() {
 		t.Fatalf("chasis inesperado: %+v", got[0])
 	}
 
@@ -136,7 +137,7 @@ func TestLldpRemEntriesDosVecinos(t *testing.T) {
 	if got[0].LocalPortNum != 5 || got[0].Chassis != "ryzen-ai" {
 		t.Fatalf("vecino 0 inesperado: %+v", got[0])
 	}
-	if got[1].LocalPortNum != 8 || got[1].ChassisMac != "D8:EC:5E:60:C7:82" {
+	if got[1].LocalPortNum != 8 || got[1].ChassisMac != macaddr.MustParse("D8:EC:5E:60:C7:82") {
 		t.Fatalf("vecino 1 inesperado: %+v", got[1])
 	}
 }
