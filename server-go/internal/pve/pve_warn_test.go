@@ -29,13 +29,13 @@ func TestNICsOfConfigWarnsOncePerInvalidHwaddr(t *testing.T) {
 	}
 	for i := 0; i < 3; i++ {
 		nics := NICsOfConfig(cfg)
-		if len(nics) != 1 || nics[0].MAC != "BC:24:11:00:00:02" {
+		if len(nics) != 1 || nics[0].MAC.String() != "BC:24:11:00:00:02" {
 			t.Fatalf("nics: %+v", nics)
 		}
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(lines) != 1 || !strings.Contains(lines[0], `"xyz"`) || !strings.Contains(lines[0], "net0") {
+	if len(lines) != 1 || !strings.Contains(lines[0], `ignoring invalid MAC "xyz"`) || !strings.Contains(lines[0], "nic=net0") {
 		t.Fatalf("avisos: %q (want uno que cite net0 y el valor)", lines)
 	}
 }
