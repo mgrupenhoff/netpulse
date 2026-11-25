@@ -19,12 +19,12 @@ package adapters
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
-	"net"
-	"sort"
-	"strings"
+	"slices"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/alerts"
 )
 
@@ -50,22 +50,20 @@ const (
 )
 
 // macDerivatives (#1402): la MAC base de una unidad de flota y sus +1/+2
-// (las radios OpenWrt enumeran a partir de la MAC del bridge). Devuelve las
-// MAC normalizadas en mayúsculas; nil si la base no parsea.
-func macDerivatives(mac string) []string {
-	hw, err := net.ParseMAC(strings.TrimSpace(mac))
-	if err != nil || len(hw) != 6 {
-		return nil
-	}
+// (las radios OpenWrt enumeran a partir de la MAC del bridge).
+func macDerivatives(m macaddr.MAC) [3]macaddr.MAC {
+	b := m.As6()
 	var v uint64
-	for _, b := range hw {
-		v = v<<8 | uint64(b)
+	for _, x := range b {
+		v = v<<8 | uint64(x)
 	}
-	out := make([]string, 0, 3)
+	var out [3]macaddr.MAC
 	for n := uint64(0); n <= 2; n++ {
 		x := v + n
-		out = append(out, fmt.Sprintf("%02X:%02X:%02X:%02X:%02X:%02X",
-			byte(x>>40), byte(x>>32), byte(x>>24), byte(x>>16), byte(x>>8), byte(x)))
+		out[n] = macaddr.From6([6]byte{
+			byte(x >> 40), byte(x >> 32), byte(x >> 24),
+			byte(x >> 16), byte(x >> 8), byte(x),
+		})
 	}
 	return out
 }
@@ -85,7 +83,7 @@ func (l *Live) EvalSsidImpostors() {
 	}
 	now := time.Now()
 
-	ownBssids := map[string]bool{}
+	ownBssids := map[macaddr.MAC]bool{}
 	for _, b := range l.agents.LocalBssids() {
 		ownBssids[b] = true
 	}
@@ -96,7 +94,7 @@ func (l *Live) EvalSsidImpostors() {
 	// rogue APs. Consulta directa a BD: routers.mac es la fuente de verdad.
 	if rows, err := l.db.Query(`SELECT mac FROM routers WHERE mac IS NOT NULL AND mac != ''`); err == nil {
 		for rows.Next() {
-			var m string
+			var m macaddr.MAC
 			if rows.Scan(&m) != nil {
 				continue
 			}
@@ -112,14 +110,14 @@ func (l *Live) EvalSsidImpostors() {
 	l.mu.Lock()
 	for _, ex := range l.extrasCache {
 		for _, r := range ex.radios {
-			if r.BSSID != "" {
-				ownBssids[strings.ToUpper(r.BSSID)] = true
+			if r.BSSID.IsValid() {
+				ownBssids[r.BSSID] = true
 			}
 		}
 	}
 	// #1400: BSSIDs aprobados a mano (lista persistida en kv). Copia local
 	// para evaluar fuera del mutex.
-	approved := make(map[string]bool, len(l.impostorAllow))
+	approved := make(map[macaddr.MAC]bool, len(l.impostorAllow))
 	for b := range l.impostorAllow {
 		approved[b] = true
 	}
@@ -146,15 +144,15 @@ func (l *Live) EvalSsidImpostors() {
 		minTs    int64
 		maxTs    int64
 	}
-	byBssid := map[string]*sighting{}
+	byBssid := map[macaddr.MAC]*sighting{}
 	for rows.Next() {
-		var bssid, ssid, routerID string
+		var bssid macaddr.MAC
+		var ssid, routerID string
 		var signal, ts int64
 		if rows.Scan(&bssid, &ssid, &routerID, &signal, &ts) != nil {
 			continue
 		}
-		bssid = strings.ToUpper(strings.TrimSpace(bssid))
-		if bssid == "" || !fleetSsids[ssid] || ownBssids[bssid] || approved[bssid] {
+		if !bssid.IsValid() || !fleetSsids[ssid] || ownBssids[bssid] || approved[bssid] {
 			continue
 		}
 		s := byBssid[bssid]
@@ -189,7 +187,8 @@ func (l *Live) EvalSsidImpostors() {
 		if !confirmed {
 			continue
 		}
-		alertID := "alert-ssid-impostor-" + bssid
+		bssidStr := bssid.String()
+		alertID := "alert-ssid-impostor-" + bssidStr
 		if _, ok := l.impostorActive[bssid]; ok {
 			continue // ya emitida; el engine la conserva activa
 		}
@@ -206,11 +205,11 @@ func (l *Live) EvalSsidImpostors() {
 			Urgent:      true,
 			Severity:    "critical",
 			Title:       "SSID impostor detected",
-			Description: fmt.Sprintf("%s advertises %s (heard by %s, %d dBm)", bssid, s.ssid, routerName, s.signal),
+			Description: fmt.Sprintf("%s advertises %s (heard by %s, %d dBm)", bssidStr, s.ssid, routerName, s.signal),
 			Hint:        alerts.HintFor(alerts.HintSsidImpostor),
 			Type:        alerts.HintSsidImpostor,
 			Vars: map[string]string{
-				"bssid":  bssid,
+				"bssid":  bssidStr,
 				"ssid":   s.ssid,
 				"router": routerName,
 				"signal": fmt.Sprintf("%d", s.signal),
@@ -232,33 +231,31 @@ func (l *Live) EvalSsidImpostors() {
 
 // ImpostorApproved (#1400): BSSIDs aprobados a mano, ordenados. La UI la
 // muestra y permite revocar.
-func (l *Live) ImpostorApproved() []string {
+func (l *Live) ImpostorApproved() []macaddr.MAC {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	out := make([]string, 0, len(l.impostorAllow))
+	out := make([]macaddr.MAC, 0, len(l.impostorAllow))
 	for b := range l.impostorAllow {
 		out = append(out, b)
 	}
-	sort.Strings(out)
+	slices.SortFunc(out, macaddr.MAC.Compare)
 	return out
 }
 
 // ApproveImpostorBssid (#1400): marca un BSSID como propio (AP conocido que
 // no forma parte de la flota NetPulse). Persiste en kv y, si hay una alerta
 // de impostor activa para él, la resuelve al momento.
-func (l *Live) ApproveImpostorBssid(bssid string) error {
-	mac, err := net.ParseMAC(strings.TrimSpace(bssid))
-	if err != nil {
-		return fmt.Errorf("invalid bssid %q: %w", bssid, err)
+func (l *Live) ApproveImpostorBssid(bssid macaddr.MAC) error {
+	if !bssid.IsValid() {
+		return errors.New("invalid bssid")
 	}
-	norm := strings.ToUpper(mac.String())
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.impostorAllow[norm] = true
+	l.impostorAllow[bssid] = true
 	l.saveImpostorAllowLocked()
-	if alertID, ok := l.impostorActive[norm]; ok {
+	if alertID, ok := l.impostorActive[bssid]; ok {
 		l.engine.Resolve(alertID)
-		delete(l.impostorActive, norm)
+		delete(l.impostorActive, bssid)
 	}
 	return nil
 }
@@ -266,11 +263,10 @@ func (l *Live) ApproveImpostorBssid(bssid string) error {
 // RevokeImpostorBssid (#1400): quita un BSSID de la lista de aprobados. Si
 // el BSSID sigue visible, la regla vuelve a alertar en la próxima evaluación
 // (con la confirmación anti-transitorio de siempre).
-func (l *Live) RevokeImpostorBssid(bssid string) {
-	norm := strings.ToUpper(strings.TrimSpace(bssid))
+func (l *Live) RevokeImpostorBssid(bssid macaddr.MAC) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	delete(l.impostorAllow, norm)
+	delete(l.impostorAllow, bssid)
 	l.saveImpostorAllowLocked()
 }
 
@@ -279,7 +275,7 @@ func (l *Live) saveImpostorAllowLocked() {
 	if l.db == nil {
 		return
 	}
-	list := make([]string, 0, len(l.impostorAllow))
+	list := make([]macaddr.MAC, 0, len(l.impostorAllow))
 	for b := range l.impostorAllow {
 		list = append(list, b)
 	}

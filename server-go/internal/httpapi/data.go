@@ -595,12 +595,17 @@ func (s *server) handleAlertsImpostorApprove(w http.ResponseWriter, r *http.Requ
 		writeBodyError(w, st, "invalid_body", "body JSON inválido")
 		return
 	}
-	ap, ok := s.adapter.(interface{ ApproveImpostorBssid(string) error })
+	ap, ok := s.adapter.(interface{ ApproveImpostorBssid(macaddr.MAC) error })
 	if !ok {
 		writeError(w, http.StatusNotImplemented, "not_supported", "adapter does not support impostor approval")
 		return
 	}
-	if err := ap.ApproveImpostorBssid(body.Bssid); err != nil {
+	bssid, err := macaddr.Parse(body.Bssid)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_input", "invalid bssid")
+		return
+	}
+	if err := ap.ApproveImpostorBssid(bssid); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_input", "invalid bssid")
 		return
 	}
@@ -617,20 +622,22 @@ func (s *server) handleAlertsImpostorRevoke(w http.ResponseWriter, r *http.Reque
 		writeBodyError(w, st, "invalid_body", "body JSON inválido")
 		return
 	}
-	ap, ok := s.adapter.(interface{ RevokeImpostorBssid(string) })
+	ap, ok := s.adapter.(interface{ RevokeImpostorBssid(macaddr.MAC) })
 	if !ok {
 		writeError(w, http.StatusNotImplemented, "not_supported", "adapter does not support impostor approval")
 		return
 	}
-	ap.RevokeImpostorBssid(body.Bssid)
+	if bssid, err := macaddr.Parse(body.Bssid); err == nil {
+		ap.RevokeImpostorBssid(bssid)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // handleAlertsImpostorApproved (GET): lista de BSSIDs aprobados (#1400).
 func (s *server) handleAlertsImpostorApproved(w http.ResponseWriter, _ *http.Request) {
-	ap, ok := s.adapter.(interface{ ImpostorApproved() []string })
+	ap, ok := s.adapter.(interface{ ImpostorApproved() []macaddr.MAC })
 	if !ok {
-		writeJSON(w, http.StatusOK, []string{})
+		writeJSON(w, http.StatusOK, []macaddr.MAC{})
 		return
 	}
 	writeJSON(w, http.StatusOK, ap.ImpostorApproved())
@@ -701,8 +708,8 @@ func (s *server) handleUsteer(w http.ResponseWriter, r *http.Request) {
 // handleUsteerKick: POST /api/usteer/{mac}/kick - expulsa un cliente de su AP
 // usteer actual para forzar la reconexión a otro AP.
 func (s *server) handleUsteerKick(w http.ResponseWriter, r *http.Request) {
-	mac := macaddr.Normalize(r.PathValue("mac"))
-	if mac == "" {
+	mac, err := macaddr.Parse(r.PathValue("mac"))
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_mac", "invalid MAC")
 		return
 	}

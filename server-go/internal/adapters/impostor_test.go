@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 	"github.com/gnacho/netpulse/server-go/internal/db"
 )
@@ -239,7 +240,8 @@ func TestImpostorApprovedDoesNotAlert(t *testing.T) {
 	l, _ := newImpostorLive(t)
 	now := time.Now()
 	// #1400: BSSID aprobado a mano (AP UniFi ajeno a la flota NetPulse).
-	if err := l.ApproveImpostorBssid("de:ad:be:ef:00:10"); err != nil {
+	bssid := macaddr.MustParse("de:ad:be:ef:00:10")
+	if err := l.ApproveImpostorBssid(bssid); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
 	insertScan(t, l, "ap1", "DE:AD:BE:EF:00:10", "temiscira", now.Add(-40*time.Minute))
@@ -248,7 +250,7 @@ func TestImpostorApprovedDoesNotAlert(t *testing.T) {
 	if got := impostorAlerts(l); len(got) != 0 {
 		t.Fatalf("BSSID aprobado no debe alertar; alertas: %+v", got)
 	}
-	if got := l.ImpostorApproved(); len(got) != 1 || got[0] != "DE:AD:BE:EF:00:10" {
+	if got := l.ImpostorApproved(); len(got) != 1 || got[0] != bssid {
 		t.Fatalf("ImpostorApproved = %v", got)
 	}
 }
@@ -262,7 +264,7 @@ func TestImpostorApproveResolvesActiveAlert(t *testing.T) {
 	if got := impostorAlerts(l); len(got) != 1 {
 		t.Fatalf("debió alertar; alertas: %d", len(got))
 	}
-	if err := l.ApproveImpostorBssid("DE:AD:BE:EF:00:11"); err != nil {
+	if err := l.ApproveImpostorBssid(macaddr.MustParse("DE:AD:BE:EF:00:11")); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
 	if got := impostorAlerts(l); len(got) != 0 {
@@ -281,16 +283,17 @@ func TestImpostorApproveResolvesActiveAlert(t *testing.T) {
 func TestImpostorRevokeReAlerts(t *testing.T) {
 	l, _ := newImpostorLive(t)
 	now := time.Now()
+	bssid := macaddr.MustParse("DE:AD:BE:EF:00:12")
 	insertScan(t, l, "ap1", "DE:AD:BE:EF:00:12", "temiscira", now.Add(-40*time.Minute))
 	insertScan(t, l, "ap1", "DE:AD:BE:EF:00:12", "temiscira", now)
-	if err := l.ApproveImpostorBssid("DE:AD:BE:EF:00:12"); err != nil {
+	if err := l.ApproveImpostorBssid(bssid); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
 	l.EvalSsidImpostors()
 	if got := impostorAlerts(l); len(got) != 0 {
 		t.Fatalf("aprobado no debe alertar; alertas: %+v", got)
 	}
-	l.RevokeImpostorBssid("DE:AD:BE:EF:00:12")
+	l.RevokeImpostorBssid(bssid)
 	if got := l.ImpostorApproved(); len(got) != 0 {
 		t.Fatalf("revoke debe vaciar la lista; got %v", got)
 	}
@@ -302,10 +305,8 @@ func TestImpostorRevokeReAlerts(t *testing.T) {
 
 func TestImpostorApproveInvalidBssid(t *testing.T) {
 	l, _ := newImpostorLive(t)
-	for _, bad := range []string{"", "no-es-mac", "DE:AD:BE:EF:00", "zz:zz:zz:zz:zz:zz"} {
-		if err := l.ApproveImpostorBssid(bad); err == nil {
-			t.Fatalf("bssid inválido %q debe dar error", bad)
-		}
+	if err := l.ApproveImpostorBssid(macaddr.MAC{}); err == nil {
+		t.Fatalf("bssid vacío debe dar error")
 	}
 	if got := l.ImpostorApproved(); len(got) != 0 {
 		t.Fatalf("ningún inválido debe entrar en la lista; got %v", got)
@@ -314,7 +315,8 @@ func TestImpostorApproveInvalidBssid(t *testing.T) {
 
 func TestImpostorAllowlistPersistsAcrossRestart(t *testing.T) {
 	l, _ := newImpostorLive(t)
-	if err := l.ApproveImpostorBssid("DE:AD:BE:EF:00:13"); err != nil {
+	bssid := macaddr.MustParse("DE:AD:BE:EF:00:13")
+	if err := l.ApproveImpostorBssid(bssid); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
 	// Simula un reinicio: Live NUEVO sobre la misma BD (mismo dir).
@@ -322,7 +324,7 @@ func TestImpostorAllowlistPersistsAcrossRestart(t *testing.T) {
 	_ = dir
 	d2 := l.db // misma BD abierta
 	l2 := NewLive(nil, d2, []RouterConfig{{ID: "ap1", Name: "AP Uno"}}, nil)
-	if got := l2.ImpostorApproved(); len(got) != 1 || got[0] != "DE:AD:BE:EF:00:13" {
+	if got := l2.ImpostorApproved(); len(got) != 1 || got[0] != bssid {
 		t.Fatalf("la lista debe sobrevivir al reinicio; got %v", got)
 	}
 }

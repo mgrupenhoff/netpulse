@@ -4,19 +4,26 @@ package channelplan
 
 import (
 	"database/sql"
+	"errors"
+	"log"
 	"math"
 	"strings"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
+	"github.com/gnacho/netpulse/server-go/internal/logonce"
 )
+
+// macWarn avisa una sola vez por valor de los BSSID inválidos de un escaneo.
+var macWarn = logonce.New("[channelplan] ")
 
 // Store persiste scans y calcula recomendaciones de canal.
 type Store struct {
 	db *sql.DB
 	// ownSeeds devuelve BSSIDs exactos reportados como propios por los
 	// agentes (dawn/usteer local=true, #1082); opcional, se cablea en main.
-	ownSeeds func() []string
+	ownSeeds func() []macaddr.MAC
 }
 
 // NewStore crea el store sobre una conexión SQLite ya abierta.
@@ -25,7 +32,7 @@ func NewStore(db *sql.DB) *Store { return &Store{db: db} }
 // SetOwnSeeds fija el proveedor de BSSIDs propios exactos (p. ej.
 // AgentRegistry.LocalBssids). Se combinan con el prefijo MAC de routers.mac
 // y la transitividad por SSID.
-func (s *Store) SetOwnSeeds(f func() []string) { s.ownSeeds = f }
+func (s *Store) SetOwnSeeds(f func() []macaddr.MAC) { s.ownSeeds = f }
 
 // SaveScan guarda los resultados de un scan pasivo recibido en un push.
 func (s *Store) SaveScan(routerID string, ts int64, scans []probe.ScanResult) error {
@@ -48,7 +55,13 @@ func (s *Store) SaveScan(routerID string, ts int64, scans []probe.ScanResult) er
 	defer stmt.Close()
 
 	for _, sc := range scans {
-		if _, err := stmt.Exec(routerID, sc.Iface, strings.ToUpper(sc.BSSID), sc.SSID, sc.Channel, sc.Freq, sc.Signal, sc.WidthMhz, ts); err != nil {
+		// Un BSSID vacío o inválido no es un vecino utilizable: se descarta la
+		// fila (ParseOrWarn avisa una sola vez por valor inválido).
+		bssid, ok := macaddr.ParseOrWarn(macWarn, "channelplan.save_scan", sc.BSSID)
+		if !ok {
+			continue
+		}
+		if _, err := stmt.Exec(routerID, sc.Iface, bssid, sc.SSID, sc.Channel, sc.Freq, sc.Signal, sc.WidthMhz, ts); err != nil {
 			return err
 		}
 	}
@@ -125,12 +138,12 @@ func (s *Store) ScanOutcomes(routerID string) ([]ScanOutcomeRow, error) {
 
 // ScanRow es un vecino persistido (forma plana para la UI/API).
 type ScanRow struct {
-	Iface   string `json:"iface"`
-	BSSID   string `json:"bssid"`
-	SSID    string `json:"ssid"`
-	Channel int    `json:"channel"`
-	Freq    int    `json:"freq"`
-	Signal  int    `json:"signal"`
+	Iface   string      `json:"iface"`
+	BSSID   macaddr.MAC `json:"bssid"`
+	SSID    string      `json:"ssid"`
+	Channel int         `json:"channel"`
+	Freq    int         `json:"freq"`
+	Signal  int         `json:"signal"`
 	// WidthMhz: ancho anunciado por el vecino (#1087); 0 = desconocido
 	// (agente viejo o BSS sin HT/VHT): la UI dibuja 20 MHz de fallback.
 	WidthMhz int    `json:"widthMhz"`
@@ -152,10 +165,10 @@ type ScanRow struct {
 func (s *Store) RecentScans(routerID string, within time.Duration) ([]ScanRow, error) {
 	cutoff := time.Now().Add(-within).Unix()
 	// Semillas exactas de los agentes (dawn/usteer local=true, #1082).
-	exactOwn := map[string]bool{}
+	exactOwn := map[macaddr.MAC]bool{}
 	if s.ownSeeds != nil {
 		for _, mac := range s.ownSeeds() {
-			if mac = strings.ToUpper(strings.TrimSpace(mac)); mac != "" {
+			if mac.IsValid() {
 				exactOwn[mac] = true
 			}
 		}
@@ -194,9 +207,16 @@ func (s *Store) RecentScans(routerID string, within time.Duration) ([]ScanRow, e
 	for rows.Next() {
 		var r ScanRow
 		if err := rows.Scan(&r.RouterID, &r.Iface, &r.BSSID, &r.SSID, &r.Channel, &r.Freq, &r.Signal, &r.WidthMhz, &r.Ts); err != nil {
+			if errors.Is(err, macaddr.ErrSyntax) {
+				log.Printf("[netpulse:channelplan] skipping wifi_scans row with invalid BSSID: %v", err)
+				continue
+			}
 			return nil, err
 		}
-		if exactOwn[strings.ToUpper(strings.TrimSpace(r.BSSID))] {
+		if !r.BSSID.IsValid() {
+			continue
+		}
+		if exactOwn[r.BSSID] {
 			r.Own = true
 		} else {
 			r.Own = isOwnMeshBSSID(r.BSSID, prefixes)
@@ -601,8 +621,8 @@ func isDFSChannel(ch int) bool {
 // ownMeshPrefixes devuelve los primeros 5 octetos de la MAC de cada router
 // monitorizado (tabla routers). Un BSSID cuyo prefijo coincida es un AP de la
 // propia malla y no debe computarse como vecino (#631).
-func (s *Store) ownMeshPrefixes() []string {
-	var out []string
+func (s *Store) ownMeshPrefixes() [][5]byte {
+	var out [][5]byte
 	if s.db == nil {
 		return out
 	}
@@ -612,23 +632,18 @@ func (s *Store) ownMeshPrefixes() []string {
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var mac string
+		var mac macaddr.MAC
 		if rows.Scan(&mac) == nil {
-			mac = strings.ToUpper(strings.TrimSpace(mac))
-			if len(mac) >= 14 {
-				out = append(out, mac[:14]) // "AA:BB:CC:DD:EE"
-			}
+			b := mac.As6()
+			out = append(out, [5]byte(b[:5]))
 		}
 	}
 	return out
 }
 
-func isOwnMeshBSSID(bssid string, prefixes []string) bool {
-	b := strings.ToUpper(strings.TrimSpace(bssid))
-	if len(b) < 14 {
-		return false
-	}
-	pref := b[:14]
+func isOwnMeshBSSID(bssid macaddr.MAC, prefixes [][5]byte) bool {
+	b := bssid.As6()
+	pref := [5]byte(b[:5])
 	for _, p := range prefixes {
 		if p == pref {
 			return true

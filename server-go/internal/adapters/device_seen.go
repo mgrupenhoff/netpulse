@@ -153,8 +153,8 @@ func (l *Live) fleetSeenMACs() map[string]bool {
 			macs[m] = true
 		}
 		for _, r := range p.radios {
-			if m := normSeenMAC(r.BSSID); m != "" {
-				macs[m] = true
+			if r.BSSID.IsValid() {
+				macs[r.BSSID.String()] = true
 			}
 		}
 	}

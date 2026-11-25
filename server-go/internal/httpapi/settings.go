@@ -333,13 +333,6 @@ type knownMacItem struct {
 	Note string      `json:"note,omitempty"`
 }
 
-// validMAC normaliza y valida una dirección MAC a su forma canónica
-// (AA:BB:CC:DD:EE:FF). Acepta ':' o '-' como separador y 12 hex sin separador.
-func validMAC(raw string) (string, bool) {
-	m := macaddr.Normalize(raw)
-	return m, m != ""
-}
-
 // registerKnownMacsRoutes: GET/PUT/DELETE /api/settings/known-macs (admin,
 // issue #196) — allowlist de dispositivos confiables que no alertan como
 // "desconocido" y cuyo nombre se usa como alias.

@@ -10,8 +10,8 @@ package adapters
 
 import (
 	"sort"
-	"strings"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 )
 
@@ -22,19 +22,23 @@ func usteerAPsFromPayload(name string, p *probe.Payload) ([]UsteerAP, int) {
 	if p == nil || p.Data.Usteer == nil {
 		return nil, 0
 	}
-	var ifaceByBSSID map[string]string
-	var clientBand map[string]string
-	var clientSignal map[string]int
+	var ifaceByBSSID map[macaddr.MAC]string
+	var clientBand map[macaddr.MAC]string
+	var clientSignal map[macaddr.MAC]int
 	if wd := p.Data.Wireless; wd != nil {
-		ifaceByBSSID = make(map[string]string, len(wd.OwnBssids))
+		ifaceByBSSID = make(map[macaddr.MAC]string, len(wd.OwnBssids))
 		for _, ob := range wd.OwnBssids {
-			ifaceByBSSID[strings.ToUpper(ob.BSSID)] = ob.Iface
+			if m, ok := macaddr.ParseOrWarn(macWarn, "usteer.own_bssid", ob.BSSID); ok {
+				ifaceByBSSID[m] = ob.Iface
+			}
 		}
-		clientBand = make(map[string]string, len(wd.Clients))
-		clientSignal = make(map[string]int, len(wd.Clients))
+		clientBand = make(map[macaddr.MAC]string, len(wd.Clients))
+		clientSignal = make(map[macaddr.MAC]int, len(wd.Clients))
 		for mac, c := range wd.Clients {
-			clientBand[strings.ToUpper(mac)] = c.Band
-			clientSignal[strings.ToUpper(mac)] = c.SignalDbm
+			if m, ok := macaddr.ParseOrWarn(macWarn, "usteer.client_mac", mac); ok {
+				clientBand[m] = c.Band
+				clientSignal[m] = c.SignalDbm
+			}
 		}
 	}
 
@@ -56,6 +60,7 @@ func usteerAPsFromPayload(name string, p *probe.Payload) ([]UsteerAP, int) {
 			if hasLocalFlag && !ap.Local {
 				continue
 			}
+			bssid, _ := macaddr.ParseOrWarn(macWarn, "usteer.ap_bssid", ap.BSSID)
 			band := "2.4 GHz"
 			if ap.Freq >= 5000 {
 				band = "5 GHz"
@@ -63,14 +68,14 @@ func usteerAPsFromPayload(name string, p *probe.Payload) ([]UsteerAP, int) {
 			byBand[band] = append(byBand[band], len(aps))
 			aps = append(aps, UsteerAP{
 				SSID:           ssid,
-				BSSID:          strings.ToUpper(ap.BSSID),
+				BSSID:          bssid,
 				Hostname:       name,
 				Band:           band,
 				Freq:           ap.Freq,
 				UtilizationPct: ap.Load,
 				ClientCount:    ap.Clients,
 				Local:          true,
-				Iface:          ifaceByBSSID[strings.ToUpper(ap.BSSID)],
+				Iface:          ifaceByBSSID[bssid],
 			})
 		}
 		attachUsteerClients(aps, byBand, ssidData.Clients, clientBand, clientSignal)
@@ -81,7 +86,7 @@ func usteerAPsFromPayload(name string, p *probe.Payload) ([]UsteerAP, int) {
 		if aps[i].SSID != aps[j].SSID {
 			return aps[i].SSID < aps[j].SSID
 		}
-		return aps[i].BSSID < aps[j].BSSID
+		return aps[i].BSSID.Compare(aps[j].BSSID) < 0
 	})
 	return aps, len(aps)
 }
@@ -91,21 +96,21 @@ func usteerAPsFromPayload(name string, p *probe.Payload) ([]UsteerAP, int) {
 // usa el AP único del SSID. Señal: la de la estación si existe, si no la del
 // cliente usteer; señal 0/positiva = sin datos, se ignora (mismo criterio
 // que el sondeo SSH).
-func attachUsteerClients(aps []UsteerAP, byBand map[string][]int, clients map[string]probe.UsteerClient, clientBand map[string]string, clientSig map[string]int) {
-	attached := map[string]bool{}
+func attachUsteerClients(aps []UsteerAP, byBand map[string][]int, clients map[string]probe.UsteerClient, clientBand map[macaddr.MAC]string, clientSig map[macaddr.MAC]int) {
+	attached := map[macaddr.MAC]bool{}
 	for mac, uc := range clients {
-		macU := strings.ToUpper(mac)
-		if attached[macU] {
+		parsed, ok := macaddr.ParseOrWarn(macWarn, "usteer.client_mac", mac)
+		if !ok || attached[parsed] {
 			continue
 		}
-		signal := clientSig[macU]
+		signal := clientSig[parsed]
 		if signal == 0 {
 			signal = uc.Signal
 		}
 		if signal >= 0 {
 			continue
 		}
-		band := clientBand[macU]
+		band := clientBand[parsed]
 		idxs := byBand[band]
 		if len(idxs) == 0 {
 			if band != "" || len(byBand) != 1 {
@@ -115,10 +120,10 @@ func attachUsteerClients(aps []UsteerAP, byBand map[string][]int, clients map[st
 				idxs = v
 			}
 		}
-		aps[idxs[0]].Clients = append(aps[idxs[0]].Clients, UsteerClient{MAC: macU, Signal: signal})
-		attached[macU] = true
+		aps[idxs[0]].Clients = append(aps[idxs[0]].Clients, UsteerClient{MAC: parsed, Signal: signal})
+		attached[parsed] = true
 	}
 	for i := range aps {
-		sort.Slice(aps[i].Clients, func(x, y int) bool { return aps[i].Clients[x].MAC < aps[i].Clients[y].MAC })
+		sort.Slice(aps[i].Clients, func(x, y int) bool { return aps[i].Clients[x].MAC.Compare(aps[i].Clients[y].MAC) < 0 })
 	}
 }

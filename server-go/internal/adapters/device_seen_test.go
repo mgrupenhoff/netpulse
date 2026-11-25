@@ -3,6 +3,8 @@ package adapters
 import (
 	"testing"
 	"time"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 // #954: first_seen se fija en el alta y no se toca después; last_seen
@@ -190,9 +192,9 @@ func TestPurgeFleetSeenIncludesRadioBSSIDs(t *testing.T) {
 	d := openLiveTestDB(t)
 	l := &Live{db: d, lastPolled: map[string]*routerPolled{
 		"ap1": {brMac: "aa:aa:aa:aa:aa:01", radios: []Radio{
-			{Name: "2.4 GHz", BSSID: "aa:aa:aa:aa:aa:02"},
-			{Name: "5 GHz", BSSID: "AA-AA-AA-AA-AA-03"}, // guiones: normaliza
-			{Name: "5 GHz", BSSID: ""},                  // sin BSSID: no-op
+			{Name: "2.4 GHz", BSSID: macaddr.MustParse("aa:aa:aa:aa:aa:02")},
+			{Name: "5 GHz", BSSID: macaddr.MustParse("AA-AA-AA-AA-AA-03")}, // guiones: normaliza
+			{Name: "5 GHz"}, // sin BSSID: no-op
 		}},
 	}}
 	// El registro guarda MACs normalizadas (normSeenMAC en el alta): mayúsculas
@@ -222,7 +224,7 @@ func TestPurgeFleetSeenIncludesRadioBSSIDs(t *testing.T) {
 func TestFilterTombstonedAlsoFiltersFleetMACs(t *testing.T) {
 	d := openLiveTestDB(t)
 	l := &Live{db: d, lastPolled: map[string]*routerPolled{
-		"ap1": {brMac: "aa:aa:aa:aa:aa:01", radios: []Radio{{Name: "2.4 GHz", BSSID: "aa:aa:aa:aa:aa:02"}}},
+		"ap1": {brMac: "aa:aa:aa:aa:aa:01", radios: []Radio{{Name: "2.4 GHz", BSSID: macaddr.MustParse("aa:aa:aa:aa:aa:02")}}},
 	}}
 	devs := []Device{
 		{MAC: "AA:AA:AA:AA:AA:01"}, // bridge

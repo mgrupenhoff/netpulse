@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 // reanchorRunner es un fake sshRunner genérico para los tests de re-anchor.
@@ -70,10 +72,10 @@ func TestReanchorUsteer(t *testing.T) {
 		t.Fatalf("expected 1 recommendation, got %d", len(recs))
 	}
 	r := recs[0]
-	if r.MAC != "AA:BB:CC:DD:EE:FF" {
+	if r.MAC != macaddr.MustParse("AA:BB:CC:DD:EE:FF") {
 		t.Errorf("mac = %q", r.MAC)
 	}
-	if r.CurrentBSSID != "9C:9D:7E:1B:EA:B2" || r.RecommendedBSSID != "9C:9D:7E:1B:EA:B3" {
+	if r.CurrentBSSID != macaddr.MustParse("9C:9D:7E:1B:EA:B2") || r.RecommendedBSSID != macaddr.MustParse("9C:9D:7E:1B:EA:B3") {
 		t.Errorf("current/recommended bssid = %q / %q", r.CurrentBSSID, r.RecommendedBSSID)
 	}
 	if r.DeltaDbm != 25 {
@@ -179,7 +181,7 @@ func TestReanchorNone(t *testing.T) {
 }
 
 func TestReanchorKickScript(t *testing.T) {
-	got := ReanchorKickScript("aa:bb:cc:dd:ee:ff", "wlan0")
+	got := ReanchorKickScript(macaddr.MustParse("aa:bb:cc:dd:ee:ff"), "wlan0")
 	want := fmt.Sprintf("ubus call hostapd.wlan0 del_client '{\"addr\":\"AA:BB:CC:DD:EE:FF\",\"reason\":5,\"deauth\":true,\"ban_time\":120000}'")
 	if got != want {
 		t.Fatalf("script = %q, want %q", got, want)

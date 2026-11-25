@@ -469,11 +469,11 @@ type Live struct {
 	// impostorActive (#1358): BSSID impostor → alertID emitida. Solo en
 	// memoria a propósito: si el server reinicia y el impostor sigue
 	// visible, la alerta se re-emite (seguridad prima sobre re-aviso).
-	impostorActive map[string]string
+	impostorActive map[macaddr.MAC]string
 	// impostorAllow (#1400): BSSIDs aprobados a mano como propios (APs
 	// conocidos fuera de la flota: UniFi, Omada...). Persistido en kv
 	// (impostorAllowKey) para sobrevivir reinicios.
-	impostorAllow map[string]bool
+	impostorAllow map[macaddr.MAC]bool
 	// impostorEnabled (#1400): interruptor global de la regla de impostores
 	// (default true; persistido en kv impostorEnabledKey).
 	impostorEnabled bool
@@ -539,7 +539,7 @@ type Live struct {
 	// routerMacs: id → bridge MAC persistida en DB. Permite emparejar un agente
 	// con su router aunque el slug elegido por el usuario no coincida con el id
 	// autogenerado del router (#282).
-	routerMacs map[string]string
+	routerMacs map[string]macaddr.MAC
 
 	// sshAuthFailAlerted evita repetir la alerta de "SSH sin clave pero agente
 	// vivo" (#281). Se limpia cuando el acceso SSH se recupera.
@@ -639,8 +639,8 @@ func NewLive(cfg *config.Config, d *db.DB, initial []RouterConfig, pool *SSHPool
 		unverifiedNoted:      map[string]bool{},
 		wifiNoIPSince:        map[string]int64{},
 		wifiNoIPNoted:        map[string]bool{},
-		impostorActive:       map[string]string{},
-		impostorAllow:        map[string]bool{},
+		impostorActive:       map[macaddr.MAC]string{},
+		impostorAllow:        map[macaddr.MAC]bool{},
 		impostorEnabled:      true,
 		devicePresence:       map[string]bool{},
 		presenceMisses:       map[string]int{},
@@ -659,7 +659,7 @@ func NewLive(cfg *config.Config, d *db.DB, initial []RouterConfig, pool *SSHPool
 		agentDownConfirm:     3 * time.Minute, // Dead Man's Switch (P6): 3 min por defecto
 		agentOutdatedAlerted: map[string]bool{},
 		agentOutdatedKey:     map[string]string{},
-		routerMacs:           map[string]string{},
+		routerMacs:           map[string]macaddr.MAC{},
 		sshAuthFailAlerted:   map[string]bool{},
 		fdbMemo:              map[string]fdbPortMemo{},
 		uplinkPorts:          map[string]map[string]bool{},
@@ -714,7 +714,9 @@ func NewLive(cfg *config.Config, d *db.DB, initial []RouterConfig, pool *SSHPool
 			var list []string
 			if json.Unmarshal([]byte(allowRaw), &list) == nil {
 				for _, b := range list {
-					l.impostorAllow[strings.ToUpper(strings.TrimSpace(b))] = true
+					if m, ok := macaddr.ParseOrWarn(macWarn, "impostor.allowlist", b); ok {
+						l.impostorAllow[m] = true
+					}
 				}
 			}
 		}
@@ -741,14 +743,15 @@ func (l *Live) loadRouterMacs() {
 	if l.db == nil {
 		return
 	}
-	l.routerMacs = map[string]string{}
+	l.routerMacs = map[string]macaddr.MAC{}
 	rows, err := l.db.Query("SELECT id, mac FROM routers WHERE mac IS NOT NULL AND mac != ''")
 	if err != nil {
 		return
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id, mac string
+		var id string
+		var mac macaddr.MAC
 		if rows.Scan(&id, &mac) == nil {
 			l.routerMacs[id] = mac
 		}
@@ -2332,11 +2335,11 @@ func (l *Live) pollAll(ctx context.Context) map[string]*routerPolled {
 			// sondee bien en el tick actual.
 			if l.db != nil && res.p.brMac != "" {
 				_, _ = l.db.Exec("UPDATE routers SET mac = ? WHERE id = ?", res.p.brMac, res.cfg.ID)
-				if res.p.brMac != "" {
+				if m, ok := macaddr.ParseOrWarn(macWarn, "live.router_mac", res.p.brMac); ok {
 					// #1334: la identidad MAC también se actualiza EN PROCESO;
 					// el write a BD solo era útil tras un reinicio, y el
 					// matching de agentes (MatchRouter) la consulta en vivo.
-					l.routerMacs[res.cfg.ID] = res.p.brMac
+					l.routerMacs[res.cfg.ID] = m
 				}
 			}
 			// Router recuperado (offline→online, SPEC-ALERTAS §1). issue #846:
@@ -4242,7 +4245,7 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 	// tabla de clientes al dejar de filtrarse por la retención de #1145.
 	if l.agents != nil {
 		for _, b := range l.agents.LocalBssids() {
-			routerMacs[b] = true
+			routerMacs[b.String()] = true
 		}
 	}
 	for _, p := range polled {
@@ -5777,7 +5780,7 @@ func (l *Live) GetUsteer(context.Context) (*Usteer, error) {
 	l.mu.Lock()
 	routers := append([]RouterConfig(nil), l.routers...)
 	reg := l.agents
-	macs := make(map[string]string, len(l.routerMacs))
+	macs := make(map[string]macaddr.MAC, len(l.routerMacs))
 	for k, v := range l.routerMacs {
 		macs[k] = v
 	}
@@ -5852,19 +5855,18 @@ type sshRunner interface {
 // del_client falla por un estado transitorio del AP, intenta expulsarlo de
 // cada uno hasta que un intento tenga éxito. Solo devuelve error cuando el
 // cliente no está en ningún router o cuando todos los intentos fallan.
-func (l *Live) KickUsteerClient(ctx context.Context, mac string) error {
-	target := strings.ToUpper(strings.TrimSpace(mac))
-	if target == "" || !validMAC(target) {
+func (l *Live) KickUsteerClient(ctx context.Context, mac macaddr.MAC) error {
+	if !mac.IsValid() {
 		return fmt.Errorf("invalid MAC")
 	}
 	l.mu.Lock()
 	routers := append([]RouterConfig(nil), l.routers...)
 	l.mu.Unlock()
 
-	return kickUsteerClient(target, routers, l.pool)
+	return kickUsteerClient(mac, routers, l.pool)
 }
 
-func kickUsteerClient(target string, routers []RouterConfig, runner sshRunner) error {
+func kickUsteerClient(target macaddr.MAC, routers []RouterConfig, runner sshRunner) error {
 	var failures []string
 
 	for _, cfg := range routers {
@@ -5881,8 +5883,8 @@ func kickUsteerClient(target string, routers []RouterConfig, runner sshRunner) e
 		}
 		for iface, macs := range clients {
 			var found bool
-			for m := range macs {
-				if strings.ToUpper(m) == target {
+			for raw := range macs {
+				if m, ok := macaddr.ParseOrWarn(macWarn, "usteer.kick_client", raw); ok && m == target {
 					found = true
 					break
 				}
@@ -5909,12 +5911,6 @@ func kickUsteerClient(target string, routers []RouterConfig, runner sshRunner) e
 	return fmt.Errorf("client not found")
 }
 
-// validMAC acepta MAC con separadores ':' o '-'. Exige 17 caracteres (con
-// separador) porque el llamador pasa target tal cual a usteer sin insertar ':'.
-func validMAC(s string) bool {
-	return macaddr.NormalizeSeparated(s) != ""
-}
-
 // buildUsteerAP construye un UsteerAP desde una entrada cruda de local_info.
 // Band se deriva de freq (>= 5000 MHz → 5 GHz). Función pura para testear.
 func buildUsteerAP(iface string, raw usteerAPRaw, hostname string, local bool) UsteerAP {
@@ -5922,9 +5918,10 @@ func buildUsteerAP(iface string, raw usteerAPRaw, hostname string, local bool) U
 	if raw.Freq >= 5000 {
 		band = "5 GHz"
 	}
+	bssid, _ := macaddr.ParseOrWarn(macWarn, "usteer.ap_bssid", raw.BSSID)
 	return UsteerAP{
 		SSID:           raw.SSID,
-		BSSID:          strings.ToUpper(raw.BSSID),
+		BSSID:          bssid,
 		Hostname:       hostname,
 		Band:           band,
 		Freq:           raw.Freq,
@@ -5945,12 +5942,16 @@ func buildUsteerAPWithClients(iface string, raw usteerAPRaw, clients map[string]
 		if c.Signal >= 0 {
 			continue // señal 0/positiva = sin datos
 		}
+		parsed, ok := macaddr.ParseOrWarn(macWarn, "usteer.client_mac", mac)
+		if !ok {
+			continue
+		}
 		ap.Clients = append(ap.Clients, UsteerClient{
-			MAC:    strings.ToUpper(mac),
+			MAC:    parsed,
 			Signal: c.Signal,
 		})
 	}
-	sort.Slice(ap.Clients, func(i, j int) bool { return ap.Clients[i].MAC < ap.Clients[j].MAC })
+	sort.Slice(ap.Clients, func(i, j int) bool { return ap.Clients[i].MAC.Compare(ap.Clients[j].MAC) < 0 })
 	return ap
 }
 
@@ -6045,12 +6046,13 @@ func parseUciWireless(out string) []Dot11rIface {
 		f := s.fields
 		dev := f["device"]
 		di := devMap[dev]
+		mac, _ := macaddr.ParseOrWarn(macWarn, "dot11r.iface_mac", f["macaddr"])
 		ifaces = append(ifaces, Dot11rIface{
 			Section:            name,
 			Device:             dev,
 			Ifname:             f["ifname"],
 			SSID:               f["ssid"],
-			MAC:                f["macaddr"],
+			MAC:                mac,
 			Channel:            di.channel,
 			Band:               di.band,
 			Network:            f["network"],
@@ -6108,7 +6110,7 @@ func (l *Live) GetDot11r(ctx context.Context) (*Dot11rOverview, error) {
 	l.mu.Lock()
 	routers := append([]RouterConfig(nil), l.routers...)
 	reg := l.agents
-	macs := make(map[string]string, len(l.routerMacs))
+	macs := make(map[string]macaddr.MAC, len(l.routerMacs))
 	for k, v := range l.routerMacs {
 		macs[k] = v
 	}

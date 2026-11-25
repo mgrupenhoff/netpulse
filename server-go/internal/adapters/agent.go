@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 	"github.com/gnacho/netpulse/server-go/internal/alerts"
 	"github.com/gnacho/netpulse/server-go/internal/vercmp"
@@ -46,7 +47,7 @@ type AgentState struct {
 	// push completo y cada roam de un cliente provocaría un "sin cliente"
 	// transitorio en routers agent-only emparejados por hostname/MAC.
 	Host      string
-	BridgeMAC string
+	BridgeMAC macaddr.MAC
 }
 
 // effectiveTTL devuelve la ventana de frescura del estado: el TTL base, o
@@ -100,7 +101,7 @@ func (r *AgentRegistry) Ingest(p *probe.Payload) {
 		if sd.Board != nil {
 			st.Host = sd.Board.Hostname
 		}
-		st.BridgeMAC = sd.BridgeMAC
+		st.BridgeMAC, _ = macaddr.ParseOrWarn(macWarn, "agent.bridge_mac", sd.BridgeMAC)
 	}
 	// #852: un push wireless-only no trae identidad; hereda la última
 	// conocida para que MatchRouter siga emparejando al agente.
@@ -108,7 +109,7 @@ func (r *AgentRegistry) Ingest(p *probe.Payload) {
 		if st.Host == "" {
 			st.Host = prev.Host
 		}
-		if st.BridgeMAC == "" {
+		if !st.BridgeMAC.IsValid() {
 			st.BridgeMAC = prev.BridgeMAC
 		}
 	}
@@ -132,12 +133,12 @@ func (r *AgentRegistry) Info(slug string) (lastSeen time.Time, version, kind str
 // system (#852 los conserva en AgentState). La usa GET /api/agents para
 // asociar el agente con su router cuando el payload actual no lleva identidad
 // (#1874).
-func (r *AgentRegistry) Identity(slug string) (host, bridgeMAC string, ok bool) {
+func (r *AgentRegistry) Identity(slug string) (host string, bridgeMAC macaddr.MAC, ok bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	st, found := r.states[slug]
 	if !found {
-		return "", "", false
+		return "", macaddr.MAC{}, false
 	}
 	return st.Host, st.BridgeMAC, true
 }
@@ -176,14 +177,14 @@ func (r *AgentRegistry) ExternalDownConfirm(slug string, base time.Duration) tim
 // (AP local=true en sus datos dawn/usteer). El channel-plan los usa de
 // semilla exacta para la detección de redes propias (#1082): casos como el
 // guest de un GL.iNet, cuya MAC no comparte prefijo con routers.mac.
-func (r *AgentRegistry) LocalBssids() []string {
+func (r *AgentRegistry) LocalBssids() []macaddr.MAC {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	seen := map[string]bool{}
-	var out []string
-	add := func(mac string) {
-		mac = strings.ToUpper(strings.TrimSpace(mac))
-		if mac == "" || seen[mac] {
+	seen := map[macaddr.MAC]bool{}
+	var out []macaddr.MAC
+	add := func(raw string) {
+		mac, ok := macaddr.ParseOrWarn(macWarn, "agent.local_bssid", raw)
+		if !ok || seen[mac] {
 			return
 		}
 		seen[mac] = true
@@ -350,8 +351,8 @@ func (r *AgentRegistry) Restore(slug string, st *AgentState) {
 			if st.Host == "" && sd.Board != nil {
 				st.Host = sd.Board.Hostname
 			}
-			if st.BridgeMAC == "" {
-				st.BridgeMAC = sd.BridgeMAC
+			if !st.BridgeMAC.IsValid() {
+				st.BridgeMAC, _ = macaddr.ParseOrWarn(macWarn, "agent.bridge_mac", sd.BridgeMAC)
 			}
 		}
 	}
@@ -378,7 +379,7 @@ func (r *AgentRegistry) Snapshot(slug string) *AgentState {
 // agente, su payload y si está fresco. Permite que un agente emparejado con
 // un slug elegido por el usuario alimente un router cuyo id autogenerado no
 // coincide con ese slug.
-func (r *AgentRegistry) MatchRouter(cfg RouterConfig, macs map[string]string) (string, *probe.Payload, bool) {
+func (r *AgentRegistry) MatchRouter(cfg RouterConfig, macs map[string]macaddr.MAC) (string, *probe.Payload, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -400,9 +401,9 @@ func (r *AgentRegistry) MatchRouter(cfg RouterConfig, macs map[string]string) (s
 	// (los hostnames se duplican en APs puente idénticos). Se recogen TODOS
 	// los candidatos por nivel y solo un match ÚNICO asocia: la ambigüedad no
 	// inventa asociaciones (antes: primer match en orden aleatorio de mapa).
-	targetMac := ""
+	var targetMac macaddr.MAC
 	if macs != nil {
-		targetMac = strings.ToUpper(strings.TrimSpace(macs[cfg.ID]))
+		targetMac = macs[cfg.ID]
 	}
 	var macMatch *AgentState
 	var macMatchSlug string
@@ -422,7 +423,7 @@ func (r *AgentRegistry) MatchRouter(cfg RouterConfig, macs map[string]string) (s
 		if st.Payload == nil {
 			continue
 		}
-		if targetMac != "" && strings.EqualFold(st.BridgeMAC, targetMac) {
+		if targetMac.IsValid() && st.BridgeMAC == targetMac {
 			macMatchCount++
 			macMatch = st
 			macMatchSlug = slug
@@ -509,7 +510,7 @@ func agentName(cfg RouterConfig) string {
 func (l *Live) pollRouterAgent(cfg RouterConfig) (bool, *routerPolled) {
 	l.mu.Lock()
 	reg := l.agents
-	macs := make(map[string]string, len(l.routerMacs))
+	macs := make(map[string]macaddr.MAC, len(l.routerMacs))
 	for k, v := range l.routerMacs {
 		macs[k] = v
 	}

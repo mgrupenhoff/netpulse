@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/alerts"
 )
 
@@ -40,7 +41,7 @@ func TestAgentRegistryMatchRouterByMac(t *testing.T) {
 	reg.Ingest(pl)
 
 	cfg := RouterConfig{ID: "tp-link-eap225-09", Name: "Este", Host: "192.168.1.9"}
-	macs := map[string]string{cfg.ID: "94:83:C4:00:00:09"}
+	macs := map[string]macaddr.MAC{cfg.ID: macaddr.MustParse("94:83:C4:00:00:09")}
 	slug, p, fresh := reg.MatchRouter(cfg, macs)
 	if !fresh || slug != "ap-east" || p == nil {
 		t.Fatalf("esperaba match fresco por MAC; got slug=%q fresh=%v p=%v", slug, fresh, p)
@@ -66,7 +67,7 @@ func TestAgentRegistryMatchRouterPrefersBridgeMacOverAmbiguousHostname(t *testin
 	reg.Ingest(second)
 
 	cfg := RouterConfig{ID: "jidu6401-2", Name: "Jidu6401", Host: "192.168.1.2"}
-	slug, p, fresh := reg.MatchRouter(cfg, map[string]string{cfg.ID: "AA:AA:AA:AA:AA:02"})
+	slug, p, fresh := reg.MatchRouter(cfg, map[string]macaddr.MAC{cfg.ID: macaddr.MustParse("AA:AA:AA:AA:AA:02")})
 	if !fresh || slug != "ap-second" || p == nil || p.Router != "ap-second" {
 		t.Fatalf("bridge MAC should select the physical AP: slug=%q fresh=%v payload=%v", slug, fresh, p)
 	}
@@ -210,7 +211,7 @@ func TestAgentRegistryMatchRouterRetainedIdentity(t *testing.T) {
 	}
 
 	cfgMac := RouterConfig{ID: "tp-link-eap225-09", Name: "Otro", Host: "192.168.1.9"}
-	macs := map[string]string{cfgMac.ID: "94:83:C4:00:00:09"}
+	macs := map[string]macaddr.MAC{cfgMac.ID: macaddr.MustParse("94:83:C4:00:00:09")}
 	slug, p, fresh = reg.MatchRouter(cfgMac, macs)
 	if slug != "flint2" || p == nil || !fresh {
 		t.Fatalf("match por MAC retenida tras push wireless-only: slug=%q fresh=%v p=%v", slug, fresh, p)

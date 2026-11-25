@@ -3,6 +3,7 @@ package httpapi
 import (
 	"testing"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/adapters"
 	"github.com/gnacho/netpulse/server-go/internal/db"
 )
@@ -33,7 +34,7 @@ func TestStateRestorerNormalizesMACs(t *testing.T) {
 	if _, ok := st.Payload.Data.FDB.MACs["AA:BB:CC:DD:EE:02"]; !ok || len(st.Payload.Data.FDB.MACs) != 1 {
 		t.Errorf("esperaba la clave FDB canónica, obtuve %v", st.Payload.Data.FDB.MACs)
 	}
-	if st.BridgeMAC != "AA:BB:CC:DD:EE:00" {
+	if st.BridgeMAC != macaddr.MustParse("AA:BB:CC:DD:EE:00") {
 		t.Errorf("esperaba BridgeMAC canónica, obtuve %q", st.BridgeMAC)
 	}
 }

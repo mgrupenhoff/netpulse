@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 )
 
@@ -752,9 +753,10 @@ func parseRadios(out string) []Radio {
 func radiosToAdapter(in []probe.Radio) []Radio {
 	out := make([]Radio, 0, len(in))
 	for _, r := range in {
+		bssid, _ := macaddr.ParseOrWarn(macWarn, "openwrt.radio_bssid", r.BSSID)
 		out = append(out, Radio{Name: r.Name, Channel: r.Channel,
 			WidthMhz: r.WidthMhz, PowerDbm: r.PowerDbm, Clients: r.Clients,
-			NoiseDbm: r.NoiseDbm, BSSID: r.BSSID})
+			NoiseDbm: r.NoiseDbm, BSSID: bssid})
 	}
 	return out
 }

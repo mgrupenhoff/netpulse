@@ -16,6 +16,7 @@ import (
 	"net"
 	"strconv"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/alerts"
 )
 
@@ -650,17 +651,17 @@ type UsteerOverview struct {
 // a un AP con mejor señal. Los campos siguen la convención del dominio:
 // señal en -dBm (más cercano a 0 = mejor).
 type ReanchorRecommendation struct {
-	MAC                 string `json:"mac"`
-	CurrentBSSID        string `json:"currentBssid"`
-	CurrentHostname     string `json:"currentHostname"`
-	CurrentIface        string `json:"currentIface"`
-	CurrentHost         string `json:"-"`
-	CurrentSignal       int    `json:"currentSignal"`
-	RecommendedBSSID    string `json:"recommendedBssid"`
-	RecommendedHostname string `json:"recommendedHostname"`
-	RecommendedIface    string `json:"recommendedIface"`
-	RecommendedSignal   int    `json:"recommendedSignal"`
-	DeltaDbm            int    `json:"deltaDbm"`
+	MAC                 macaddr.MAC `json:"mac"`
+	CurrentBSSID        macaddr.MAC `json:"currentBssid"`
+	CurrentHostname     string      `json:"currentHostname"`
+	CurrentIface        string      `json:"currentIface"`
+	CurrentHost         string      `json:"-"`
+	CurrentSignal       int         `json:"currentSignal"`
+	RecommendedBSSID    macaddr.MAC `json:"recommendedBssid"`
+	RecommendedHostname string      `json:"recommendedHostname"`
+	RecommendedIface    string      `json:"recommendedIface"`
+	RecommendedSignal   int         `json:"recommendedSignal"`
+	DeltaDbm            int         `json:"deltaDbm"`
 }
 
 // ReanchorConfig contiene los umbrales de la recomendación.
@@ -765,8 +766,8 @@ type Radio struct {
 	Congested bool    `json:"congested,omitempty"` // solo demo
 	// #1213/#1206: ruido de la banda y BSSID de la interfaz AP (del agente o
 	// de iwinfo vía SSH). nil/vacío = el driver no los reporta.
-	NoiseDbm *int   `json:"noiseDbm,omitempty"`
-	BSSID    string `json:"bssid,omitempty"`
+	NoiseDbm *int        `json:"noiseDbm,omitempty"`
+	BSSID    macaddr.MAC `json:"bssid,omitzero"`
 }
 
 // Backhaul del AP (null en gateway): {kind:'cable', headline, latencyMs} o el
@@ -930,16 +931,16 @@ type WGTransfer struct {
 
 // DawnClient es un cliente visto por un AP en el hearing map de DAWN.
 type DawnClient struct {
-	MAC    string `json:"mac"`
-	Signal int    `json:"signal"` // -dBm (ej. -65)
-	HT     bool   `json:"ht"`
-	VHT    bool   `json:"vht"`
+	MAC    macaddr.MAC `json:"mac"`
+	Signal int         `json:"signal"` // -dBm (ej. -65)
+	HT     bool        `json:"ht"`
+	VHT    bool        `json:"vht"`
 }
 
 // DawnAP es un punto de acceso visto por DAWN.
 type DawnAP struct {
 	SSID           string       `json:"ssid"`
-	BSSID          string       `json:"bssid"`
+	BSSID          macaddr.MAC  `json:"bssid"`
 	Hostname       string       `json:"hostname"`
 	Band           string       `json:"band"` // freq >= 5000 ? "5 GHz" : "2.4 GHz"
 	Channel        int          `json:"channel"`
@@ -957,14 +958,14 @@ type DawnAP struct {
 // UsteerClient es un cliente WiFi conectado visto por usteer. Signal en -dBm
 // (más cercano a 0 = mejor).
 type UsteerClient struct {
-	MAC    string `json:"mac"`
-	Signal int    `json:"signal"` // -dBm (ej. -65)
+	MAC    macaddr.MAC `json:"mac"`
+	Signal int         `json:"signal"` // -dBm (ej. -65)
 }
 
 // UsteerAP es un punto de acceso visto por usteer (local o remoto).
 type UsteerAP struct {
 	SSID           string         `json:"ssid"`
-	BSSID          string         `json:"bssid"`
+	BSSID          macaddr.MAC    `json:"bssid"`
 	Hostname       string         `json:"hostname"`
 	Band           string         `json:"band"`           // freq >= 5000 ? "5 GHz" : "2.4 GHz"
 	Freq           int            `json:"freq"`           // MHz
@@ -997,13 +998,13 @@ type Usteer struct {
 // relevantes para 802.11r (FT) y sus estándares compañeros (k/v/w) que together
 // habilitan el roaming suave en una malla DAWN/hostapd.
 type Dot11rIface struct {
-	Section string `json:"section"` // uci section name (wifi2g, wifi5g, guest, ...)
-	Device  string `json:"device"`  // radio0, radio1
-	Ifname  string `json:"ifname"`  // wlan0, wlan1 (puede estar vacío en configs muy nuevas)
-	SSID    string `json:"ssid"`
-	MAC     string `json:"mac"`               // macaddr (BSSID del BSS)
-	Channel int    `json:"channel,omitempty"` // mapeado desde radio.channel
-	Band    string `json:"band,omitempty"`    // "2.4 GHz"|"5 GHz" desde radio.band
+	Section string      `json:"section"` // uci section name (wifi2g, wifi5g, guest, ...)
+	Device  string      `json:"device"`  // radio0, radio1
+	Ifname  string      `json:"ifname"`  // wlan0, wlan1 (puede estar vacío en configs muy nuevas)
+	SSID    string      `json:"ssid"`
+	MAC     macaddr.MAC `json:"mac"`               // macaddr (BSSID del BSS)
+	Channel int         `json:"channel,omitempty"` // mapeado desde radio.channel
+	Band    string      `json:"band,omitempty"`    // "2.4 GHz"|"5 GHz" desde radio.band
 
 	// Network es la red del bridge a la que pertenece la iface (lan/guest/iot...)
 	// y Disabled si la iface está desactivada (#541): las redes invitadas/iot y
@@ -1300,7 +1301,7 @@ type Snapshotter interface {
 	GetUsteer(ctx context.Context) (*Usteer, error)
 	// KickUsteerClient desconecta un cliente de su AP usteer actual.
 	// Devuelve error si no se encuentra o falla el comando hostapd.
-	KickUsteerClient(ctx context.Context, mac string) error
+	KickUsteerClient(ctx context.Context, mac macaddr.MAC) error
 	// GetReanchorRecommendations devuelve recomendaciones de re-anclaje WiFi
 	// basadas en usteer (preferido) o DAWN, o (slice vacío, "none", nil) si
 	// ningún daemon está disponible.
