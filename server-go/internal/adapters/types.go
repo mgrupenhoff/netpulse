@@ -200,15 +200,15 @@ type WGWindow struct {
 // CPU/RAM/Temp son *int porque el live puede emitir null en el primer tick
 // (primera muestra de /proc/stat; SPEC §7.2 getCpuPercent).
 type Router struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Model      string `json:"model"`
-	ModelShort string `json:"modelShort"`
-	Role       string `json:"role"`
-	RoleBadge  string `json:"roleBadge"`
-	IP         string `json:"ip"`
-	MAC        string `json:"mac,omitempty"`      // ausente si no se conoce (undefined)
-	Firmware   string `json:"firmware,omitempty"` // ausente si no se conoce
+	ID         string      `json:"id"`
+	Name       string      `json:"name"`
+	Model      string      `json:"model"`
+	ModelShort string      `json:"modelShort"`
+	Role       string      `json:"role"`
+	RoleBadge  string      `json:"roleBadge"`
+	IP         string      `json:"ip"`
+	MAC        macaddr.MAC `json:"mac,omitzero"`       // ausente si no se conoce (undefined)
+	Firmware   string      `json:"firmware,omitempty"` // ausente si no se conoce
 	// FirmwareTarget: versión objetivo configurada por el admin (issue #241).
 	// Ausente si no está configurado (sin comprobación).
 	FirmwareTarget string `json:"firmwareTarget,omitempty"`
@@ -337,13 +337,13 @@ type Device struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	// NameSource: evidencia que produjo el nombre visible. Vacío = desconocida.
-	NameSource   string `json:"nameSource,omitempty"`
-	Type         string `json:"type"`
-	Manufacturer string `json:"manufacturer"`
-	IP           string `json:"ip"`
-	MAC          string `json:"mac"`
-	RouterID     string `json:"routerId"`
-	Band         string `json:"band"` // "5 GHz"|"2.4 GHz"|"cable"|"—"
+	NameSource   string      `json:"nameSource,omitempty"`
+	Type         string      `json:"type"`
+	Manufacturer string      `json:"manufacturer"`
+	IP           string      `json:"ip"`
+	MAC          macaddr.MAC `json:"mac"`
+	RouterID     string      `json:"routerId"`
+	Band         string      `json:"band"` // "5 GHz"|"2.4 GHz"|"cable"|"—"
 	// WifiIface/SSID (#1757): interfaz AP y red a la que esta asociado un
 	// cliente inalambrico. El agente los declara desde iw; vacios cuando la
 	// fuente no los expone. La topologia cruza WifiIface con el bridge VLAN
@@ -428,11 +428,11 @@ type Device struct {
 	LastSeenMs  int64 `json:"lastSeenMs,omitempty"`
 	// AliasMacs: MACs enlazadas a este cliente (#1151, mismo dispositivo con
 	// varias MACs - p. ej. una por SSID). Solo viaja en el canónico.
-	AliasMacs    []string `json:"aliasMacs,omitempty"`
-	Traffic24hRx string   `json:"traffic24hRx,omitempty"`
-	Traffic24hTx string   `json:"traffic24hTx,omitempty"`
-	Adguard      *bool    `json:"adguard,omitempty"` // puntero: demo emite true/false explícito; live lo omite (paridad Node)
-	Group        string   `json:"group,omitempty"`
+	AliasMacs    []macaddr.MAC `json:"aliasMacs,omitempty"`
+	Traffic24hRx string        `json:"traffic24hRx,omitempty"`
+	Traffic24hTx string        `json:"traffic24hTx,omitempty"`
+	Adguard      *bool         `json:"adguard,omitempty"` // puntero: demo emite true/false explícito; live lo omite (paridad Node)
+	Group        string        `json:"group,omitempty"`
 	// IsNew: el alta del registro device_seen (#954) es de hoy. Lo fijan
 	// applyDeviceSeen y ghostDevices leyendo first_seen; la app lo usa para el
 	// pill "Nuevo" y para el "+N hoy" de deviceTotals.newToday.
@@ -485,8 +485,8 @@ type DistributionNode struct {
 	// Mac: chassis-MAC del vecino cuando kind='managed' (SPEC-CANON D1). La
 	// app la usa para excluir del mapa el chip del Device del switch (que
 	// existe como Device Y como nodo managed, sin duplicar el render).
-	Mac  string    `json:"mac,omitempty"`
-	Lldp *LldpInfo `json:"lldp,omitempty"`
+	Mac  macaddr.MAC `json:"mac,omitzero"`
+	Lldp *LldpInfo   `json:"lldp,omitempty"`
 	// SpeedMbps: velocidad negociada del enlace por el que cuelga, cuando
 	// alguien la sabe de verdad (hoy: la boca del switch que reporta el
 	// controlador UniFi). 0 = no se conoce, y la UI escribe "—" en vez de
@@ -729,16 +729,16 @@ type EthPort struct {
 	// #1125: familia para interfaces NO físicas ("lag"|"vlan"|"bridge"|
 	// "tunnel"|"virtual"); vacío/ausente = boca física. El frontend las
 	// agrupa en la sección colapsada de la tarjeta de puertos.
-	Family      string   `json:"family,omitempty"`
-	RxBytes     uint64   `json:"rxBytes,omitempty"`
-	TxBytes     uint64   `json:"txBytes,omitempty"`
-	RxErrs      uint64   `json:"rxErrors,omitempty"`
-	TxErrs      uint64   `json:"txErrors,omitempty"`
-	RxBps       float64  `json:"rxBps,omitempty"`
-	TxBps       float64  `json:"txBps,omitempty"`
-	Sfp         *SfpInfo `json:"sfp,omitempty"`
-	ConnectedTo string   `json:"connectedTo,omitempty"`
-	DeviceMac   string   `json:"deviceMac,omitempty"`
+	Family      string      `json:"family,omitempty"`
+	RxBytes     uint64      `json:"rxBytes,omitempty"`
+	TxBytes     uint64      `json:"txBytes,omitempty"`
+	RxErrs      uint64      `json:"rxErrors,omitempty"`
+	TxErrs      uint64      `json:"txErrors,omitempty"`
+	RxBps       float64     `json:"rxBps,omitempty"`
+	TxBps       float64     `json:"txBps,omitempty"`
+	Sfp         *SfpInfo    `json:"sfp,omitempty"`
+	ConnectedTo string      `json:"connectedTo,omitempty"`
+	DeviceMac   macaddr.MAC `json:"deviceMac,omitzero"`
 	// DeviceCount > 0 indica agregación: hay N MACs detrás de la boca y no
 	// podemos nombrar un único par (hipervisor o switch). El cliente traduce
 	// con su i18n; el server NO pre-formatea (#1036).
@@ -1288,7 +1288,7 @@ type Snapshotter interface {
 	// DismissUnknownDevice silencia la alerta de "dispositivo desconocido"
 	// para una MAC (#772 "dejar como anónimo"): la marca como ya avisada en
 	// memoria y en kv (sobrevive a reinicios). En demo es no-op.
-	DismissUnknownDevice(mac string)
+	DismissUnknownDevice(mac macaddr.MAC)
 	// GetAlerts lista las alertas (más recientes primero, máx 100).
 	GetAlerts(ctx context.Context) []AlertEvent
 	// AlertsEngine expone el motor de alertas (SPEC-ALERTAS §3): config,
@@ -1331,7 +1331,7 @@ type NetworkInfo struct {
 	Ports  []string `json:"ports,omitempty"`
 	// ClientMacs (#1942): clientes atribuidos a esta red por puerto FDB, VLAN
 	// observada o wifi-iface declarada. Ausente = ninguno atribuible, no "0".
-	ClientMacs []string `json:"clientMacs,omitempty"`
-	RxBps      float64  `json:"rxBps,omitempty"`
-	TxBps      float64  `json:"txBps,omitempty"`
+	ClientMacs []macaddr.MAC `json:"clientMacs,omitempty"`
+	RxBps      float64       `json:"rxBps,omitempty"`
+	TxBps      float64       `json:"txBps,omitempty"`
 }

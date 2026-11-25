@@ -24,13 +24,13 @@ func (s *server) handleOnboardingDismiss(w http.ResponseWriter, r *http.Request)
 		writeBodyError(w, st, "invalid_body", "body JSON inválido")
 		return
 	}
-	mac := macaddr.Normalize(body.MAC)
-	if mac == "" {
+	mac, err := macaddr.Parse(body.MAC)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_mac")
 		return
 	}
 	if s.db != nil {
-		_, _ = s.db.Exec("INSERT INTO kv (key, value) VALUES (?, '1') ON CONFLICT(key) DO NOTHING", "unknown_alerted:"+mac)
+		_, _ = s.db.Exec("INSERT INTO kv (key, value) VALUES (?, '1') ON CONFLICT(key) DO NOTHING", "unknown_alerted:"+mac.String())
 	}
 	if s.adapter != nil {
 		s.adapter.DismissUnknownDevice(mac)

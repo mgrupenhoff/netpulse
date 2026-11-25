@@ -343,8 +343,9 @@ func applyPVEInfra(devices []Device, dists []DistributionNode, inv *pveInventory
 		nodeByKey[matched] = inv.nodes[matched]
 	}
 	// Casar cada CT por MAC.
+	idxByMAC := deviceIndexByMAC(devices)
 	for mac, vm := range inv.ctByMAC {
-		idx, ok := hostIdxByID[mac.DeviceID()]
+		idx, ok := idxByMAC[mac]
 		if !ok {
 			continue // el CT no es un device conocido (apagado o sin tráfico)
 		}
@@ -406,7 +407,7 @@ func applyPVEInfra(devices []Device, dists []DistributionNode, inv *pveInventory
 	// CTs por host (para el macCount informativo del distnode).
 	ctCountByHost := map[string]int{}
 	for mac := range inv.ctByMAC {
-		if idx, ok := hostIdxByID[mac.DeviceID()]; ok {
+		if idx, ok := idxByMAC[mac]; ok {
 			if h := devices[idx].AttachTo; h != "" {
 				ctCountByHost[h]++
 			}

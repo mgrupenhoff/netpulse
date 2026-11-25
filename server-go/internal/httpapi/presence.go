@@ -11,7 +11,6 @@ import (
 	"database/sql"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gnacho/netpulse/agent/macaddr"
@@ -91,15 +90,15 @@ func (s *server) handlePresenceRoaming(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "db_error")
 		return
 	}
-	names := map[string]string{}
+	names := map[macaddr.MAC]string{}
 	if s.adapter != nil {
 		for _, d := range s.adapter.GetDevices(r.Context()) {
-			names[strings.ToUpper(d.MAC)] = d.Name
+			names[d.MAC] = d.Name
 		}
 	}
 	items := make([]item, 0, len(counts))
 	for _, c := range counts {
-		nm := names[c.MAC.String()]
+		nm := names[c.MAC]
 		if nm == "" {
 			nm = s.knownMacName(c.MAC)
 		}

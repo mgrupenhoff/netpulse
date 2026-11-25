@@ -54,15 +54,15 @@ func TestBuildRackHintsSymmetricDedup(t *testing.T) {
 		devices: []adapters.Device{
 			// R1 y SW1 se ven mutuamente en bocas de MAC única (forzado por el
 			// stub): solo debe salir 1 hint.
-			{MAC: macSW1.String(), RouterID: "r1", Band: "cable", Port: "lan1"},
-			{MAC: macR1.String(), RouterID: "sw1", Band: "cable", Port: "lan8"},
+			{MAC: macSW1, RouterID: "r1", Band: "cable", Port: "lan1"},
+			{MAC: macR1, RouterID: "sw1", Band: "cable", Port: "lan8"},
 			// Cliente normal montado en boca única de SW1.
-			{MAC: macDev.String(), RouterID: "sw1", Band: "cable", Port: "lan2"},
+			{MAC: macDev, RouterID: "sw1", Band: "cable", Port: "lan2"},
 			// Boca multi-MAC (lan3 de SW1): no debe generar hints.
-			{MAC: macAgg.String(), RouterID: "sw1", Band: "cable", Port: "lan3"},
-			{MAC: macAg2.String(), RouterID: "sw1", Band: "cable", Port: "lan3"},
+			{MAC: macAgg, RouterID: "sw1", Band: "cable", Port: "lan3"},
+			{MAC: macAg2, RouterID: "sw1", Band: "cable", Port: "lan3"},
 			// Cliente no montado: ignorado.
-			{MAC: macOff.String(), RouterID: "sw1", Band: "cable", Port: "lan4"},
+			{MAC: macOff, RouterID: "sw1", Band: "cable", Port: "lan4"},
 		},
 		uplinks: map[string]adapters.FdbUplink{
 			// Mismo par SW1↔R1 en orden inverso: también debe deduplicarse.
@@ -72,8 +72,8 @@ func TestBuildRackHintsSymmetricDedup(t *testing.T) {
 
 	ov := &adapters.Overview{
 		Routers: []adapters.Router{
-			{ID: "r1", MAC: "AA:BB:CC:00:00:01"},
-			{ID: "sw1", MAC: "AA:BB:CC:00:00:02"},
+			{ID: "r1", MAC: macR1},
+			{ID: "sw1", MAC: macSW1},
 		},
 	}
 	s := &server{

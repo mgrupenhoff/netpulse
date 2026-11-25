@@ -93,7 +93,7 @@ func TestWanSegmentNeighbourLeavesNoGhost(t *testing.T) {
 			}
 			ghosts := map[string]bool{}
 			for _, g := range l.ghostDevices(devices) {
-				ghosts[g.MAC] = true
+				ghosts[g.MAC.String()] = true
 			}
 			for _, mac := range tc.neighbours {
 				if ghosts[mac] {

@@ -1,6 +1,10 @@
 package adapters
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
+)
 
 // #1150: con switches encadenados (gateway -> sw1 -> sw2) la boca de una
 // unidad aprende las MACs de bridge de VARIAS unidades, y la primera MAC
@@ -28,7 +32,7 @@ func TestEnrichEthPortRouterLinkPrefersLldpNeighbor(t *testing.T) {
 	if got.PeerKind != "router-link-lldp" {
 		t.Fatalf("PeerKind = %q, want router-link-lldp", got.PeerKind)
 	}
-	if got.DeviceMac != "BB:BB:BB:00:00:01" {
+	if got.DeviceMac != macaddr.MustParse("BB:BB:BB:00:00:01") {
 		t.Fatalf("DeviceMac = %q, want la MAC del chassis vecino", got.DeviceMac)
 	}
 	if got.Detail != "192.168.1.11 · LLDP" {
@@ -53,7 +57,7 @@ func TestEnrichEthPortRouterLinkAmbiguousStaysEmpty(t *testing.T) {
 	port := EthPort{ID: "lan1", Label: "lan1", Up: true}
 
 	got := enrichEthPort(port, "lan1", deps)
-	if got.ConnectedTo != "" || got.PeerKind != "" || got.DeviceMac != "" {
+	if got.ConnectedTo != "" || got.PeerKind != "" || got.DeviceMac.IsValid() {
 		t.Fatalf("boca ambigua con par inventado: %+v", got)
 	}
 	if got.Detail != "" {
@@ -86,7 +90,7 @@ func TestEnrichEthPortRouterLinkPicksDedicatedPort(t *testing.T) {
 	if got.ConnectedTo != "sw1" {
 		t.Fatalf("ConnectedTo = %q, want sw1 (puerto dedicado)", got.ConnectedTo)
 	}
-	if got.DeviceMac != sw1 || got.PeerKind != "router-link" {
+	if got.DeviceMac != macaddr.MustParse(sw1) || got.PeerKind != "router-link" {
 		t.Fatalf("par = %q %q, want %s router-link", got.ConnectedTo, got.PeerKind, sw1)
 	}
 }

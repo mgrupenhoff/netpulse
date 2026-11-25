@@ -6,6 +6,8 @@ package httpapi_test
 import (
 	"net/http"
 	"testing"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 // TestKnownMacsRoundtrip: GET vacío → PUT → GET lo devuelve → DELETE.
@@ -63,10 +65,11 @@ func TestKnownMacsPutLiftsTombstone(t *testing.T) {
 	srv := makeTestServer(t)
 	_, cookie, _ := loginCookie(t, srv.URL, "admin", "test123456")
 	const mac = "38:B8:00:0A:24:37"
-	if err := srv.db.AddDeletedClient(mac); err != nil {
+	parsed := macaddr.MustParse(mac)
+	if err := srv.db.AddDeletedClient(parsed); err != nil {
 		t.Fatalf("AddDeletedClient: %v", err)
 	}
-	if tomb, _ := srv.db.DeletedClients(); !tomb[mac] {
+	if tomb, _ := srv.db.DeletedClients(); !tomb[parsed] {
 		t.Fatal("prepara: la lápida no quedó registrada")
 	}
 	res, _ := wanSpeedRequest(t, "PUT", srv.URL, "/api/settings/known-macs", cookie,
@@ -74,7 +77,7 @@ func TestKnownMacsPutLiftsTombstone(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("PUT: status %d, esperado 200", res.StatusCode)
 	}
-	if tomb, _ := srv.db.DeletedClients(); tomb[mac] {
+	if tomb, _ := srv.db.DeletedClients(); tomb[parsed] {
 		t.Fatal("PUT conocido no levantó la lápida (#1278)")
 	}
 }

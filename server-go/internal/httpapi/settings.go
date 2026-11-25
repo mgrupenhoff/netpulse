@@ -373,7 +373,7 @@ func (s *server) registerKnownMacsRoutes(mux *http.ServeMux) {
 		}
 		// #1278: re-alta manual quita la lápida (en el camino de éxito: en el
 		// de error no se registró nada y la lápida debe quedarse).
-		_ = s.db.DeleteDeletedClient(mac.String())
+		_ = s.db.DeleteDeletedClient(mac)
 		writeJSON(w, http.StatusOK, knownMacItem{MAC: mac, Name: body.Name, Note: body.Note})
 	})))
 

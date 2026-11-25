@@ -6,6 +6,7 @@ package adapters
 import (
 	"testing"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/db"
 )
 
@@ -26,7 +27,7 @@ func TestBuildDevicesWirelessWinsOverWirelessSide(t *testing.T) {
 	devs := l.buildDevices(polled, "")
 	var got *Device
 	for i := range devs {
-		if devs[i].MAC == "AA:BB:CC:DD:EE:01" {
+		if devs[i].MAC == macaddr.MustParse("AA:BB:CC:DD:EE:01") {
 			got = &devs[i]
 		}
 	}
@@ -63,7 +64,7 @@ func TestBuildDevicesWirelessSideBeatsFdbFallbacks(t *testing.T) {
 	devs := l.buildDevices(polled, "")
 	var got *Device
 	for i := range devs {
-		if devs[i].MAC == rot {
+		if devs[i].MAC == macaddr.MustParse(rot) {
 			got = &devs[i]
 		}
 	}

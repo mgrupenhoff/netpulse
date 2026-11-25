@@ -43,7 +43,7 @@ func TestBuildDevicesMarksLocallyAdministeredFromFDB(t *testing.T) {
 	}
 	byMAC := map[string]Device{}
 	for _, d := range l.buildDevices(polled, "") {
-		byMAC[d.MAC] = d
+		byMAC[d.MAC.String()] = d
 	}
 	if d, ok := byMAC["D2:95:DE:65:C5:B0"]; !ok {
 		t.Fatal("la MAC del NMRP no aparece como dispositivo")

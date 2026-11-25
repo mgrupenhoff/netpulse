@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 )
 
@@ -72,7 +73,7 @@ func TestClientDiscoveryTravelRouterNetworkRows(t *testing.T) {
 	// En automático solo cuenta el vecino de br-lan, no el de phy1-sta0.
 	l := NewLive(nil, nil, nil, nil)
 	devs := l.buildDevices(map[string]*routerPolled{"travel": p}, "")
-	if len(devs) != 1 || devs[0].MAC != "AA:BB:CC:00:00:02" {
+	if len(devs) != 1 || devs[0].MAC != macaddr.MustParse("AA:BB:CC:00:00:02") {
 		t.Fatalf("en automático solo debe contar el vecino de lan: %+v", devs)
 	}
 }
@@ -95,11 +96,11 @@ func TestClientDiscoveryUnassignedDeviceRow(t *testing.T) {
 
 	l := NewLive(nil, nil, nil, nil)
 	devs := l.buildDevices(map[string]*routerPolled{"travel": p}, "")
-	gotMACs := map[string]bool{}
+	gotMACs := map[macaddr.MAC]bool{}
 	for _, d := range devs {
 		gotMACs[d.MAC] = true
 	}
-	if !gotMACs["AA:BB:CC:00:00:02"] || !gotMACs["AA:BB:CC:00:00:09"] || gotMACs["AA:BB:CC:00:00:01"] {
+	if !gotMACs[macaddr.MustParse("AA:BB:CC:00:00:02")] || !gotMACs[macaddr.MustParse("AA:BB:CC:00:00:09")] || gotMACs[macaddr.MustParse("AA:BB:CC:00:00:01")] {
 		t.Fatalf("esperaba clientes en br-lan y eth3 (sin phy1-sta0): %+v", devs)
 	}
 }
@@ -288,7 +289,7 @@ func TestClientDiscoveryGatewayWanPortWithGatewayIP(t *testing.T) {
 	gwOn.DiscoveryOverrides = DiscoveryOverrides{Networks: map[string]DiscoveryMode{"wan": "on"}}
 	l.SetRouters([]RouterConfig{gwOn})
 	devs := l.buildDevices(makeGW(gwOn), "eth0.2")
-	if len(devs) != 1 || devs[0].MAC != neighbour || devs[0].WanSide {
+	if len(devs) != 1 || devs[0].MAC != macaddr.MustParse(neighbour) || devs[0].WanSide {
 		t.Fatalf("con Networks['wan']='on' solo debe entrar el vecino (%s) como cliente normal (WanSide=false): %+v", neighbour, devs)
 	}
 }
@@ -420,7 +421,7 @@ func TestBuildDevicesSkipsArpOnUplinkDevs(t *testing.T) {
 		},
 	}
 	devs := l.buildDevices(polled, "")
-	if len(devs) != 1 || devs[0].MAC != "AA:BB:CC:00:00:02" {
+	if len(devs) != 1 || devs[0].MAC != macaddr.MustParse("AA:BB:CC:00:00:02") {
 		t.Fatalf("esperaba solo el vecino de la LAN, got %+v", devs)
 	}
 }

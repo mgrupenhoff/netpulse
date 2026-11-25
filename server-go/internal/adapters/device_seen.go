@@ -1,6 +1,7 @@
 package adapters
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -19,10 +20,6 @@ import (
 // rellena FirstSeenMs/LastSeenMs del payload final leyendo la tabla de una
 // vez (sin N+1). Con db nil (demo/tests sin BD) ambos son no-op y los campos
 // quedan ausentes, como hasta ahora.
-
-func normSeenMAC(mac string) string {
-	return macaddr.NormalizeLenient(mac)
-}
 
 // noteDevicesSeen upsert de las MACs online en device_seen (#954): alta con
 // first_seen=last_seen=now; las ya conocidas solo actualizan last_seen.
@@ -53,7 +50,8 @@ func saneIP(ip string) string {
 // cualquier mayúscula. Exige 17 caracteres (con separadores) para no tratar
 // un hostname de 12 dígitos hex como si fuera una MAC.
 func isMACLike(v string) bool {
-	return macaddr.NormalizeSeparated(v) != ""
+	_, err := macaddr.ParseSeparated(v)
+	return err == nil
 }
 
 // #1315: stickiness del tipo inferido. Al expirar el lease la clasificación
@@ -82,7 +80,7 @@ func (l *Live) filterTombstoned(devices []Device) []Device {
 	}
 	tomb, err := l.db.DeletedClients()
 	if err != nil {
-		tomb = map[string]bool{}
+		tomb = map[macaddr.MAC]bool{}
 	}
 	// #1984: si el cliente vuelve con una IP real, el borrado se levanta.
 	l.reviveTombstoned(tomb, devices)
@@ -92,8 +90,7 @@ func (l *Live) filterTombstoned(devices []Device) []Device {
 	}
 	out := devices[:0]
 	for _, d := range devices {
-		m := normSeenMAC(d.MAC)
-		if tomb[m] || fleet[m] {
+		if tomb[d.MAC] || fleet[d.MAC] {
 			continue
 		}
 		out = append(out, d)
@@ -106,7 +103,7 @@ func (l *Live) filterTombstoned(devices []Device) []Device {
 // de lease o ARP. La entrada cacheada de una estacion en el AP no trae IP, que
 // es justo lo que protegia el borrado desde #1278. Best effort: un fallo de la
 // BD deja la lapida como estaba.
-func (l *Live) reviveTombstoned(tomb map[string]bool, devices []Device) {
+func (l *Live) reviveTombstoned(tomb map[macaddr.MAC]bool, devices []Device) {
 	if l.db == nil || len(tomb) == 0 || len(devices) == 0 {
 		return
 	}
@@ -114,14 +111,13 @@ func (l *Live) reviveTombstoned(tomb map[string]bool, devices []Device) {
 		if !d.Online || saneIP(d.IP) == "" {
 			continue
 		}
-		mac := normSeenMAC(d.MAC)
-		if mac == "" || !tomb[mac] {
+		if !tomb[d.MAC] {
 			continue
 		}
-		if err := l.db.DeleteDeletedClient(mac); err != nil {
+		if err := l.db.DeleteDeletedClient(d.MAC); err != nil {
 			continue
 		}
-		delete(tomb, mac)
+		delete(tomb, d.MAC)
 	}
 }
 
@@ -131,17 +127,15 @@ func (l *Live) reviveTombstoned(tomb map[string]bool, devices []Device) {
 // por FDB) y BSSID de cada radio (#1307, p.ej. ap1-phy1-mac-addr: los AP se
 // ven a sí mismos como estaciones stale). La usan el purge del registro y
 // el filtrado de las listas finales.
-func (l *Live) fleetSeenMACs() map[string]bool {
-	macs := map[string]bool{}
+func (l *Live) fleetSeenMACs() map[macaddr.MAC]bool {
+	macs := map[macaddr.MAC]bool{}
 	// MAC base de cada unidad (tabla routers).
 	if l.db != nil {
 		if rows, err := l.db.Query("SELECT mac FROM routers WHERE mac IS NOT NULL AND mac != ''"); err == nil {
 			for rows.Next() {
-				var m string
+				var m macaddr.MAC
 				if err := rows.Scan(&m); err == nil {
-					if n := normSeenMAC(m); n != "" {
-						macs[n] = true
-					}
+					macs[m] = true
 				}
 			}
 			rows.Close()
@@ -149,12 +143,12 @@ func (l *Live) fleetSeenMACs() map[string]bool {
 	}
 	l.mu.Lock()
 	for _, p := range l.lastPolled {
-		if m := normSeenMAC(p.brMac); m != "" {
+		if m, ok := macaddr.ParseOrWarn(macWarn, "device_seen.br_mac", p.brMac); ok {
 			macs[m] = true
 		}
 		for _, r := range p.radios {
 			if r.BSSID.IsValid() {
-				macs[r.BSSID.String()] = true
+				macs[r.BSSID] = true
 			}
 		}
 	}
@@ -189,19 +183,16 @@ func (l *Live) purgeWanSideSeen(devices []Device, wanSegment map[string]bool) {
 	if l.db == nil {
 		return
 	}
-	macs := map[string]bool{}
-	add := func(raw string) {
-		if mac := normSeenMAC(raw); mac != "" {
-			macs[mac] = true
-		}
-	}
+	macs := map[macaddr.MAC]bool{}
 	for _, d := range devices {
-		if d.WanSide {
-			add(d.MAC)
+		if d.WanSide && d.MAC.IsValid() {
+			macs[d.MAC] = true
 		}
 	}
-	for mac := range wanSegment {
-		add(mac)
+	for raw := range wanSegment {
+		if m, ok := macaddr.ParseOrWarn(macWarn, "device_seen.wan_segment", raw); ok {
+			macs[m] = true
+		}
 	}
 	if len(macs) == 0 {
 		return
@@ -232,7 +223,7 @@ func (l *Live) noteDevicesSeen(devices []Device, nowMs int64) []Device {
 	l.purgeFleetSeen()
 	tomb, err := l.db.DeletedClients()
 	if err != nil {
-		tomb = map[string]bool{}
+		tomb = map[macaddr.MAC]bool{}
 	}
 	// #1984: un cliente borrado que vuelve a tener IP (lease o ARP) se da de
 	// alta otra vez; el borrado es un olvido, no un baneo.
@@ -240,13 +231,14 @@ func (l *Live) noteDevicesSeen(devices []Device, nowMs int64) []Device {
 	// MACs ya registradas: la diferencia serán las verdaderamente nuevas.
 	// Conservamos también la identidad retenida para que un placeholder que
 	// reaparece sin mDNS no pise el nombre y el tipo buenos del registro.
-	existing := map[string]bool{}
-	retainedNames := map[string]string{}
-	retainedSources := map[string]string{}
+	existing := map[macaddr.MAC]bool{}
+	retainedNames := map[macaddr.MAC]string{}
+	retainedSources := map[macaddr.MAC]string{}
 	if rows, err := l.db.Query("SELECT mac, COALESCE(name, ''), COALESCE(name_source, '') FROM device_seen"); err == nil {
 		for rows.Next() {
-			var m, name, source string
-			if rows.Scan(&m, &name, &source) == nil {
+			var m macaddr.MAC
+			var name, source string
+			if rows.Scan(&m, &name, &source) == nil && m.IsValid() {
 				existing[m] = true
 				retainedNames[m] = name
 				retainedSources[m] = source
@@ -272,7 +264,7 @@ func (l *Live) noteDevicesSeen(devices []Device, nowMs int64) []Device {
 	defer stmt.Close()
 	var firstTimers []Device
 	for _, d := range devices {
-		if !d.Online {
+		if !d.Online || !d.MAC.IsValid() {
 			continue
 		}
 		// #2183: los vecinos del segmento WAN (ISP, CPE de otros abonados)
@@ -281,11 +273,7 @@ func (l *Live) noteDevicesSeen(devices []Device, nowMs int64) []Device {
 		if d.WanSide {
 			continue
 		}
-		mac := normSeenMAC(d.MAC)
-		if mac == "" {
-			continue
-		}
-		if tomb[mac] {
+		if tomb[d.MAC] {
 			continue // #1278: borrado a mano, no re-alta (ni re-aviso, #1290)
 		}
 		name := d.Hostname
@@ -297,10 +285,10 @@ func (l *Live) noteDevicesSeen(devices []Device, nowMs int64) []Device {
 		}
 		deviceType := inferredDeviceType(d)
 		nameSource := d.NameSource
-		if nameSource == "" && name != "" && retainedNames[mac] == name && retainedSources[mac] != "" {
-			nameSource = retainedSources[mac]
+		if nameSource == "" && name != "" && retainedNames[d.MAC] == name && retainedSources[d.MAC] != "" {
+			nameSource = retainedSources[d.MAC]
 		}
-		if name == "" && !d.namePinned && isGeneratedDeviceName(d.Name) && retainedNames[mac] != "" && !isGeneratedDeviceName(retainedNames[mac]) {
+		if name == "" && !d.namePinned && isGeneratedDeviceName(d.Name) && retainedNames[d.MAC] != "" && !isGeneratedDeviceName(retainedNames[d.MAC]) {
 			// A transient loss of mDNS brought the DHCP placeholder back. Empty
 			// name and type make the upsert keep the better retained identity.
 			deviceType = ""
@@ -312,12 +300,12 @@ func (l *Live) noteDevicesSeen(devices []Device, nowMs int64) []Device {
 		if d.FirstSeenMs > 0 && d.FirstSeenMs < nowMs {
 			first = d.FirstSeenMs
 		}
-		if _, err := stmt.Exec(mac, first, nowMs, name, saneIP(d.IP), deviceType, nameSource); err != nil {
+		if _, err := stmt.Exec(d.MAC, first, nowMs, name, saneIP(d.IP), deviceType, nameSource); err != nil {
 			return nil
 		}
 		// #1323: primera vez CON nombre (los sin nombre los cubre
 		// unknown-device con su gracia; alertar ambos sería duplicar ruido).
-		if !existing[mac] && name != "" {
+		if !existing[d.MAC] && name != "" {
 			firstTimers = append(firstTimers, d)
 		}
 	}
@@ -350,7 +338,7 @@ func (l *Live) trackNewClients(firstTimers []Device, devices []Device, dists []D
 		rows.Close()
 	}
 	for _, d := range firstTimers {
-		mac := normSeenMAC(d.MAC)
+		mac := d.MAC.String()
 		if alerted["new_client_alerted:"+mac] || alerted["unknown_alerted:"+mac] {
 			continue
 		}
@@ -405,7 +393,7 @@ func (l *Live) applyDeviceSeen(devices []Device) {
 	}
 	now := l.seenNow()
 	for i := range devices {
-		if s, ok := byMac[normSeenMAC(devices[i].MAC)]; ok {
+		if s, ok := byMac[devices[i].MAC]; ok {
 			devices[i].FirstSeenMs = s.first
 			devices[i].LastSeenMs = s.last
 			devices[i].IsNew = s.isNewToday(now)
@@ -504,18 +492,27 @@ func countNewToday(devices []Device) int {
 // seenByMac carga la tabla device_seen completa (una query, sin N+1).
 // #1315: un nombre con forma de MAC (BDs contaminadas por ciclos previos)
 // se devuelve vacío: nunca se restaura ni emite una MAC como nombre.
-func (l *Live) seenByMac() (map[string]seenRow, error) {
+// Las filas corruptas con una MAC inválida se saltan con un aviso para no
+// tumbar toda la lectura por un resto heredado.
+func (l *Live) seenByMac() (map[macaddr.MAC]seenRow, error) {
 	rows, err := l.db.DB.Query(`SELECT mac, first_seen, last_seen, COALESCE(name, ''), COALESCE(ip, ''), COALESCE(device_type, ''), COALESCE(name_source, '') FROM device_seen`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	byMac := map[string]seenRow{}
+	byMac := map[macaddr.MAC]seenRow{}
 	for rows.Next() {
-		var mac string
+		var mac macaddr.MAC
 		var s seenRow
 		if err := rows.Scan(&mac, &s.first, &s.last, &s.name, &s.ip, &s.deviceType, &s.nameSource); err != nil {
+			if errors.Is(err, macaddr.ErrSyntax) {
+				log.Printf("[device_seen] skipping row with invalid MAC: %v", err)
+				continue
+			}
 			return nil, err
+		}
+		if !mac.IsValid() {
+			continue
 		}
 		if isMACLike(s.name) {
 			s.name = ""
@@ -534,9 +531,9 @@ func (l *Live) ghostDevices(devices []Device) []Device {
 	if l.db == nil {
 		return nil
 	}
-	live := make(map[string]bool, len(devices))
+	live := make(map[macaddr.MAC]bool, len(devices))
 	for i := range devices {
-		live[normSeenMAC(devices[i].MAC)] = true
+		live[devices[i].MAC] = true
 	}
 	// #1151: una alias enlazada no sale como fantasma propio - su canónico la
 	// representa en la lista (si el canónico no está en el registro, la alias
@@ -548,7 +545,7 @@ func (l *Live) ghostDevices(devices []Device) []Device {
 	}
 	// #1151: aliases registradas de cada canónico (para que la hoja las
 	// muestre y permita desenlazarlas).
-	revAlias := map[string][]string{}
+	revAlias := map[macaddr.MAC][]macaddr.MAC{}
 	for alias, canonical := range links {
 		if _, registered := byMac[canonical]; registered {
 			revAlias[canonical] = append(revAlias[canonical], alias)
@@ -556,18 +553,14 @@ func (l *Live) ghostDevices(devices []Device) []Device {
 	}
 	tomb, err := l.db.DeletedClients()
 	if err != nil {
-		tomb = map[string]bool{}
+		tomb = map[macaddr.MAC]bool{}
 	}
 	now := l.seenNow()
 	overrides := l.loadDeviceOverrides()
 	var out []Device
-	for rawMac, s := range byMac {
-		mac := normSeenMAC(rawMac)
-		if live[mac] {
-			continue
-		}
-		if tomb[mac] {
-			continue // #1278: borrado a mano, fuera de la lista de fantasmas
+	for mac, s := range byMac {
+		if live[mac] || tomb[mac] {
+			continue // #1278: borrado a mano o ya vivo, fuera de la lista de fantasmas
 		}
 		if canonical, linked := links[mac]; linked {
 			if _, canonRegistered := byMac[canonical]; canonRegistered {
@@ -575,7 +568,7 @@ func (l *Live) ghostDevices(devices []Device) []Device {
 			}
 		}
 		d := Device{
-			ID:          strings.ToLower(strings.ReplaceAll(mac, ":", "-")),
+			ID:          mac.DeviceID(),
 			MAC:         mac,
 			Type:        "desconocido",
 			IP:          saneIP(s.ip),

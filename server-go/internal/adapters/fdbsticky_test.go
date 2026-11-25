@@ -4,6 +4,8 @@ package adapters
 import (
 	"testing"
 	"time"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 // TestOverlayStickyFdb: las MACs recordadas (frescas) que faltan en el FDB
@@ -67,8 +69,8 @@ func TestInferTopologyStickyKeepsSwitchAttach(t *testing.T) {
 
 	devices := []Device{
 		// marantz: online vía ARP (RouterID gateway), sin entrada FDB propia
-		{ID: "aa-bb-cc-dd-ee-ff", MAC: "AA:BB:CC:DD:EE:FF", Name: "marantz", RouterID: "gateway", Band: "cable", Online: true},
-		{ID: "04-d4-c4-8b-30-a7", MAC: "04:D4:C4:8B:30:A7", Name: "shield", RouterID: "gateway", Band: "cable", Online: true},
+		{ID: "aa-bb-cc-dd-ee-ff", MAC: macaddr.MustParse("AA:BB:CC:DD:EE:FF"), Name: "marantz", RouterID: "gateway", Band: "cable", Online: true},
+		{ID: "04-d4-c4-8b-30-a7", MAC: macaddr.MustParse("04:D4:C4:8B:30:A7"), Name: "shield", RouterID: "gateway", Band: "cable", Online: true},
 	}
 	devices, dists := inferTopology(sticky, devices)
 
@@ -77,7 +79,7 @@ func TestInferTopologyStickyKeepsSwitchAttach(t *testing.T) {
 	}
 	var marantz *Device
 	for i := range devices {
-		if devices[i].MAC == "AA:BB:CC:DD:EE:FF" {
+		if devices[i].MAC == macaddr.MustParse("AA:BB:CC:DD:EE:FF") {
 			marantz = &devices[i]
 		}
 	}

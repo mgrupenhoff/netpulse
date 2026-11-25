@@ -181,10 +181,10 @@ func (d *Demo) Tick(context.Context) error {
 // Snapshotter
 // ---------------------------------------------------------------------------
 
-func (d *Demo) Mode() string                { return "demo" }
-func (d *Demo) SetRouters([]RouterConfig)   {} // la demo ignora la configuración
-func (d *Demo) Close() error                { return nil }
-func (d *Demo) DismissUnknownDevice(string) {}
+func (d *Demo) Mode() string                     { return "demo" }
+func (d *Demo) SetRouters([]RouterConfig)        {} // la demo ignora la configuración
+func (d *Demo) Close() error                     { return nil }
+func (d *Demo) DismissUnknownDevice(macaddr.MAC) {}
 
 func (d *Demo) GetUsteer(context.Context) (*Usteer, error) { return nil, nil }
 

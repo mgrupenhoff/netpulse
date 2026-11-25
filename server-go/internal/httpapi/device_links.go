@@ -23,13 +23,13 @@ func (s *server) handleDeviceLinkPut(w http.ResponseWriter, r *http.Request) {
 		writeBodyError(w, st, "invalid_body", "body JSON inválido")
 		return
 	}
-	alias := macaddr.Normalize(r.PathValue("mac"))
-	if alias == "" {
+	alias, err := macaddr.Parse(r.PathValue("mac"))
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_mac", "invalid mac")
 		return
 	}
-	target := macaddr.Normalize(body.Target)
-	if target == "" {
+	target, err := macaddr.Parse(body.Target)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_mac", "invalid target mac")
 		return
 	}
@@ -61,10 +61,21 @@ func (s *server) handleDeviceLinkPut(w http.ResponseWriter, r *http.Request) {
 // PUT, tolera claves que no son MAC: una fila heredada con basura en la tabla
 // tiene que poder desenlazarse.
 func (s *server) handleDeviceLinkDelete(w http.ResponseWriter, r *http.Request) {
-	alias := normalizeMACKey(r.PathValue("mac"))
-	if alias == "" {
-		writeError(w, http.StatusBadRequest, "invalid_input", "missing mac")
-		return
+	raw := r.PathValue("mac")
+	var alias any
+	if m, err := macaddr.Parse(raw); err == nil {
+		alias = m
+	} else {
+		// Una fila heredada puede tener como clave algo que no es una MAC
+		// (la tabla es texto libre). Se borra por esa clave cruda, con la
+		// misma normalización laxa que DELETE /api/devices/{mac}, para que
+		// siga siendo posible desenlazarla.
+		key := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(raw), "-", ":"))
+		if key == "" {
+			writeError(w, http.StatusBadRequest, "invalid_mac", "invalid mac")
+			return
+		}
+		alias = key
 	}
 	res, err := s.db.Exec("DELETE FROM device_links WHERE mac = ?", alias)
 	if err != nil {

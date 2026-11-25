@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 )
 
@@ -175,23 +176,23 @@ func TestRouterServingDHCP(t *testing.T) {
 			leases: []DhcpLease{{MAC: devMACLease, IP: "192.168.2.51"}}},
 	}
 
-	if got := l.RouterServingDHCP(devMACLease); got != "lab" {
+	if got := l.RouterServingDHCP(macaddr.MustParse(devMACLease)); got != "lab" {
 		t.Fatalf("RouterServingDHCP(%s) = %q, esperaba lab", devMACLease, got)
 	}
 	// MAC servida por el gateway (LAN principal).
-	if got := l.RouterServingDHCP("AA:BB:CC:DD:EE:01"); got != "gateway" {
+	if got := l.RouterServingDHCP(macaddr.MustParse("AA:BB:CC:DD:EE:01")); got != "gateway" {
 		t.Fatalf("RouterServingDHCP(MAC gateway) = %q, esperaba gateway", got)
 	}
 	// MAC con minúsculas se normaliza.
-	if got := l.RouterServingDHCP("aa:bb:cc:dd:ee:01"); got != "gateway" {
+	if got := l.RouterServingDHCP(macaddr.MustParse("aa:bb:cc:dd:ee:01")); got != "gateway" {
 		t.Fatalf("RouterServingDHCP(mac minúsculas) = %q, esperaba gateway", got)
 	}
 	// MAC sin lease en ningún router → "".
-	if got := l.RouterServingDHCP("EE:EE:EE:EE:EE:EE"); got != "" {
+	if got := l.RouterServingDHCP(macaddr.MustParse("EE:EE:EE:EE:EE:EE")); got != "" {
 		t.Fatalf("RouterServingDHCP(sin lease) = %q, esperaba vacío", got)
 	}
 	// Vacío → "".
-	if got := l.RouterServingDHCP(""); got != "" {
+	if got := l.RouterServingDHCP(macaddr.MAC{}); got != "" {
 		t.Fatalf("RouterServingDHCP(vacío) = %q, esperaba vacío", got)
 	}
 }

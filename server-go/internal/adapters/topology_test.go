@@ -3,6 +3,7 @@ package adapters
 import (
 	"testing"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 )
 
@@ -14,7 +15,7 @@ func polledWithFDB(routerID, brMac string, fdb map[string]string) map[string]*ro
 }
 
 func dev(mac, routerID, band string) Device {
-	return Device{ID: "d-" + mac, MAC: mac, RouterID: routerID, Band: band, Online: true}
+	return Device{ID: "d-" + mac, MAC: macaddr.MustParse(mac), RouterID: routerID, Band: band, Online: true}
 }
 
 func TestInferTopologyCableadoDirecto(t *testing.T) {
@@ -245,7 +246,7 @@ func TestInferTopologySwitchManagedLldp(t *testing.T) {
 	}
 	// D1: el nodo managed lleva la chassis-MAC del switch (la app la usa para
 	// excluir su chip del mapa).
-	if dn.Mac != "28:C6:8E:1D:90:44" {
+	if dn.Mac != macaddr.MustParse("28:C6:8E:1D:90:44") {
 		t.Fatalf("mac del nodo managed: %q", dn.Mac)
 	}
 	if dn.Lldp == nil || dn.Lldp.Chassis != "GS308E" || dn.Lldp.Mgmt != "192.168.8.13" || dn.Lldp.Caps != "Bridge" || dn.Lldp.PortDesc != "ge5" {

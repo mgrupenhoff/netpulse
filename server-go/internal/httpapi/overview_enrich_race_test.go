@@ -41,7 +41,7 @@ func TestBuildRackHintsRaceWithHandleOverviewEnrich(t *testing.T) {
 
 	sharedOv := &adapters.Overview{
 		Routers: []adapters.Router{
-			{ID: "ext1", MAC: "AA:BB:CC:DD:EE:01", Status: "offline"},
+			{ID: "ext1", MAC: macaddr.MustParse("AA:BB:CC:DD:EE:01"), Status: "offline"},
 		},
 	}
 	s := &server{

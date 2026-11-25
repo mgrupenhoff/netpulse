@@ -3,6 +3,7 @@ package adapters
 import (
 	"testing"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 )
 
@@ -23,7 +24,7 @@ func TestBuildDevicesAbsorbsDefaultRoute(t *testing.T) {
 		},
 	}
 	devs := l.buildDevices(polled, "")
-	if len(devs) != 1 || devs[0].MAC != "AA:BB:CC:00:00:09" {
+	if len(devs) != 1 || devs[0].MAC != macaddr.MustParse("AA:BB:CC:00:00:09") {
 		t.Fatalf("devices: %+v, want solo el cliente real", devs)
 	}
 }

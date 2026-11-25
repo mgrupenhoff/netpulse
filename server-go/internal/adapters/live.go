@@ -348,7 +348,7 @@ type Live struct {
 	clients    map[string]*OpenWrtClient
 	// #1818: MAC nuevas que aun no han demostrado permanencia (60 s).
 	transientMu sync.Mutex
-	transient   map[string]transientSeen
+	transient   map[macaddr.MAC]transientSeen
 
 	lastGood    map[string]*Router
 	lastStatus  map[string]string
@@ -440,29 +440,29 @@ type Live struct {
 	// weakStates (#1452): estado del ciclo de vida de la alerta de señal
 	// débil por MAC (antes sólo se guardaba el último disparo). La máquina
 	// pura vive en alerts.WeakSignalStep.
-	weakStates map[string]alerts.WeakSignalState
-	onlineMacs map[string]bool
+	weakStates map[macaddr.MAC]alerts.WeakSignalState
+	onlineMacs map[macaddr.MAC]bool
 	// unknownGrace: ticks consecutivos online+sin nombre (Name == MAC) por
 	// MAC. unknownAlerted: MACs que ya dispararon la alerta de desconocido
 	// (issue #248, persistido en kv: cada MAC alerta UNA sola vez).
-	unknownGrace    map[string]int
-	unknownAlerted  map[string]bool
+	unknownGrace    map[macaddr.MAC]int
+	unknownAlerted  map[macaddr.MAC]bool
 	unknownGraceNum int // ticks antes de declarar desconocido (default 3, #234)
 	// unverifiedSince: primera vez (unix ms) que una MAC sin ninguna prueba
 	// de host se ve en una tabla de reenvío. unverifiedNoted: MACs que ya
 	// dejaron su nota informativa (#1873, persistida en kv). unverifiedAfterMs
 	// es el umbral en tiempo real (0 = default), no en ticks: la cadencia de
 	// sondeo cambia con el kind de la unidad y con la configuración.
-	unverifiedSince   map[string]int64
-	unverifiedNoted   map[string]bool
+	unverifiedSince   map[macaddr.MAC]int64
+	unverifiedNoted   map[macaddr.MAC]bool
 	unverifiedAfterMs int64
 	// #2111: un cliente asociado por WiFi que no tiene IP es un cliente real
 	// (la asociación lo prueba) pero sin dirección. wifiNoIPSince/Noted
 	// acumulan su persistencia y dejan UNA nota informativa por MAC, sin
 	// contador urgente. wifiNoIPAfterMs es el umbral en tiempo real (0 =
 	// default), igual que el de #1873.
-	wifiNoIPSince   map[string]int64
-	wifiNoIPNoted   map[string]bool
+	wifiNoIPSince   map[macaddr.MAC]int64
+	wifiNoIPNoted   map[macaddr.MAC]bool
 	wifiNoIPAfterMs int64
 	// rdns: reverse DNS fallback for devices nothing else named (rdns.go).
 	rdns *rdnsCache
@@ -481,8 +481,8 @@ type Live struct {
 	// último ciclo evaluado; presenceMisses = ticks seguidos sin verse.
 	// presenceSeen evita la avalancha del primer ciclo (anti-arranque).
 	presenceSeen         bool
-	devicePresence       map[string]bool
-	presenceMisses       map[string]int
+	devicePresence       map[macaddr.MAC]bool
+	presenceMisses       map[macaddr.MAC]int
 	presenceOfflineAfter int // ticks sin verse antes de declarar offline (default 3)
 	// presencePruneAfter: ticks sin verse que eliminan la MAC de los mapas
 	// (dispositivo que se fue para siempre; ~2h a 5s/tick, issue #206).
@@ -492,9 +492,9 @@ type Live struct {
 	// alguna vez (línea base del arranque); offlineMisses cuenta ticks offline
 	// seguidos antes de confirmar; offlineAlerted evita re-emitir mientras el
 	// incidente sigue abierto.
-	offlineOnline   map[string]bool
-	offlineMisses   map[string]int
-	offlineAlerted  map[string]bool
+	offlineOnline   map[macaddr.MAC]bool
+	offlineMisses   map[macaddr.MAC]int
+	offlineAlerted  map[macaddr.MAC]bool
 	offlineAlertNum int // ticks offline seguidos antes de emitir (default 3)
 	// usteerAvailable: cache de "¿hay usteer en algún router?" para el flag del
 	// overview (entrada /roaming). Refrescado asíncronamente (TTL 30s, 1 SSH
@@ -517,7 +517,7 @@ type Live struct {
 	// (attributedDevices) y la atribución guardada es más nueva. Mutex
 	// propio: la derivación ocurre fuera de mu.
 	roamMu   sync.Mutex
-	lastRoam map[string]roamMark
+	lastRoam map[macaddr.MAC]roamMark
 
 	// Agentes nativos (Tier 2): último payload por slug + flag de caída
 	// (degradado a SSH tras emitir la alerta, SPEC-AGENTE-PILOTO §1).
@@ -630,25 +630,25 @@ func NewLive(cfg *config.Config, d *db.DB, initial []RouterConfig, pool *SSHPool
 		wgActiveSince:        map[string]time.Time{},
 		wgUrgent:             map[string]bool{},
 		wgUrgentMiss:         map[string]int{},
-		weakStates:           map[string]alerts.WeakSignalState{},
-		onlineMacs:           map[string]bool{},
-		unknownGrace:         map[string]int{},
-		unknownAlerted:       map[string]bool{},
+		weakStates:           map[macaddr.MAC]alerts.WeakSignalState{},
+		onlineMacs:           map[macaddr.MAC]bool{},
+		unknownGrace:         map[macaddr.MAC]int{},
+		unknownAlerted:       map[macaddr.MAC]bool{},
 		unknownGraceNum:      3, // default de #234; el engine/demo puede afinarlo
-		unverifiedSince:      map[string]int64{},
-		unverifiedNoted:      map[string]bool{},
-		wifiNoIPSince:        map[string]int64{},
-		wifiNoIPNoted:        map[string]bool{},
+		unverifiedSince:      map[macaddr.MAC]int64{},
+		unverifiedNoted:      map[macaddr.MAC]bool{},
+		wifiNoIPSince:        map[macaddr.MAC]int64{},
+		wifiNoIPNoted:        map[macaddr.MAC]bool{},
 		impostorActive:       map[macaddr.MAC]string{},
 		impostorAllow:        map[macaddr.MAC]bool{},
 		impostorEnabled:      true,
-		devicePresence:       map[string]bool{},
-		presenceMisses:       map[string]int{},
+		devicePresence:       map[macaddr.MAC]bool{},
+		presenceMisses:       map[macaddr.MAC]int{},
 		presenceOfflineAfter: 3,
 		presencePruneAfter:   2000,
-		offlineOnline:        map[string]bool{},
-		offlineMisses:        map[string]int{},
-		offlineAlerted:       map[string]bool{},
+		offlineOnline:        map[macaddr.MAC]bool{},
+		offlineMisses:        map[macaddr.MAC]int{},
+		offlineAlerted:       map[macaddr.MAC]bool{},
 		offlineAlertNum:      3,
 		wanDown:              map[string]int{},
 		uplinkWatch:          map[string]*uplinkWatch{},
@@ -683,7 +683,9 @@ func NewLive(cfg *config.Config, d *db.DB, initial []RouterConfig, pool *SSHPool
 			for rows.Next() {
 				var key string
 				if rows.Scan(&key) == nil {
-					l.unknownAlerted[strings.TrimPrefix(key, "unknown_alerted:")] = true
+					if m, ok := macaddr.ParseOrWarn(macWarn, "kv.unknown_alerted", strings.TrimPrefix(key, "unknown_alerted:")); ok {
+						l.unknownAlerted[m] = true
+					}
 				}
 			}
 			rows.Close()
@@ -694,7 +696,9 @@ func NewLive(cfg *config.Config, d *db.DB, initial []RouterConfig, pool *SSHPool
 			for rows.Next() {
 				var key string
 				if rows.Scan(&key) == nil {
-					l.wifiNoIPNoted[strings.TrimPrefix(key, "wifi_noip_noted:")] = true
+					if m, ok := macaddr.ParseOrWarn(macWarn, "kv.wifi_noip_noted", strings.TrimPrefix(key, "wifi_noip_noted:")); ok {
+						l.wifiNoIPNoted[m] = true
+					}
 				}
 			}
 			rows.Close()
@@ -703,7 +707,9 @@ func NewLive(cfg *config.Config, d *db.DB, initial []RouterConfig, pool *SSHPool
 			for rows.Next() {
 				var key string
 				if rows.Scan(&key) == nil {
-					l.unverifiedNoted[strings.TrimPrefix(key, "unverified_mac_noted:")] = true
+					if m, ok := macaddr.ParseOrWarn(macWarn, "kv.unverified_mac_noted", strings.TrimPrefix(key, "unverified_mac_noted:")); ok {
+						l.unverifiedNoted[m] = true
+					}
 				}
 			}
 			rows.Close()
@@ -935,7 +941,7 @@ func (l *Live) SetRouters(list []RouterConfig) {
 	// trackUnknownDevices; aquí solo se limpia la lista completa si no queda
 	// ningún router (config vacía tras un reset).
 	if len(l.routers) == 0 {
-		l.unknownGrace = map[string]int{}
+		l.unknownGrace = map[macaddr.MAC]int{}
 	}
 	for id := range l.backhaulCache {
 		if !ids[id] {
@@ -1879,8 +1885,8 @@ type overrideInfo struct {
 // es exacto. Lo usan tanto buildDevices (clientes vivos) como ghostDevices
 // (retenidos offline): un override debe verse igual esté el cliente online u
 // offline (#797).
-func (l *Live) loadDeviceOverrides() map[string]overrideInfo {
-	out := map[string]overrideInfo{}
+func (l *Live) loadDeviceOverrides() map[macaddr.MAC]overrideInfo {
+	out := map[macaddr.MAC]overrideInfo{}
 	if l.db == nil {
 		return out
 	}
@@ -1890,10 +1896,11 @@ func (l *Live) loadDeviceOverrides() map[string]overrideInfo {
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var mac, name, deviceType, bannedBands string
+		var mac macaddr.MAC
+		var name, deviceType, bannedBands string
 		var icon sql.NullString
 		var notifyOffline bool
-		if err := rows.Scan(&mac, &icon, &name, &deviceType, &bannedBands, &notifyOffline); err == nil {
+		if err := rows.Scan(&mac, &icon, &name, &deviceType, &bannedBands, &notifyOffline); err == nil && mac.IsValid() {
 			out[mac] = overrideInfo{Icon: icon.String, Name: name, DeviceType: deviceType, BannedBands: bannedBands, NotifyOffline: notifyOffline}
 		}
 	}
@@ -2015,8 +2022,8 @@ func (l *Live) buildRouter(p *routerPolled, history []histPoint) Router {
 	// #1892: el badge sale de lo que la unidad demuestra, no de `cfgIsSwitch`,
 	// que ademas gobierna los claims de la FDB (#1417) y por eso no se toca.
 	r.Role, r.RoleBadge = displayRole(p, p.cfg, isGw)
-	if p.brMac != "" {
-		r.MAC = p.brMac
+	if m, ok := macaddr.ParseOrWarn(macWarn, "router.br_mac", p.brMac); ok {
+		r.MAC = m
 	}
 	// #1757: bridge VLAN filtering por puerto. nil cuando la unidad no lo
 	// reporta, para no publicar una lista vacía como si no hubiera VLANs.
@@ -2705,19 +2712,19 @@ func (l *Live) trackUnknownDevices(devices []Device, dists []DistributionNode) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	// issue #196: MACs de la allowlist (confiables) → nunca "desconocido".
-	trusted := map[string]bool{}
+	trusted := map[macaddr.MAC]bool{}
 	if l.db != nil {
 		if rows, err := l.db.Query("SELECT mac FROM known_macs"); err == nil {
 			for rows.Next() {
-				var mac string
-				if rows.Scan(&mac) == nil {
+				var mac macaddr.MAC
+				if rows.Scan(&mac) == nil && mac.IsValid() {
 					trusted[mac] = true
 				}
 			}
 			rows.Close()
 		}
 	}
-	nowOnline := map[string]bool{}
+	nowOnline := map[macaddr.MAC]bool{}
 	for _, d := range devices {
 		if !d.Online {
 			continue
@@ -2735,7 +2742,7 @@ func (l *Live) trackUnknownDevices(devices []Device, dists []DistributionNode) {
 		}
 		// issue #234: con hostname (lease resuelto) el dispositivo es
 		// conocido; se resetea su gracia y nunca alerta.
-		if d.Name != d.MAC {
+		if d.Name != d.MAC.String() {
 			delete(l.unknownGrace, d.MAC)
 			delete(l.unverifiedSince, d.MAC)
 			continue
@@ -2814,10 +2821,10 @@ func (l *Live) noteUnverifiedMac(d Device, devices []Device, dists []Distributio
 		return
 	}
 	if l.unverifiedSince == nil {
-		l.unverifiedSince = map[string]int64{}
+		l.unverifiedSince = map[macaddr.MAC]int64{}
 	}
 	if l.unverifiedNoted == nil {
-		l.unverifiedNoted = map[string]bool{}
+		l.unverifiedNoted = map[macaddr.MAC]bool{}
 	}
 	now := time.Now().UnixMilli()
 	first, seen := l.unverifiedSince[d.MAC]
@@ -2843,8 +2850,9 @@ func (l *Live) emitUnverifiedMac(d Device, devices []Device, dists []Distributio
 	if minutes < 1 {
 		minutes = 1
 	}
+	macStr := d.MAC.String()
 	vars := map[string]string{
-		"mac":     d.MAC,
+		"mac":     macStr,
 		"router":  l.routerDisplayName(d.RouterID),
 		"where":   where,
 		"minutes": fmt.Sprintf("%d", minutes),
@@ -2852,12 +2860,12 @@ func (l *Live) emitUnverifiedMac(d Device, devices []Device, dists []Distributio
 	if port != "" {
 		vars["port"] = port
 	}
-	desc := fmt.Sprintf("%s has been in %s for %d min with no lease, ARP, ND or mDNS", d.MAC, where, minutes)
+	desc := fmt.Sprintf("%s has been in %s for %d min with no lease, ARP, ND or mDNS", macStr, where, minutes)
 	if port != "" {
-		desc = fmt.Sprintf("%s has been on %s (%s) for %d min with no lease, ARP, ND or mDNS", d.MAC, where, port, minutes)
+		desc = fmt.Sprintf("%s has been on %s (%s) for %d min with no lease, ARP, ND or mDNS", macStr, where, port, minutes)
 	}
 	l.engine.Emit(AlertEvent{
-		ID:       "alert-unverified-mac-" + d.MAC,
+		ID:       "alert-unverified-mac-" + macStr,
 		Category: alerts.CatClients, Urgent: false,
 		Severity:    "info",
 		Title:       "Unverified device",
@@ -2871,11 +2879,11 @@ func (l *Live) emitUnverifiedMac(d Device, devices []Device, dists []Distributio
 // persistUnverifiedNoted guarda en kv que esta MAC ya dejó su nota (#1873),
 // para no repetirla tras un reinicio. Con db nil (demo/tests) es no-op.
 // Debe llamarse con l.mu tomado.
-func (l *Live) persistUnverifiedNoted(mac string) {
+func (l *Live) persistUnverifiedNoted(mac macaddr.MAC) {
 	if l.db == nil {
 		return
 	}
-	_, _ = l.db.Exec("INSERT INTO kv (key, value) VALUES (?, '1') ON CONFLICT(key) DO NOTHING", "unverified_mac_noted:"+mac)
+	_, _ = l.db.Exec("INSERT INTO kv (key, value) VALUES (?, '1') ON CONFLICT(key) DO NOTHING", "unverified_mac_noted:"+mac.String())
 }
 
 // wifiNoIPNoteAfter es cuánto tiene que persistir un cliente asociado por
@@ -2910,12 +2918,12 @@ func (l *Live) trackWiFiNoIP(devices []Device, dists []DistributionNode) {
 	// Los Live montados a mano (tests, demo) pueden no haber inicializado los
 	// mapas; se crean aquí como hace noteUnverifiedMac con los suyos.
 	if l.wifiNoIPSince == nil {
-		l.wifiNoIPSince = map[string]int64{}
+		l.wifiNoIPSince = map[macaddr.MAC]int64{}
 	}
 	if l.wifiNoIPNoted == nil {
-		l.wifiNoIPNoted = map[string]bool{}
+		l.wifiNoIPNoted = map[macaddr.MAC]bool{}
 	}
-	nowOnline := map[string]bool{}
+	nowOnline := map[macaddr.MAC]bool{}
 	now := time.Now().UnixMilli()
 	for _, d := range devices {
 		if !d.Online || !isWirelessBand(d.Band) || d.IP != "" {
@@ -2954,8 +2962,9 @@ func (l *Live) emitWiFiNoIP(d Device, devices []Device, dists []DistributionNode
 	if minutes < 1 {
 		minutes = 1
 	}
+	macStr := d.MAC.String()
 	vars := map[string]string{
-		"mac":     d.MAC,
+		"mac":     macStr,
 		"router":  l.routerDisplayName(d.RouterID),
 		"where":   where,
 		"minutes": fmt.Sprintf("%d", minutes),
@@ -2964,12 +2973,12 @@ func (l *Live) emitWiFiNoIP(d Device, devices []Device, dists []DistributionNode
 	if port != "" {
 		vars["port"] = port
 	}
-	desc := fmt.Sprintf("%s has been associated by Wi-Fi on %s for %d min with no IP address", d.MAC, where, minutes)
+	desc := fmt.Sprintf("%s has been associated by Wi-Fi on %s for %d min with no IP address", macStr, where, minutes)
 	if port != "" {
-		desc = fmt.Sprintf("%s has been associated by Wi-Fi on %s (%s) for %d min with no IP address", d.MAC, where, port, minutes)
+		desc = fmt.Sprintf("%s has been associated by Wi-Fi on %s (%s) for %d min with no IP address", macStr, where, port, minutes)
 	}
 	l.engine.Emit(AlertEvent{
-		ID:       "alert-wifi-noip-" + d.MAC,
+		ID:       "alert-wifi-noip-" + macStr,
 		Category: alerts.CatClients, Urgent: false,
 		Severity:    "info",
 		Title:       "Wi-Fi client with no IP",
@@ -2983,21 +2992,21 @@ func (l *Live) emitWiFiNoIP(d Device, devices []Device, dists []DistributionNode
 // persistWiFiNoIPNoted guarda en kv que esta MAC ya dejó su nota (#2111).
 // Con db nil (demo/tests) es no-op.
 // Debe llamarse con l.mu tomado.
-func (l *Live) persistWiFiNoIPNoted(mac string) {
+func (l *Live) persistWiFiNoIPNoted(mac macaddr.MAC) {
 	if l.db == nil {
 		return
 	}
-	_, _ = l.db.Exec("INSERT INTO kv (key, value) VALUES (?, '1') ON CONFLICT(key) DO NOTHING", "wifi_noip_noted:"+mac)
+	_, _ = l.db.Exec("INSERT INTO kv (key, value) VALUES (?, '1') ON CONFLICT(key) DO NOTHING", "wifi_noip_noted:"+mac.String())
 }
 
 // persistUnknownAlerted guarda en kv la memoria per-MAC (issue #248) para que
 // sobreviva a reinicios del servidor. Con db nil (demo/tests) es no-op.
 // Debe llamarse con l.mu tomado.
-func (l *Live) persistUnknownAlerted(mac string) {
+func (l *Live) persistUnknownAlerted(mac macaddr.MAC) {
 	if l.db == nil {
 		return
 	}
-	_, _ = l.db.Exec("INSERT INTO kv (key, value) VALUES (?, '1') ON CONFLICT(key) DO NOTHING", "unknown_alerted:"+mac)
+	_, _ = l.db.Exec("INSERT INTO kv (key, value) VALUES (?, '1') ON CONFLICT(key) DO NOTHING", "unknown_alerted:"+mac.String())
 }
 
 // routerDisplayName: nombre visible de un router por id ("" si no está en la
@@ -3023,8 +3032,9 @@ func (l *Live) routerDisplayName(id string) string {
 // pass and the Proxmox/UniFi seals, so AttachTo is already resolved.
 func (l *Live) emitUnknownDevice(d Device, devices []Device, dists []DistributionNode) {
 	where, port := l.deviceLocation(d, devices, dists)
+	macStr := d.MAC.String()
 	vars := map[string]string{
-		"mac":    d.MAC,
+		"mac":    macStr,
 		"router": l.routerDisplayName(d.RouterID),
 		"where":  where,
 	}
@@ -3042,9 +3052,9 @@ func (l *Live) emitUnknownDevice(d Device, devices []Device, dists []Distributio
 	if d.SignalDbm != nil {
 		vars["signal"] = fmt.Sprintf("%d", *d.SignalDbm)
 	}
-	desc := fmt.Sprintf("%s connected to %s", d.MAC, where)
+	desc := fmt.Sprintf("%s connected to %s", macStr, where)
 	if d.IP != "" {
-		desc = fmt.Sprintf("%s · %s connected to %s", d.MAC, d.IP, where)
+		desc = fmt.Sprintf("%s · %s connected to %s", macStr, d.IP, where)
 	}
 	if d.Band != "" && d.Band != "cable" {
 		desc += " · " + d.Band
@@ -3053,7 +3063,7 @@ func (l *Live) emitUnknownDevice(d Device, devices []Device, dists []Distributio
 		desc += fmt.Sprintf(" · %d dBm", *d.SignalDbm)
 	}
 	l.engine.Emit(AlertEvent{
-		ID:       fmt.Sprintf("alert-unknown-%s-%d", d.MAC, time.Now().UnixMilli()),
+		ID:       fmt.Sprintf("alert-unknown-%s-%d", macStr, time.Now().UnixMilli()),
 		Category: alerts.CatClients, Urgent: true,
 		Severity:    "warn",
 		Title:       "Unknown device",
@@ -3068,9 +3078,8 @@ func (l *Live) emitUnknownDevice(d Device, devices []Device, dists []Distributio
 // DismissUnknownDevice implementa Snapshotter (#772): marca la MAC como ya
 // avisada para que trackUnknownDevices no vuelva a alertar ("dejar como
 // anónimo"). Persiste en kv (issue #248) para sobrevivir a reinicios.
-func (l *Live) DismissUnknownDevice(mac string) {
-	mac = strings.ToUpper(strings.TrimSpace(mac))
-	if len(mac) != 17 {
+func (l *Live) DismissUnknownDevice(mac macaddr.MAC) {
+	if !mac.IsValid() {
 		return
 	}
 	l.mu.Lock()
@@ -3142,7 +3151,7 @@ func firstNonEmpty(vals ...string) string {
 func (l *Live) trackDevicePresence(devices []Device, nowMs int64) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	seen := map[string]bool{}
+	seen := map[macaddr.MAC]bool{}
 	for _, d := range devices {
 		if !d.Online || d.Band == "cable" {
 			continue
@@ -3203,7 +3212,7 @@ func (l *Live) trackOfflineDevices(devices []Device) {
 			l.offlineOnline[d.MAC] = true
 			if l.offlineAlerted[d.MAC] {
 				l.offlineAlerted[d.MAC] = false
-				l.engine.Remove("alert-device-offline-" + d.MAC)
+				l.engine.Remove("alert-device-offline-" + d.MAC.String())
 			}
 			l.offlineMisses[d.MAC] = 0
 			continue
@@ -3224,13 +3233,14 @@ func (l *Live) trackOfflineDevices(devices []Device) {
 // warn, urgente). ID estable por MAC: un incidente = una entrada del feed.
 // Debe llamarse con l.mu tomado.
 func (l *Live) emitDeviceOffline(d Device) {
+	macStr := d.MAC.String()
 	name := d.Name
 	if name == "" {
-		name = d.MAC
+		name = macStr
 	}
 	router := l.routerDisplayName(d.RouterID)
 	l.engine.EmitVolatile(AlertEvent{
-		ID:       "alert-device-offline-" + d.MAC,
+		ID:       "alert-device-offline-" + macStr,
 		Category: alerts.CatClients, Urgent: true,
 		Severity:    "warn",
 		Title:       fmt.Sprintf("Device offline: %s", name),
@@ -3244,21 +3254,19 @@ func (l *Live) emitDeviceOffline(d Device) {
 
 // insertDeviceEvent persiste una transición de presencia. Con db nil
 // (demo/tests sin BD) es no-op. Debe llamarse con l.mu tomado.
-func (l *Live) insertDeviceEvent(mac, routerID, state string, signalDbm *int, nowMs int64) {
+func (l *Live) insertDeviceEvent(mac macaddr.MAC, routerID, state string, signalDbm *int, nowMs int64) {
 	if l.db == nil {
 		return
 	}
-	if parsed, ok := macaddr.ParseOrWarn(macWarn, "deviceevents.insert", mac); ok {
-		_ = deviceevents.Insert(l.db.DB, deviceevents.Event{
-			TsMs: nowMs, MAC: parsed, RouterID: routerID, State: state,
-			SignalDbm: signalDbm,
-		})
-	}
+	_ = deviceevents.Insert(l.db.DB, deviceevents.Event{
+		TsMs: nowMs, MAC: mac, RouterID: routerID, State: state,
+		SignalDbm: signalDbm,
+	})
 }
 
 // lastRouterFor devuelve el último router conocido de una MAC desde
 // device_attrib (o vacío si no hay registro). Debe llamarse con l.mu tomado.
-func (l *Live) lastRouterFor(mac string) string {
+func (l *Live) lastRouterFor(mac macaddr.MAC) string {
 	if l.db == nil {
 		return ""
 	}
@@ -3568,7 +3576,7 @@ type roamMark struct {
 
 // roamIsEcho: true si (from → to) es el inverso exacto del último salto
 // emitido para esa MAC y está dentro de la ventana de eco.
-func (l *Live) roamIsEcho(mac, from, to string) bool {
+func (l *Live) roamIsEcho(mac macaddr.MAC, from, to string) bool {
 	l.roamMu.Lock()
 	defer l.roamMu.Unlock()
 	m, ok := l.lastRoam[mac]
@@ -3578,11 +3586,11 @@ func (l *Live) roamIsEcho(mac, from, to string) bool {
 	return m.from == to && m.to == from && time.Since(m.at) < roamEchoWindow
 }
 
-func (l *Live) markRoam(mac, from, to string, at time.Time) {
+func (l *Live) markRoam(mac macaddr.MAC, from, to string, at time.Time) {
 	l.roamMu.Lock()
 	defer l.roamMu.Unlock()
 	if l.lastRoam == nil {
-		l.lastRoam = map[string]roamMark{}
+		l.lastRoam = map[macaddr.MAC]roamMark{}
 	}
 	l.lastRoam[mac] = roamMark{from: from, to: to, at: at}
 }
@@ -3955,10 +3963,10 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 			default:
 				continue
 			}
-			if l.roamIsEcho(mac, prev.routerID, cur.routerID) {
-				continue
-			}
 			if parsed, ok := macaddr.ParseOrWarn(macWarn, "roamevents.insert", mac); ok {
+				if l.roamIsEcho(parsed, prev.routerID, cur.routerID) {
+					continue
+				}
 				if err := roamevents.InsertEvent(l.db.DB, roamevents.Event{
 					TsMs:     now,
 					RouterID: cur.routerID,
@@ -3966,7 +3974,7 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 					MAC:      parsed,
 					Detail:   detail,
 				}); err == nil {
-					l.markRoam(mac, prev.routerID, cur.routerID, time.UnixMilli(now))
+					l.markRoam(parsed, prev.routerID, cur.routerID, time.UnixMilli(now))
 				}
 			}
 		}
@@ -4308,12 +4316,13 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 		}
 	}
 	// issue #196: allowlist de dispositivos confiables (mac → alias).
-	knownMacs := map[string]string{}
+	knownMacs := map[macaddr.MAC]string{}
 	if l.db != nil {
 		if rows, err := l.db.Query("SELECT mac, name FROM known_macs"); err == nil {
 			for rows.Next() {
-				var mac, name string
-				if rows.Scan(&mac, &name) == nil {
+				var mac macaddr.MAC
+				var name string
+				if rows.Scan(&mac, &name) == nil && mac.IsValid() {
 					knownMacs[mac] = name
 				}
 			}
@@ -4342,12 +4351,17 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 		if isBatadvBlaMAC(mac) {
 			continue // #1818: sonda LOOP DETECT del mesh, no es un host
 		}
+		parsed, ok := macaddr.ParseOrWarn(macWarn, "build_devices.mac", mac)
+		if !ok {
+			continue
+		}
+		macStr := parsed.String()
 		lease, hasLease := leasesByMac[mac]
 		s, isSeen := seen[mac]
 		// Fabricante desconocido = campo VACÍO, no un literal. El server no
 		// tiene idioma: "Desconocido" viajaba tal cual hasta la UI y salía en
 		// español en una interfaz en inglés. Quien pinta, traduce.
-		manufacturer := oui.Lookup(mac)
+		manufacturer := oui.Lookup(macStr)
 		defaultRouterID := gwID
 		if defaultRouterID == "" {
 			if rID, ok := leaseRouter[mac]; ok {
@@ -4355,8 +4369,8 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 			}
 		}
 		d := Device{
-			ID:  strings.ToLower(strings.ReplaceAll(mac, ":", "-")),
-			MAC: mac, Manufacturer: manufacturer,
+			ID:  parsed.DeviceID(),
+			MAC: parsed, Manufacturer: manufacturer,
 			TrafficMbps: 0, Sparkline: []float64{},
 			RouterID: defaultRouterID, Band: "—",
 			Online: isSeen, WanSide: wanSide[mac],
@@ -4371,7 +4385,7 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 				d.Name = res.Name
 				d.NameSource = "reservation"
 			default:
-				d.Name = mac
+				d.Name = macStr
 			}
 			d.IP = lease.IP
 			if lease.LeaseExpiresAt != nil {
@@ -4382,7 +4396,7 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 				d.LeaseRemaining = &remaining
 			}
 		} else {
-			d.Name = mac
+			d.Name = macStr
 			// The name pinned in /etc/config/dhcp: a client with a fixed
 			// address of its own never takes a lease, so this is the only
 			// name the router has for it.
@@ -4415,7 +4429,7 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 		}
 		// issue #196: la allowlist manda sobre el nombre por defecto. Con
 		// alias (Name != MAC) el dispositivo deja de ser "desconocido".
-		if alias, ok := knownMacs[mac]; ok && alias != "" {
+		if alias, ok := knownMacs[parsed]; ok && alias != "" {
 			d.Name = alias
 			d.NameSource = "known_mac"
 			d.namePinned = true
@@ -4423,7 +4437,7 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 		// issue #437/#797: overrides manuales (icono, nombre) se aplican sobre
 		// el dispositivo auto-descubierto; el nombre manual manda incluso
 		// sobre el alias de la allowlist.
-		if ov, ok := deviceOverrides[mac]; ok {
+		if ov, ok := deviceOverrides[parsed]; ok {
 			if ov.Icon != "" {
 				d.IconOverride = ov.Icon
 			}
@@ -4454,7 +4468,7 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 				}
 				// mDNS can replace a MAC fallback or an unpinned generated name.
 				// A meaningful DHCP name, reservation, alias or manual name stays.
-				if !d.namePinned && !isGeneratedDeviceName(host) && (d.Name == mac || isGeneratedDeviceName(d.Name)) {
+				if !d.namePinned && !isGeneratedDeviceName(host) && (d.Name == macStr || isGeneratedDeviceName(d.Name)) {
 					previousName := d.Name
 					d.Name = host
 					d.NameSource = "mdns"
@@ -4467,7 +4481,7 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 			}
 		}
 		// Static-IP hosts never take a lease: fall back to their PTR record.
-		if d.Name == mac && d.IP != "" {
+		if d.Name == macStr && d.IP != "" {
 			if host := l.rdns.Name(d.IP); host != "" {
 				d.Name = host
 				d.NameSource = "rdns"
@@ -4480,7 +4494,7 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 		// agente es una foto del escaneo de discovery, así que una MAC
 		// efímera (el NMRP de Netgear al reiniciar para actualizar firmware)
 		// vive en el FDB unos segundos y nunca entra en ella.
-		if randomMACs[mac] || isLocallyAdministeredMAC(mac) {
+		if randomMACs[mac] || parsed.IsLocallyAdministered() {
 			d.RandomMAC = true
 		}
 		// mDNS-based type refinement (#338): if the hostname/DHCP classification
@@ -4495,12 +4509,12 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 		}
 		// issue #797: el tipo manual manda sobre la clasificación (reglas,
 		// huella DHCP y refinación mDNS).
-		if ov, ok := deviceOverrides[mac]; ok && ov.DeviceType != "" {
+		if ov, ok := deviceOverrides[parsed]; ok && ov.DeviceType != "" {
 			d.Type = ov.DeviceType
 			d.TypeOverride = ov.DeviceType
 		}
 		// #1354: flag opt-in de alerta por desconexión (override persistido).
-		if ov, ok := deviceOverrides[mac]; ok {
+		if ov, ok := deviceOverrides[parsed]; ok {
 			d.NotifyOffline = ov.NotifyOffline
 		}
 		if isSeen {
@@ -4520,7 +4534,7 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 		// hostapd) sin consultar la store en cada rebuild. Solo online; los
 		// offline no tienen rate (la UI pinta "—").
 		if isSeen {
-			if rxBps, txBps := l.clientBwRateFor(mac); rxBps+txBps > 0 {
+			if rxBps, txBps := l.clientBwRateFor(parsed.String()); rxBps+txBps > 0 {
 				d.TrafficMbps = (rxBps + txBps) / 1e6
 			}
 		}
@@ -4531,11 +4545,11 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 	// entró. Solo rellena el hueco: el `tag=` que declara el hipervisor para un
 	// invitado manda y se aplica después.
 	for i := range devices {
-		if devices[i].Vlan > 0 || devices[i].MAC == "" {
+		if devices[i].Vlan > 0 || !devices[i].MAC.IsValid() {
 			continue
 		}
 		if p := polled[devices[i].RouterID]; p != nil {
-			if v := p.fdbVlans[strings.ToUpper(devices[i].MAC)]; v > 0 {
+			if v := p.fdbVlans[devices[i].MAC.String()]; v > 0 {
 				devices[i].Vlan = v
 				devices[i].VlanKnown = true
 			}
@@ -4549,23 +4563,21 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 	// frontend y alimenta la asignación de ranuras de los anillos de la
 	// topología → los chips saltaban de posición al refrescar. Ordenar por
 	// MAC hace el contrato determinista para el mismo set de dispositivos.
-	sort.Slice(devices, func(i, j int) bool { return devices[i].MAC < devices[j].MAC })
+	sort.Slice(devices, func(i, j int) bool { return devices[i].MAC.Compare(devices[j].MAC) < 0 })
 	// #1151: canónicas + fusión de enlazadas (orden: normalizar -> fusionar).
 	return normalizeDevices(mergeLinkedDevices(devices, l.deviceLinks())), wanSegment
 }
 
-// normalizeDevices: MACs a formato canónico (mayúsculas, ':') y dedup por
-// MAC. La caché gl-clients de GL.iNet emite MACs con guiones y entradas
-// caducadas: sin normalizar el mismo cliente puede aparecer duplicado
+// normalizeDevices: deduplica por MAC (la forma canónica ya la impone
+// macaddr.MAC). La caché gl-clients de GL.iNet emite MACs con guiones y
+// entradas caducadas: sin deduplicar el mismo cliente puede aparecer repetido
 // (#1145). Gana la entrada online; hostname/IP/fabricante de la descartada
 // enriquecen a la conservada.
 func normalizeDevices(devices []Device) []Device {
-	byMac := make(map[string]int, len(devices))
+	byMac := make(map[macaddr.MAC]int, len(devices))
 	out := make([]Device, 0, len(devices))
 	for _, d := range devices {
-		mac := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(d.MAC), "-", ":"))
-		d.MAC = mac
-		if i, ok := byMac[mac]; ok {
+		if i, ok := byMac[d.MAC]; ok {
 			a, b := out[i], d
 			if b.Online && !a.Online {
 				a, b = b, a
@@ -4585,7 +4597,7 @@ func normalizeDevices(devices []Device) []Device {
 			out[i] = a
 			continue
 		}
-		byMac[mac] = len(out)
+		byMac[d.MAC] = len(out)
 		out = append(out, d)
 	}
 	return out
@@ -4927,7 +4939,7 @@ func (l *Live) buildOverview(ctx context.Context) (*Overview, error) {
 		d := &devices[i]
 		l.mu.Lock()
 		st := l.weakStates[d.MAC]
-		fireID, resolveID, episodeStart := alerts.WeakSignalStep(&st, d.MAC, d.SignalDbm, d.Online, weakDbm, weakHyst, weakSamples, weakNow)
+		fireID, resolveID, episodeStart := alerts.WeakSignalStep(&st, d.MAC.String(), d.SignalDbm, d.Online, weakDbm, weakHyst, weakSamples, weakNow)
 		l.weakStates[d.MAC] = st
 		if fireID != "" || resolveID != "" {
 			routerName := l.routerDisplayName(d.RouterID)
@@ -4998,8 +5010,8 @@ func (l *Live) buildOverview(ctx context.Context) (*Overview, error) {
 	// lldpd) desde el FDB del switch que aprende su NIC (p. ej. NAS en xg4).
 	registeredMacs := make(map[string]string, len(routerList))
 	for _, r := range routerList {
-		if r.MAC != "" {
-			registeredMacs[r.ID] = r.MAC
+		if r.MAC.IsValid() {
+			registeredMacs[r.ID] = r.MAC.String()
 		}
 	}
 	// #1279: uplinks resueltos por LLDP (regla de puerto raíz); mandan sobre
@@ -5668,11 +5680,11 @@ func (l *Live) attributedDevices() []Device {
 // tras un router/AP con su propio dnsmasq, p. ej. rt-lab en 192.168.2.x, es
 // quien concede el lease). Vacío si ningún router la reportó (IP estática o
 // sin lease en el último snapshot).
-func (l *Live) RouterServingDHCP(mac string) string {
-	mac = strings.ToUpper(strings.TrimSpace(mac))
-	if mac == "" {
+func (l *Live) RouterServingDHCP(mac macaddr.MAC) string {
+	if !mac.IsValid() {
 		return ""
 	}
+	want := mac.String()
 	l.mu.Lock()
 	polled := cloneLastPolled(l.lastPolled)
 	l.mu.Unlock()
@@ -5681,7 +5693,7 @@ func (l *Live) RouterServingDHCP(mac string) string {
 			continue // agent-only no tiene vía SSH para escribir la reserva
 		}
 		for _, le := range p.leases {
-			if strings.ToUpper(le.MAC) == mac {
+			if strings.ToUpper(le.MAC) == want {
 				return id
 			}
 		}
@@ -6780,7 +6792,9 @@ func enrichEthPort(port EthPort, netdev string, d portEnrichDeps) EthPort {
 			if len(cands) > 1 {
 				if mac, ok := directFleetPeer(d, cands); ok {
 					port.ConnectedTo = d.routerByMac[mac]
-					port.DeviceMac = mac
+					if m, ok := macaddr.ParseOrWarn(macWarn, "ethport.device_mac", mac); ok {
+						port.DeviceMac = m
+					}
 					port.PeerKind = PeerKindRouterLink
 				} else {
 					port.ConnectedTo = ""
@@ -6801,7 +6815,9 @@ func enrichEthPort(port EthPort, netdev string, d portEnrichDeps) EthPort {
 			if nb.ChassisMac != "" {
 				// La MAC del vecino (su bridge) va al hover como en las bocas
 				// de dispositivo único (#1150).
-				port.DeviceMac = strings.ToUpper(nb.ChassisMac)
+				if m, ok := macaddr.ParseOrWarn(macWarn, "ethport.lldp_chassis_mac", nb.ChassisMac); ok {
+					port.DeviceMac = m
+				}
 				if name, ok := d.routerByMac[strings.ToUpper(nb.ChassisMac)]; ok {
 					port.ConnectedTo = name
 				} else if dn := nb.displayName(); dn != "" {
@@ -6823,7 +6839,9 @@ func enrichEthPort(port EthPort, netdev string, d portEnrichDeps) EthPort {
 	if len(all) > 0 {
 		if ap, isWifi := d.wifiByMac[all[0]]; isWifi && allWifiOfOneAP(all, d.wifiByMac) {
 			port.ConnectedTo = ap
-			port.DeviceMac = all[0]
+			if m, ok := macaddr.ParseOrWarn(macWarn, "ethport.device_mac", all[0]); ok {
+				port.DeviceMac = m
+			}
 			// La pista "cliente WiFi detrás" la traduce el cliente
 			// según PeerKind (#1039); el nombre del AP viaja en ConnectedTo.
 			port.PeerKind = PeerKindAPWiFi
@@ -6847,7 +6865,9 @@ func enrichEthPort(port EthPort, netdev string, d portEnrichDeps) EthPort {
 		// NIC virtual de una VM/CT (#291).
 		if isVirtualMAC(mac) {
 			port.ConnectedTo = "Hypervisor"
-			port.DeviceMac = mac
+			if m, ok := macaddr.ParseOrWarn(macWarn, "ethport.device_mac", mac); ok {
+				port.DeviceMac = m
+			}
 			port.Detail = virtualDetail(mac, d.leaseMap, d.aliasByMac)
 			return port
 		}
@@ -6860,7 +6880,9 @@ func enrichEthPort(port EthPort, netdev string, d portEnrichDeps) EthPort {
 		//   como detalle.
 		if isCuratedLabel(port) && !labelMatchesDevice(port.Label, mac, d.leaseMap, d.aliasByMac) {
 			name := deviceDisplayName(mac, d.leaseMap, d.aliasByMac)
-			port.DeviceMac = mac
+			if m, ok := macaddr.ParseOrWarn(macWarn, "ethport.device_mac", mac); ok {
+				port.DeviceMac = m
+			}
 			if name != mac {
 				// El cliente compone "nombre · detrás de <label>" con
 				// su i18n (#1039); aquí viaja el nombre a pelo.
@@ -6898,7 +6920,9 @@ func enrichEthPort(port EthPort, netdev string, d portEnrichDeps) EthPort {
 		default:
 			port.ConnectedTo = mac
 		}
-		port.DeviceMac = mac
+		if m, ok := macaddr.ParseOrWarn(macWarn, "ethport.device_mac", mac); ok {
+			port.DeviceMac = m
+		}
 		if ok && lease.IP != "" {
 			port.Detail = lease.IP + " · full duplex"
 		}
@@ -6945,13 +6969,17 @@ func enrichEthPort(port EthPort, netdev string, d portEnrichDeps) EthPort {
 		if infraMac != "" {
 			if lease, ok := d.leaseMap[infraMac]; ok && lease.Hostname != "" {
 				port.ConnectedTo = lease.Hostname
-				port.DeviceMac = infraMac
+				if m, ok := macaddr.ParseOrWarn(macWarn, "ethport.device_mac", infraMac); ok {
+					port.DeviceMac = m
+				}
 				if lease.IP != "" {
 					port.Detail = lease.IP
 				}
 			} else if alias := d.aliasByMac[infraMac]; alias != "" {
 				port.ConnectedTo = alias
-				port.DeviceMac = infraMac
+				if m, ok := macaddr.ParseOrWarn(macWarn, "ethport.device_mac", infraMac); ok {
+					port.DeviceMac = m
+				}
 			}
 		} else {
 			// Switch/bridge tonto inferido: sin lease ni alias que lo

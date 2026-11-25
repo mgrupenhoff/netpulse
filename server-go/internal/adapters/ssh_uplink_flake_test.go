@@ -4,6 +4,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 )
 
@@ -35,7 +36,7 @@ func TestSSHUplinkDevsKeepsLastGoodOnUbusFailure(t *testing.T) {
 	}
 	l := NewLive(nil, nil, nil, nil)
 	devs := l.buildDevices(map[string]*routerPolled{"travel": p}, "")
-	if len(devs) != 1 || devs[0].MAC != "AA:BB:CC:00:00:02" {
+	if len(devs) != 1 || devs[0].MAC != macaddr.MustParse("AA:BB:CC:00:00:02") {
 		t.Fatalf("con ubus fallido solo debía contar el vecino de la LAN, got %+v", devs)
 	}
 }

@@ -11,16 +11,10 @@ import (
 	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
-// normalizeLinkMAC: formato canónico de identidad (mayúsculas, ':'). Igual
-// que normSeenMAC; nombre propio para no acoplar los dos ficheros.
-func normalizeLinkMAC(mac string) string {
-	return macaddr.NormalizeLenient(mac)
-}
-
 // DeviceLinks carga TODOS los enlaces alias → canónico. Mapa vacío si no hay
 // BD o no hay enlaces.
-func (l *Live) deviceLinks() map[string]string {
-	out := map[string]string{}
+func (l *Live) deviceLinks() map[macaddr.MAC]macaddr.MAC {
+	out := map[macaddr.MAC]macaddr.MAC{}
 	if l.db == nil {
 		return out
 	}
@@ -30,11 +24,11 @@ func (l *Live) deviceLinks() map[string]string {
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var alias, canonical string
-		if err := rows.Scan(&alias, &canonical); err != nil {
+		var alias, canonical macaddr.MAC
+		if err := rows.Scan(&alias, &canonical); err != nil || !alias.IsValid() || !canonical.IsValid() {
 			continue
 		}
-		out[normalizeLinkMAC(alias)] = normalizeLinkMAC(canonical)
+		out[alias] = canonical
 	}
 	return out
 }
@@ -47,19 +41,19 @@ func (l *Live) deviceLinks() map[string]string {
 // aunque el watch cambie de SSID y su alias sea la única vista, el cliente
 // conserva la MAC por la que el usuario lo enlazó) y AliasMacs con las MACs
 // fundidas.
-func mergeLinkedDevices(devices []Device, links map[string]string) []Device {
+func mergeLinkedDevices(devices []Device, links map[macaddr.MAC]macaddr.MAC) []Device {
 	if len(devices) == 0 || len(links) == 0 {
 		return devices
 	}
-	groups := map[string][]Device{}
-	order := []string{}
+	groups := map[macaddr.MAC][]Device{}
+	order := []macaddr.MAC{}
 	loose := []Device{} // sin MAC: sin identidad enlazable, se conservan tal cual
 	for _, d := range devices {
-		mac := normalizeLinkMAC(d.MAC)
-		if mac == "" {
+		if !d.MAC.IsValid() {
 			loose = append(loose, d)
 			continue
 		}
+		mac := d.MAC
 		canonical, linked := links[mac]
 		if !linked {
 			canonical = mac
@@ -76,11 +70,11 @@ func mergeLinkedDevices(devices []Device, links map[string]string) []Device {
 			// #1151: si la única entrada es una alias (el canónico no se ve
 			// ahora), expone la identidad canónica con la alias en AliasMacs.
 			d := ds[0]
-			mac := normalizeLinkMAC(d.MAC)
-			if c, linked := links[mac]; linked && c != mac {
+			if c, linked := links[d.MAC]; linked && c != d.MAC {
+				orig := d.MAC
 				d.MAC = c
-				d.ID = strings.ToLower(strings.ReplaceAll(c, ":", "-"))
-				d.AliasMacs = []string{mac}
+				d.ID = c.DeviceID()
+				d.AliasMacs = []macaddr.MAC{orig}
 			}
 			out = append(out, d)
 			continue
@@ -89,12 +83,12 @@ func mergeLinkedDevices(devices []Device, links map[string]string) []Device {
 		// alias (el canónico no se ve ahora), el primero online o el primero.
 		primary := 0
 		for i := range ds {
-			if normalizeLinkMAC(ds[i].MAC) == canonical {
+			if ds[i].MAC == canonical {
 				primary = i
 				break
 			}
 		}
-		if normalizeLinkMAC(ds[primary].MAC) != canonical {
+		if ds[primary].MAC != canonical {
 			for i := range ds {
 				if ds[i].Online {
 					primary = i
@@ -103,12 +97,12 @@ func mergeLinkedDevices(devices []Device, links map[string]string) []Device {
 			}
 		}
 		canon := ds[primary]
-		aliases := make([]string, 0, len(ds)-1)
+		aliases := make([]macaddr.MAC, 0, len(ds)-1)
 		for i, d := range ds {
 			if i == primary {
 				continue
 			}
-			aliases = append(aliases, normalizeLinkMAC(d.MAC))
+			aliases = append(aliases, d.MAC)
 			if d.Online {
 				canon.Online = true
 			}
@@ -133,7 +127,7 @@ func mergeLinkedDevices(devices []Device, links map[string]string) []Device {
 			canon.TrafficMbps += d.TrafficMbps
 		}
 		canon.MAC = canonical
-		canon.ID = strings.ToLower(strings.ReplaceAll(canonical, ":", "-"))
+		canon.ID = canonical.DeviceID()
 		canon.AliasMacs = aliases
 		out = append(out, canon)
 	}
@@ -143,7 +137,7 @@ func mergeLinkedDevices(devices []Device, links map[string]string) []Device {
 // LinkSuggestions: pares de clientes NO enlazados que comparten hostname no
 // vacío e IP y no están los dos online a la vez (#1151): candidatos a ser el
 // mismo dispositivo con varias MACs. Solo sugiere; nunca fusiona solo.
-func LinkSuggestions(devices []Device, links map[string]string) [][2]string {
+func LinkSuggestions(devices []Device, links map[macaddr.MAC]macaddr.MAC) [][2]macaddr.MAC {
 	type id struct{ host, ip string }
 	byID := map[id][]Device{}
 	for _, d := range devices {
@@ -151,14 +145,15 @@ func LinkSuggestions(devices []Device, links map[string]string) [][2]string {
 		if host == "" || d.IP == "" {
 			continue
 		}
-		if _, linked := links[normalizeLinkMAC(d.MAC)]; linked {
+		if _, linked := links[d.MAC]; linked {
 			continue // ya enlazado
 		}
 		k := id{host: host, ip: d.IP}
 		byID[k] = append(byID[k], d)
 	}
-	var out [][2]string
-	seenPair := map[string]bool{}
+	var out [][2]macaddr.MAC
+	type macPair struct{ a, b macaddr.MAC }
+	seenPair := map[macPair]bool{}
 	for _, ds := range byID {
 		if len(ds) < 2 {
 			continue
@@ -173,20 +168,21 @@ func LinkSuggestions(devices []Device, links map[string]string) [][2]string {
 			continue // dos a la vez: son dispositivos distintos
 		}
 		for i := 0; i < len(ds); i++ {
+			a := ds[i].MAC
 			for j := i + 1; j < len(ds); j++ {
-				a, b := normalizeLinkMAC(ds[i].MAC), normalizeLinkMAC(ds[j].MAC)
-				if a == "" || b == "" || a == b {
+				b := ds[j].MAC
+				if a == b {
 					continue
 				}
-				pair := a + "|" + b
-				if a > b {
-					pair = b + "|" + a
+				pair := macPair{a, b}
+				if a.Compare(b) > 0 {
+					pair = macPair{b, a}
 				}
 				if seenPair[pair] {
 					continue
 				}
 				seenPair[pair] = true
-				out = append(out, [2]string{a, b})
+				out = append(out, [2]macaddr.MAC{a, b})
 			}
 		}
 	}

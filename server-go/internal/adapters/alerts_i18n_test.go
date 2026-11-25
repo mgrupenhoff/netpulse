@@ -4,6 +4,7 @@ package adapters
 import (
 	"testing"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/alerts"
 )
 
@@ -15,7 +16,7 @@ func TestUnknownDeviceAlertCarriesType(t *testing.T) {
 		{ID: "gateway", Name: "Flint 2", IsGateway: true},
 	}, nil)
 	l.emitUnknownDevice(Device{
-		ID: "aa-bb-cc-dd-ee-ff", MAC: "AA:BB:CC:DD:EE:FF", Name: "AA:BB:CC:DD:EE:FF",
+		ID: "aa-bb-cc-dd-ee-ff", MAC: macaddr.MustParse("AA:BB:CC:DD:EE:FF"), Name: "AA:BB:CC:DD:EE:FF",
 		RouterID: "gateway", Online: true,
 	}, nil, nil)
 	list := l.engine.List()
@@ -46,7 +47,7 @@ func TestUnknownDeviceAlertCarriesLocation(t *testing.T) {
 		{ID: "gateway", Name: "Gateway", IsGateway: true},
 	}, nil)
 	d := Device{
-		ID: "02-00-00-00-00-31", MAC: "02:00:00:00:00:31", Name: "02:00:00:00:00:31",
+		ID: "02-00-00-00-00-31", MAC: macaddr.MustParse("02:00:00:00:00:31"), Name: "02:00:00:00:00:31",
 		IP: "192.0.2.31", RouterID: "gateway", Online: true, Band: "cable",
 		AttachTo: "sw-desk", Port: "7", PortLabel: "Desk 7",
 	}
@@ -74,7 +75,7 @@ func TestUnknownDeviceLocationFallsBackToRouter(t *testing.T) {
 		{ID: "gateway", Name: "Gateway", IsGateway: true},
 	}, nil)
 	d := Device{
-		MAC: "02:00:00:00:00:32", Name: "02:00:00:00:00:32",
+		MAC: macaddr.MustParse("02:00:00:00:00:32"), Name: "02:00:00:00:00:32",
 		RouterID: "gateway", Online: true, Band: "5 GHz",
 	}
 	l.emitUnknownDevice(d, []Device{d}, nil)
@@ -95,7 +96,7 @@ func TestUnknownDeviceDropsUplinkPort(t *testing.T) {
 		{ID: "gateway", Name: "Gateway", IsGateway: true},
 	}, nil)
 	d := Device{
-		MAC: "02:00:00:00:00:33", Name: "02:00:00:00:00:33", IP: "192.0.2.33",
+		MAC: macaddr.MustParse("02:00:00:00:00:33"), Name: "02:00:00:00:00:33", IP: "192.0.2.33",
 		RouterID: "gateway", Online: true, Band: "cable",
 		AttachTo: "sw-desk", Port: "3",
 	}

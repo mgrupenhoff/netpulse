@@ -100,7 +100,7 @@ func TestGetRouterDetailLldpNombraEquipoSolitario(t *testing.T) {
 	if p5.Detail != "192.168.1.80 · LLDP" {
 		t.Fatalf("snmp-5 detail: %q, esperaba mgmt-ip · LLDP", p5.Detail)
 	}
-	if p5.DeviceMac != "78:55:36:02:58:BA" {
+	if p5.DeviceMac != macaddr.MustParse("78:55:36:02:58:BA") {
 		t.Fatalf("snmp-5 deviceMac: %q", p5.DeviceMac)
 	}
 	// Puerto sin LLDP: comportamiento previo intacto (cae a la label).

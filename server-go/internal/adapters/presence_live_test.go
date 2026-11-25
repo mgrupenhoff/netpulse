@@ -3,6 +3,7 @@ package adapters
 import (
 	"testing"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/db"
 )
 
@@ -12,8 +13,8 @@ func testLivePresence(t *testing.T) *Live {
 	d := openLiveTestDB(t)
 	return &Live{
 		db:                   d,
-		devicePresence:       map[string]bool{},
-		presenceMisses:       map[string]int{},
+		devicePresence:       map[macaddr.MAC]bool{},
+		presenceMisses:       map[macaddr.MAC]int{},
 		presenceOfflineAfter: 3,
 	}
 }
@@ -31,7 +32,7 @@ func countDeviceEvents(t *testing.T, l *Live) int {
 // puebla el estado) — evita la avalancha de arranque.
 func TestTrackDevicePresenceAntiStartup(t *testing.T) {
 	l := testLivePresence(t)
-	d := Device{MAC: "AA:BB:CC:DD:EE:01", RouterID: "rt1", Online: true, Band: "5 GHz"}
+	d := Device{MAC: macaddr.MustParse("AA:BB:CC:DD:EE:01"), RouterID: "rt1", Online: true, Band: "5 GHz"}
 	sig := -45
 	d.SignalDbm = &sig
 
@@ -45,7 +46,7 @@ func TestTrackDevicePresenceAntiStartup(t *testing.T) {
 // offline emite EXACTAMENTE un evento; el tick perdido aislado NO emite.
 func TestTrackDevicePresenceOfflineTransition(t *testing.T) {
 	l := testLivePresence(t)
-	d := Device{MAC: "AA:BB:CC:DD:EE:01", RouterID: "rt1", Online: true, Band: "5 GHz"}
+	d := Device{MAC: macaddr.MustParse("AA:BB:CC:DD:EE:01"), RouterID: "rt1", Online: true, Band: "5 GHz"}
 	sig := -45
 	d.SignalDbm = &sig
 
@@ -82,7 +83,7 @@ func TestTrackDevicePresenceOfflineTransition(t *testing.T) {
 // reaparece se emite device_online.
 func TestTrackDevicePresenceOnlineAfterOffline(t *testing.T) {
 	l := testLivePresence(t)
-	d := Device{MAC: "AA:BB:CC:DD:EE:01", RouterID: "rt1", Online: true, Band: "2.4 GHz"}
+	d := Device{MAC: macaddr.MustParse("AA:BB:CC:DD:EE:01"), RouterID: "rt1", Online: true, Band: "2.4 GHz"}
 	sig := -50
 	d.SignalDbm = &sig
 
@@ -106,7 +107,7 @@ func TestTrackDevicePresenceOnlineAfterOffline(t *testing.T) {
 // re-emite offline en ciclos posteriores mientras siga sin verse.
 func TestTrackDevicePresenceNoDoubleOffline(t *testing.T) {
 	l := testLivePresence(t)
-	d := Device{MAC: "AA:BB:CC:DD:EE:01", RouterID: "rt1", Online: true, Band: "5 GHz"}
+	d := Device{MAC: macaddr.MustParse("AA:BB:CC:DD:EE:01"), RouterID: "rt1", Online: true, Band: "5 GHz"}
 	sig := -45
 	d.SignalDbm = &sig
 
@@ -125,7 +126,7 @@ func TestTrackDevicePresenceNoDoubleOffline(t *testing.T) {
 // rastrean — su presencia no genera eventos de presencia.
 func TestTrackDevicePresenceCableSkip(t *testing.T) {
 	l := testLivePresence(t)
-	d := Device{MAC: "AA:BB:CC:DD:EE:02", RouterID: "rt1", Online: true, Band: "cable"}
+	d := Device{MAC: macaddr.MustParse("AA:BB:CC:DD:EE:02"), RouterID: "rt1", Online: true, Band: "cable"}
 
 	l.trackDevicePresence([]Device{d}, 1000)
 	l.trackDevicePresence([]Device{}, 5000)
@@ -142,7 +143,7 @@ func TestTrackDevicePresenceCableSkip(t *testing.T) {
 func TestTrackDevicePresencePrune(t *testing.T) {
 	l := testLivePresence(t)
 	l.presencePruneAfter = 5 // bajar el umbral para el test
-	d := Device{MAC: "AA:BB:CC:DD:EE:03", RouterID: "rt1", Online: true, Band: "5 GHz"}
+	d := Device{MAC: macaddr.MustParse("AA:BB:CC:DD:EE:03"), RouterID: "rt1", Online: true, Band: "5 GHz"}
 
 	l.trackDevicePresence([]Device{d}, 1000) // siembra (entra en el mapa)
 	if _, ok := l.devicePresence[d.MAC]; !ok {

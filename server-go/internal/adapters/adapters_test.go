@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/alerts"
 	"github.com/gnacho/netpulse/server-go/internal/config"
 )
@@ -521,7 +522,7 @@ func TestDemoNodoManagedCanon(t *testing.T) {
 		t.Fatalf("lldp del nodo: %+v", managed.Lldp)
 	}
 	// SPEC-CANON D1: el nodo managed lleva la chassis-MAC del switch.
-	if managed.Mac != "28:C6:8E:1D:90:44" {
+	if managed.Mac != macaddr.MustParse("28:C6:8E:1D:90:44") {
 		t.Fatalf("mac del nodo managed: %q", managed.Mac)
 	}
 	// SPEC-CANON D1/D2: el GS308E existe A LA VEZ como Device (con lldp,
@@ -617,8 +618,8 @@ func TestDisabledUnitPaused(t *testing.T) {
 		lastErr:       map[string]error{},
 		offlineOpen:   map[string]bool{},
 		wanDown:       map[string]int{},
-		onlineMacs:    map[string]bool{},
-		weakStates:    map[string]alerts.WeakSignalState{},
+		onlineMacs:    map[macaddr.MAC]bool{},
+		weakStates:    map[macaddr.MAC]alerts.WeakSignalState{},
 		backhaulCache: map[string]backhaulCacheEntry{},
 		lldpCache:     map[string]lldpCacheEntry{},
 	}
@@ -666,8 +667,8 @@ func TestLiveGetOverviewConcurrent(t *testing.T) {
 		lastPolled:    map[string]*routerPolled{},
 		failCount:     map[string]int{},
 		wanDown:       map[string]int{},
-		onlineMacs:    map[string]bool{},
-		weakStates:    map[string]alerts.WeakSignalState{},
+		onlineMacs:    map[macaddr.MAC]bool{},
+		weakStates:    map[macaddr.MAC]alerts.WeakSignalState{},
 		backhaulCache: map[string]backhaulCacheEntry{},
 		lldpCache:     map[string]lldpCacheEntry{},
 	}
@@ -709,8 +710,8 @@ func TestLiveGetOverviewRecoversFromPanic(t *testing.T) {
 		lastPolled:    map[string]*routerPolled{},
 		failCount:     map[string]int{},
 		wanDown:       map[string]int{},
-		onlineMacs:    map[string]bool{},
-		weakStates:    map[string]alerts.WeakSignalState{},
+		onlineMacs:    map[macaddr.MAC]bool{},
+		weakStates:    map[macaddr.MAC]alerts.WeakSignalState{},
 		backhaulCache: map[string]backhaulCacheEntry{},
 		lldpCache:     map[string]lldpCacheEntry{},
 	}

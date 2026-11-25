@@ -6,6 +6,7 @@ package adapters
 import (
 	"testing"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/alerts"
 )
 
@@ -13,7 +14,7 @@ func TestWiFiNoIPLeavesOneNote(t *testing.T) {
 	l := liveTestLive()
 	l.wifiNoIPAfterMs = 1 // el cruce se hace moviendo el sello, sin sleeps
 	tab := Device{
-		MAC: "AA:BB:CC:00:11:22", Name: "Tablet", RouterID: "living",
+		MAC: macaddr.MustParse("AA:BB:CC:00:11:22"), Name: "Tablet", RouterID: "living",
 		Online: true, Band: "5 GHz", IP: "",
 	}
 
@@ -38,7 +39,7 @@ func TestWiFiNoIPLeavesOneNote(t *testing.T) {
 		t.Fatalf("taxonomía: (%s,%v,%s,%s), esperaba (clients,false,info,%s)",
 			a.Category, a.Urgent, a.Severity, a.Type, alerts.TypeWiFiNoIP)
 	}
-	if a.Vars["mac"] != tab.MAC || a.Vars["where"] == "" || a.Vars["minutes"] == "" {
+	if a.Vars["mac"] != tab.MAC.String() || a.Vars["where"] == "" || a.Vars["minutes"] == "" {
 		t.Fatalf("vars incompletas: %+v", a.Vars)
 	}
 
@@ -56,7 +57,7 @@ func TestWiFiNoIPIgnoresClientsWithIP(t *testing.T) {
 	l := liveTestLive()
 	l.wifiNoIPAfterMs = 1
 	tab := Device{
-		MAC: "AA:BB:CC:00:11:33", Name: "Tablet", RouterID: "living",
+		MAC: macaddr.MustParse("AA:BB:CC:00:11:33"), Name: "Tablet", RouterID: "living",
 		Online: true, Band: "5 GHz", IP: "",
 	}
 	l.trackWiFiNoIP([]Device{tab}, nil)
@@ -79,7 +80,7 @@ func TestWiFiNoIPCableWithoutIPIsNotThisSignal(t *testing.T) {
 	l := liveTestLive()
 	l.wifiNoIPAfterMs = 1
 	cable := Device{
-		MAC: "AA:BB:CC:00:11:44", Name: "AA:BB:CC:00:11:44", RouterID: "living",
+		MAC: macaddr.MustParse("AA:BB:CC:00:11:44"), Name: "AA:BB:CC:00:11:44", RouterID: "living",
 		Online: true, Band: "cable", IP: "",
 	}
 	l.trackWiFiNoIP([]Device{cable}, nil)

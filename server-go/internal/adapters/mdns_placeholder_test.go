@@ -139,7 +139,7 @@ func TestBuildDevicesMdnsReplacesOnlyUnpinnedPlaceholders(t *testing.T) {
 
 			devices := l.buildDevices(map[string]*routerPolled{"gateway": l.polledFromAgent(cfg, payload)}, "")
 			for _, d := range devices {
-				if d.MAC != tt.mac {
+				if d.MAC.String() != tt.mac {
 					continue
 				}
 				if d.Name != tt.wantName {

@@ -7,6 +7,8 @@ package adapters
 import (
 	"testing"
 	"time"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 func TestBuildDevicesNameTypeIconOverride(t *testing.T) {
@@ -49,7 +51,7 @@ func TestGhostDevicesApplyManualOverrides(t *testing.T) {
 	d := openLiveTestDB(t)
 	l := &Live{db: d}
 	l.noteDevicesSeen([]Device{
-		{MAC: "aa:bb:cc:dd:ee:ff", Online: true, Hostname: "viewsonic-proj", Type: "desconocido"},
+		{MAC: macaddr.MustParse("aa:bb:cc:dd:ee:ff"), Online: true, Hostname: "viewsonic-proj", Type: "desconocido"},
 	}, 1000)
 	now := time.Now().UnixMilli()
 	if _, err := d.Exec(

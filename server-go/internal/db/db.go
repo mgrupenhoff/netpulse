@@ -1384,22 +1384,22 @@ func (d *DB) UpsertKnownMac(k KnownMac) error {
 
 // AddDeletedClient registra una lápida: el usuario borró este cliente a mano
 // y NO quiere que vuelva a alta solo (#1278).
-func (d *DB) AddDeletedClient(mac string) error {
+func (d *DB) AddDeletedClient(mac macaddr.MAC) error {
 	_, err := d.Exec("INSERT INTO deleted_clients (mac, deleted_at) VALUES (?, ?) ON CONFLICT(mac) DO UPDATE SET deleted_at=excluded.deleted_at", mac, NowMS())
 	return err
 }
 
 // DeletedClients devuelve el set de MACs enterradas.
-func (d *DB) DeletedClients() (map[string]bool, error) {
+func (d *DB) DeletedClients() (map[macaddr.MAC]bool, error) {
 	rows, err := d.Query("SELECT mac FROM deleted_clients")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[string]bool{}
+	out := map[macaddr.MAC]bool{}
 	for rows.Next() {
-		var mac string
-		if err := rows.Scan(&mac); err != nil {
+		var mac macaddr.MAC
+		if err := rows.Scan(&mac); err != nil || !mac.IsValid() {
 			continue
 		}
 		out[mac] = true
@@ -1409,7 +1409,7 @@ func (d *DB) DeletedClients() (map[string]bool, error) {
 
 // DeleteDeletedClient quita la lápida: el usuario vuelve a dar de alta la
 // MAC (allowlist/alta guiada), así que puede reaparecer con normalidad.
-func (d *DB) DeleteDeletedClient(mac string) error {
+func (d *DB) DeleteDeletedClient(mac macaddr.MAC) error {
 	_, err := d.Exec("DELETE FROM deleted_clients WHERE mac = ?", mac)
 	return err
 }

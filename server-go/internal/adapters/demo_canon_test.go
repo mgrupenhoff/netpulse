@@ -3,6 +3,8 @@ package adapters
 import (
 	"context"
 	"testing"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 // Tests del canon reconciliado (SPEC-CANON fase 6, D1/D3/D4/D5). Fijan la
@@ -114,7 +116,7 @@ func TestCanonSwitchGestionadoDeviceYNodo(t *testing.T) {
 	if managed == nil {
 		t.Fatal("no hay distnode managed")
 	}
-	if managed.ID != "dist-living-lan3" || managed.Mac == "" {
+	if managed.ID != "dist-living-lan3" || !managed.Mac.IsValid() {
 		t.Fatalf("distnode managed sin mac: %+v", managed)
 	}
 	if managed.Mac != sw.MAC {
@@ -130,7 +132,7 @@ func TestCanonSwitchGestionadoDeviceYNodo(t *testing.T) {
 	for _, dn := range ov.DistributionNodes {
 		if dn.ID == "dist-living-lan3" {
 			found = true
-			if dn.Mac != "28:C6:8E:1D:90:44" {
+			if dn.Mac != macaddr.MustParse("28:C6:8E:1D:90:44") {
 				t.Fatalf("overview distnode managed mac: %q", dn.Mac)
 			}
 		}

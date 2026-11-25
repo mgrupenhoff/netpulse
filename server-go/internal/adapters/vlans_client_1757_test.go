@@ -24,7 +24,7 @@ func TestBuildDevicesVlanDesdeFdb(t *testing.T) {
 	devs := l.buildDevices(polled, "")
 	got := map[string]int{}
 	for _, d := range devs {
-		got[d.MAC] = d.Vlan
+		got[d.MAC.String()] = d.Vlan
 	}
 	if got["AA:BB:CC:DD:EE:01"] != 999 {
 		t.Fatalf("cliente de eth0.999 esperado en VLAN 999, got %d (%+v)", got["AA:BB:CC:DD:EE:01"], devs)
@@ -79,7 +79,7 @@ func TestBuildDevicesVlanNoCruzaRouters(t *testing.T) {
 	}
 	devs := l.buildDevices(polled, "")
 	for _, d := range devs {
-		if d.MAC == "AA:BB:CC:DD:EE:04" && d.Vlan == 888 {
+		if d.MAC.String() == "AA:BB:CC:DD:EE:04" && d.Vlan == 888 {
 			t.Fatalf("la VLAN del FDB de otro router no debe aplicarse: %+v", d)
 		}
 	}

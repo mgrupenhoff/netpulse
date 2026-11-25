@@ -6,6 +6,7 @@ package adapters
 import (
 	"testing"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 )
 
@@ -71,11 +72,11 @@ func TestBuildDevicesSkipsBatadvBla(t *testing.T) {
 	}
 	devs := l.buildDevices(polled, "")
 	for _, d := range devs {
-		if isBatadvBlaMAC(d.MAC) {
+		if isBatadvBlaMAC(d.MAC.String()) {
 			t.Fatalf("la MAC de BLA llegó a la lista de clientes: %+v", d)
 		}
 	}
-	if len(devs) != 1 || devs[0].MAC != "AA:BB:CC:DD:EE:01" {
+	if len(devs) != 1 || devs[0].MAC != macaddr.MustParse("AA:BB:CC:DD:EE:01") {
 		t.Fatalf("clientes = %+v, esperaba solo AA:BB:CC:DD:EE:01", devs)
 	}
 }
@@ -148,7 +149,7 @@ func TestBuildDevicesPrefersPhysicalLANOverBatadvBackhaul(t *testing.T) {
 		devs := l.buildDevices(polled, "gw")
 		byMac := make(map[string]Device, len(devs))
 		for _, d := range devs {
-			byMac[d.MAC] = d
+			byMac[d.MAC.String()] = d
 		}
 		if got := byMac[hueMAC].RouterID; got != "mx1" {
 			t.Fatalf("iter %d: Hue Bridge attributed to %q, want mx1", iter, got)

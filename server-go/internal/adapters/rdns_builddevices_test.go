@@ -35,7 +35,7 @@ func TestBuildDevicesNamesFromReverseDNS(t *testing.T) {
 	byMAC := func(devs []Device) map[string]Device {
 		m := map[string]Device{}
 		for _, d := range devs {
-			m[d.MAC] = d
+			m[d.MAC.String()] = d
 		}
 		return m
 	}

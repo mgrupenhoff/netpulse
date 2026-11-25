@@ -357,8 +357,8 @@ func (s *server) handleDevices(w http.ResponseWriter, r *http.Request) {
 
 // loadDeviceLinks: mapa alias → canónico desde la tabla device_links (una
 // query; vacío si no hay BD o no hay enlaces).
-func loadDeviceLinks(d *db.DB) map[string]string {
-	out := map[string]string{}
+func loadDeviceLinks(d *db.DB) map[macaddr.MAC]macaddr.MAC {
+	out := map[macaddr.MAC]macaddr.MAC{}
 	if d == nil {
 		return out
 	}
@@ -368,23 +368,18 @@ func loadDeviceLinks(d *db.DB) map[string]string {
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var alias, canonical string
-		if err := rows.Scan(&alias, &canonical); err != nil {
+		var alias, canonical macaddr.MAC
+		if err := rows.Scan(&alias, &canonical); err != nil || !alias.IsValid() || !canonical.IsValid() {
 			continue
 		}
-		out[normalizeMACKey(alias)] = normalizeMACKey(canonical)
+		out[alias] = canonical
 	}
 	return out
 }
 
-// normalizeMACKey: identidad canónica de enlace (mayúsculas, ':').
-func normalizeMACKey(mac string) string {
-	return macaddr.NormalizeLenient(mac)
-}
-
 // deviceMatches: substring (minúsculas) sobre name|hostname|ip|mac|manufacturer.
 func deviceMatches(d adapters.Device, query string) bool {
-	for _, v := range []string{d.Name, d.Hostname, d.IP, d.MAC, d.Manufacturer} {
+	for _, v := range []string{d.Name, d.Hostname, d.IP, d.MAC.String(), d.Manufacturer} {
 		if v != "" && strings.Contains(strings.ToLower(v), query) {
 			return true
 		}

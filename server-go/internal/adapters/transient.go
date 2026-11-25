@@ -1,5 +1,7 @@
 package adapters
 
+import "github.com/gnacho/netpulse/agent/macaddr"
+
 // #1818: una MAC que aparece y desaparece en segundos no es un cliente, es
 // ruido de asociacion (moviles que rotan direccion, sondas, reasociaciones del
 // mismo equipo). El reportero pedia justo esto: ignorar la direccion si se va
@@ -42,7 +44,7 @@ func (l *Live) settleTransient(devices []Device, nowMs int64) []Device {
 	l.transientMu.Lock()
 	defer l.transientMu.Unlock()
 	if l.transient == nil {
-		l.transient = map[string]transientSeen{}
+		l.transient = map[macaddr.MAC]transientSeen{}
 	}
 	for mac, t := range l.transient {
 		if nowMs-t.last > transientExpiryMs {
@@ -51,26 +53,25 @@ func (l *Live) settleTransient(devices []Device, nowMs int64) []Device {
 	}
 	out := make([]Device, 0, len(devices))
 	for _, d := range devices {
-		mac := normSeenMAC(d.MAC)
-		if mac == "" || !d.Online {
+		if !d.MAC.IsValid() || !d.Online {
 			out = append(out, d)
 			continue
 		}
-		if _, ok := known[mac]; ok {
+		if _, ok := known[d.MAC]; ok {
 			out = append(out, d)
 			continue
 		}
-		t, seen := l.transient[mac]
+		t, seen := l.transient[d.MAC]
 		if !seen {
-			l.transient[mac] = transientSeen{first: nowMs, last: nowMs}
+			l.transient[d.MAC] = transientSeen{first: nowMs, last: nowMs}
 			continue
 		}
 		t.last = nowMs
 		if nowMs-t.first < transientDwellMs {
-			l.transient[mac] = t
+			l.transient[d.MAC] = t
 			continue
 		}
-		delete(l.transient, mac)
+		delete(l.transient, d.MAC)
 		d.FirstSeenMs = t.first
 		out = append(out, d)
 	}

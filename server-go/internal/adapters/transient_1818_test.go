@@ -3,7 +3,11 @@ package adapters
 // transient_1818_test.go — #1818: una MAC que aparece y desaparece en menos de
 // un minuto no debe listarse, ni alertar, ni entrar en device_seen.
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
+)
 
 func transientLive(t *testing.T) *Live {
 	t.Helper()
@@ -15,9 +19,9 @@ func transientLive(t *testing.T) *Live {
 func TestTransientMACIgnoradaAntesDelMinuto(t *testing.T) {
 	l := transientLive(t)
 	// Registro pre-poblado: el primer arranque siembra en silencio.
-	l.noteDevicesSeen([]Device{{MAC: "aa:aa:aa:00:00:01", Online: true, Hostname: "viejo"}}, 1000)
+	l.noteDevicesSeen([]Device{{MAC: macaddr.MustParse("aa:aa:aa:00:00:01"), Online: true, Hostname: "viejo"}}, 1000)
 
-	mac := "5A:3B:41:63:08:FE"
+	mac := macaddr.MustParse("5A:3B:41:63:08:FE")
 	devs := []Device{{MAC: mac, Online: true, Hostname: "efimero", RouterID: "gw"}}
 
 	if got := l.settleTransient(devs, 10_000); len(got) != 0 {
@@ -44,9 +48,9 @@ func TestTransientMACIgnoradaAntesDelMinuto(t *testing.T) {
 // Una MAC de paso no debe quedar ni en el mapa ni en el registro.
 func TestTransientMACQueNoPersisteNoSeGuarda(t *testing.T) {
 	l := transientLive(t)
-	l.noteDevicesSeen([]Device{{MAC: "aa:aa:aa:00:00:01", Online: true, Hostname: "viejo"}}, 1000)
+	l.noteDevicesSeen([]Device{{MAC: macaddr.MustParse("aa:aa:aa:00:00:01"), Online: true, Hostname: "viejo"}}, 1000)
 
-	mac := "5A:3B:41:63:08:FE"
+	mac := macaddr.MustParse("5A:3B:41:63:08:FE")
 	l.settleTransient([]Device{{MAC: mac, Online: true, Hostname: "efimero", RouterID: "gw"}}, 10_000)
 
 	// Pasada la ventana de expiracion, el mapa se olvida de ella.
@@ -58,7 +62,7 @@ func TestTransientMACQueNoPersisteNoSeGuarda(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seenByMac: %v", err)
 	}
-	if _, ok := seen[normSeenMAC(mac)]; ok {
+	if _, ok := seen[mac]; ok {
 		t.Fatal("una MAC de paso no debe entrar en device_seen")
 	}
 }
@@ -67,9 +71,9 @@ func TestTransientMACQueNoPersisteNoSeGuarda(t *testing.T) {
 // de arrancar (el mapa provisional esta vacio).
 func TestTransientClienteConocidoPasaSiempre(t *testing.T) {
 	l := transientLive(t)
-	l.noteDevicesSeen([]Device{{MAC: "aa:aa:aa:00:00:01", Online: true, Hostname: "viejo"}}, 1000)
+	l.noteDevicesSeen([]Device{{MAC: macaddr.MustParse("aa:aa:aa:00:00:01"), Online: true, Hostname: "viejo"}}, 1000)
 
-	devs := []Device{{MAC: "AA:AA:AA:00:00:01", Online: true, Hostname: "viejo", RouterID: "gw"}}
+	devs := []Device{{MAC: macaddr.MustParse("AA:AA:AA:00:00:01"), Online: true, Hostname: "viejo", RouterID: "gw"}}
 	if got := l.settleTransient(devs, 2000); len(got) != 1 {
 		t.Fatalf("un cliente ya registrado pasa siempre: %+v", got)
 	}
@@ -78,14 +82,14 @@ func TestTransientClienteConocidoPasaSiempre(t *testing.T) {
 // El alta guarda el primer avistamiento real, no el ciclo en que se promociono.
 func TestNoteDevicesSeenGuardaElPrimerAvistamiento(t *testing.T) {
 	l := transientLive(t)
-	l.noteDevicesSeen([]Device{{MAC: "aa:aa:aa:00:00:01", Online: true, Hostname: "viejo"}}, 1000)
-	l.noteDevicesSeen([]Device{{MAC: "5A:3B:41:63:08:FE", Online: true, Hostname: "nuevo", FirstSeenMs: 10_000}}, 71_000)
+	l.noteDevicesSeen([]Device{{MAC: macaddr.MustParse("aa:aa:aa:00:00:01"), Online: true, Hostname: "viejo"}}, 1000)
+	l.noteDevicesSeen([]Device{{MAC: macaddr.MustParse("5A:3B:41:63:08:FE"), Online: true, Hostname: "nuevo", FirstSeenMs: 10_000}}, 71_000)
 
 	seen, err := l.seenByMac()
 	if err != nil {
 		t.Fatalf("seenByMac: %v", err)
 	}
-	row, ok := seen["5A:3B:41:63:08:FE"]
+	row, ok := seen[macaddr.MustParse("5A:3B:41:63:08:FE")]
 	if !ok {
 		t.Fatal("el cliente promocionado debe estar en device_seen")
 	}

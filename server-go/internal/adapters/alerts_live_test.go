@@ -75,9 +75,9 @@ func liveTestLive() *Live {
 		engine:          alerts.New(nil, nil),
 		lastStatus:      map[string]string{},
 		wanDown:         map[string]int{},
-		onlineMacs:      map[string]bool{},
-		unknownGrace:    map[string]int{},
-		unknownAlerted:  map[string]bool{},
+		onlineMacs:      map[macaddr.MAC]bool{},
+		unknownGrace:    map[macaddr.MAC]int{},
+		unknownAlerted:  map[macaddr.MAC]bool{},
 		unknownGraceNum: 3,
 	}
 }
@@ -356,7 +356,7 @@ func TestLiveWanDownTaxonomyAndDebounce(t *testing.T) {
 func TestLiveUnknownDeviceTaxonomy(t *testing.T) {
 	l := liveTestLive()
 	l.mu.Lock()
-	l.emitUnknownDevice(Device{MAC: "AA:BB:CC:DD:EE:FF", Name: "AA:BB:CC:DD:EE:FF", RouterID: "living", Online: true}, nil, nil)
+	l.emitUnknownDevice(Device{MAC: macaddr.MustParse("AA:BB:CC:DD:EE:FF"), Name: "AA:BB:CC:DD:EE:FF", RouterID: "living", Online: true}, nil, nil)
 	l.mu.Unlock()
 	list := l.engine.List()
 	if len(list) != 1 {
@@ -376,8 +376,8 @@ func TestLiveUnknownDeviceTaxonomy(t *testing.T) {
 
 func TestLiveTrackUnknownDevices(t *testing.T) {
 	l := liveTestLive()
-	unknown := Device{MAC: "11:22:33:44:55:66", Name: "11:22:33:44:55:66", RouterID: "living", Online: true, Band: "5 GHz"}
-	named := Device{MAC: "77:88:99:AA:BB:CC", Name: "Galaxy Tab", RouterID: "living", Online: true}
+	unknown := Device{MAC: macaddr.MustParse("11:22:33:44:55:66"), Name: "11:22:33:44:55:66", RouterID: "living", Online: true, Band: "5 GHz"}
+	named := Device{MAC: macaddr.MustParse("77:88:99:AA:BB:CC"), Name: "Galaxy Tab", RouterID: "living", Online: true}
 
 	// Primer ciclo: siembra de base, NUNCA alerta (anti-avalancha de arranque)
 	l.trackUnknownDevices([]Device{unknown, named}, nil)
@@ -429,7 +429,7 @@ func TestLiveTrackUnknownDevices(t *testing.T) {
 // en resolverse tras reconectar NO dispara la alerta de desconocido.
 func TestLiveTrackUnknownDevicesGraciaConocido(t *testing.T) {
 	l := liveTestLive()
-	d := Device{MAC: "77:88:99:AA:BB:CC", Name: "77:88:99:AA:BB:CC", RouterID: "living", Online: true, Band: "5 GHz"}
+	d := Device{MAC: macaddr.MustParse("77:88:99:AA:BB:CC"), Name: "77:88:99:AA:BB:CC", RouterID: "living", Online: true, Band: "5 GHz"}
 	// Siembra; desconexión; reconexión SIN lease resuelto durante 2 ticks…
 	l.trackUnknownDevices([]Device{d}, nil)
 	l.trackUnknownDevices([]Device{}, nil)
@@ -447,15 +447,15 @@ func TestLiveTrackUnknownDevicesGraciaConocido(t *testing.T) {
 	// La gracia se reseteó al ver el nombre: una reconexión futura sin nombre
 	// parte de cero y vuelve a necesitar los N ticks completos (no 1).
 	l.trackUnknownDevices([]Device{}, nil)
-	l.trackUnknownDevices([]Device{{Name: d.MAC, MAC: d.MAC, RouterID: "living", Online: true, Band: "5 GHz"}}, nil)
+	l.trackUnknownDevices([]Device{{Name: d.MAC.String(), MAC: d.MAC, RouterID: "living", Online: true, Band: "5 GHz"}}, nil)
 	if len(l.engine.List()) != 0 {
 		t.Fatal("tras reset, tick 1 no debía alertar")
 	}
-	l.trackUnknownDevices([]Device{{Name: d.MAC, MAC: d.MAC, RouterID: "living", Online: true, Band: "5 GHz"}}, nil)
+	l.trackUnknownDevices([]Device{{Name: d.MAC.String(), MAC: d.MAC, RouterID: "living", Online: true, Band: "5 GHz"}}, nil)
 	if len(l.engine.List()) != 0 {
 		t.Fatal("tras reset, tick 2 no debía alertar")
 	}
-	l.trackUnknownDevices([]Device{{Name: d.MAC, MAC: d.MAC, RouterID: "living", Online: true, Band: "5 GHz"}}, nil)
+	l.trackUnknownDevices([]Device{{Name: d.MAC.String(), MAC: d.MAC, RouterID: "living", Online: true, Band: "5 GHz"}}, nil)
 	if len(l.engine.List()) != 1 {
 		t.Fatalf("tras reset y gracia completa: %d alertas", len(l.engine.List()))
 	}
@@ -466,8 +466,8 @@ func TestLiveTrackUnknownDevicesGraciaConocido(t *testing.T) {
 func TestLiveUnknownDeviceMemoryPersisted(t *testing.T) {
 	d := openLiveTestDB(t)
 	l := NewLive(nil, d, nil, nil)
-	mac := "AA:BB:CC:DD:EE:0F"
-	unknown := Device{MAC: mac, Name: mac, RouterID: "living", Online: true, Band: "5 GHz"}
+	mac := macaddr.MustParse("AA:BB:CC:DD:EE:0F")
+	unknown := Device{MAC: mac, Name: mac.String(), RouterID: "living", Online: true, Band: "5 GHz"}
 	// Reconexión simulada: siembra, caída, vuelve → tras la gracia alerta.
 	l.trackUnknownDevices([]Device{unknown}, nil)
 	l.trackUnknownDevices([]Device{}, nil)
@@ -497,7 +497,7 @@ func TestLiveUnknownDeviceMemoryPersisted(t *testing.T) {
 func TestLiveTrackUnknownDevicesTrustedAllowlist(t *testing.T) {
 	l := liveTestLive()
 	l.db = openLiveTestDB(t) // allowlist en BD real
-	trusted := Device{MAC: "A4:7E:FA:65:0C:AA", Name: "A4:7E:FA:65:0C:AA", RouterID: "living", Online: true}
+	trusted := Device{MAC: macaddr.MustParse("A4:7E:FA:65:0C:AA"), Name: "A4:7E:FA:65:0C:AA", RouterID: "living", Online: true}
 	if err := l.db.UpsertKnownMac(db.KnownMac{MAC: macaddr.MustParse("A4:7E:FA:65:0C:AA"), Name: "Withings"}); err != nil {
 		t.Fatal(err)
 	}
@@ -515,16 +515,17 @@ func TestLiveTrackUnknownDevicesTrustedAllowlist(t *testing.T) {
 // la MAC: aunque complete la gracia de ticks, nunca alerta.
 func TestLiveDismissUnknownDevice(t *testing.T) {
 	l := liveTestLive()
-	unknown := Device{MAC: "11:22:33:44:55:66", Name: "11:22:33:44:55:66", RouterID: "living", Online: true}
-	l.DismissUnknownDevice("11:22:33:44:55:66")
+	mac := macaddr.MustParse("11:22:33:44:55:66")
+	unknown := Device{MAC: mac, Name: mac.String(), RouterID: "living", Online: true}
+	l.DismissUnknownDevice(mac)
 	for i := 0; i < 5; i++ {
 		l.trackUnknownDevices([]Device{unknown}, nil)
 	}
 	if len(l.engine.List()) != 0 {
 		t.Fatal("dismiss (#772): la MAC no debía alertar")
 	}
-	// MAC inválida: no-op sin pánico.
-	l.DismissUnknownDevice("no-es-una-mac")
+	// MAC vacía/inválida: no-op sin pánico.
+	l.DismissUnknownDevice(macaddr.MAC{})
 }
 
 // Issue #1818: una MAC sin nombre que solo está en una FDB (bridge, AP o
@@ -533,7 +534,7 @@ func TestLiveDismissUnknownDevice(t *testing.T) {
 // aparece una prueba real (IP resuelta, wireless o LLDP) sí alerta.
 func TestLiveTrackUnknownDevicesIgnoresFdbOnlyMac(t *testing.T) {
 	l := liveTestLive()
-	fdbOnly := Device{MAC: "D2:95:DE:65:C5:B0", Name: "D2:95:DE:65:C5:B0", RouterID: "living", Online: true, Port: "lan3"}
+	fdbOnly := Device{MAC: macaddr.MustParse("D2:95:DE:65:C5:B0"), Name: "D2:95:DE:65:C5:B0", RouterID: "living", Online: true, Port: "lan3"}
 	l.trackUnknownDevices([]Device{fdbOnly}, nil) // siembra
 	l.trackUnknownDevices([]Device{}, nil)        // la MAC parpadea en la FDB
 	for i := 0; i < 6; i++ {

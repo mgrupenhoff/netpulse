@@ -6,6 +6,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 // ---------------------------------------------------------------------------
@@ -253,11 +255,12 @@ func inferLldpLinks(polled map[string]*routerPolled, devices []Device, byMAC map
 			if upper != "" {
 				distByMac[upper] = id
 			}
+			nbMac, _ := macaddr.ParseOrWarn(macWarn, "topology.lldp_chassis_mac", nb.ChassisMac)
 			dists = append(dists, DistributionNode{
 				ID: id, Kind: "managed", RouterID: routerID, Port: nb.Port,
 				PortLabel: portLabel(p, nb.Port), Parent: parent,
 				MacCount: len(kept), Name: nb.displayName(), Ip: nb.Mgmt,
-				Mac: nb.ChassisMac, Lldp: nb.info(),
+				Mac: nbMac, Lldp: nb.info(),
 			})
 			if idx, ok := byMAC[nb.ChassisMac]; ok {
 				devices[idx].Infra = "managed-switch"
@@ -420,7 +423,7 @@ func claimSwitchFdbClients(polled map[string]*routerPolled, devices []Device, di
 		if d.AttachTo != "" && distRouter[d.AttachTo] != gatewayID {
 			continue // device-hub, distnode de otro router o id desconocido
 		}
-		c, ok := best[strings.ToUpper(d.MAC)]
+		c, ok := best[d.MAC.String()]
 		if !ok {
 			continue
 		}
@@ -446,7 +449,7 @@ func containsMAC(macs []string, mac string) bool {
 func inferTopology(polled map[string]*routerPolled, devices []Device) ([]Device, []DistributionNode) {
 	byMAC := make(map[string]int, len(devices))
 	for i, d := range devices {
-		byMAC[d.MAC] = i
+		byMAC[d.MAC.String()] = i
 	}
 	routerMACs := map[string]bool{}
 	for _, p := range polled {
@@ -619,10 +622,12 @@ func inferTopology(polled map[string]*routerPolled, devices []Device) ([]Device,
 				continue
 			}
 			parent := ""
-			for _, dn := range dists {
-				if dn.Kind == "managed" && dn.Mac != "" && strings.EqualFold(dn.Mac, p.brMac) {
-					parent = dn.ID
-					break
+			if pBr, err := macaddr.Parse(p.brMac); err == nil {
+				for _, dn := range dists {
+					if dn.Kind == "managed" && dn.Mac == pBr {
+						parent = dn.ID
+						break
+					}
 				}
 			}
 			candidates = append(candidates, swCandidate{id: id, parent: parent})

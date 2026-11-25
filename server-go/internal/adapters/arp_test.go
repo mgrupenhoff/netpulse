@@ -5,6 +5,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 	"github.com/gnacho/netpulse/server-go/internal/db"
 )
@@ -50,7 +51,7 @@ func TestBuildDevicesArpDiscovery(t *testing.T) {
 		t.Fatalf("esperado 1 dispositivo, got %d: %+v", len(devs), devs)
 	}
 	d := devs[0]
-	if d.MAC != "AA:BB:CC:DD:EE:FF" {
+	if d.MAC != macaddr.MustParse("AA:BB:CC:DD:EE:FF") {
 		t.Fatalf("MAC esperada AA:BB:CC:DD:EE:FF, got %q", d.MAC)
 	}
 	if d.IP != "192.168.1.60" {
@@ -116,7 +117,7 @@ func TestBuildDevicesIgnoresStaleArpOnlyHosts(t *testing.T) {
 		},
 	}
 	devs := l.buildDevices(polled, "")
-	if len(devs) != 1 || devs[0].MAC != "02:00:00:00:00:10" {
+	if len(devs) != 1 || devs[0].MAC != macaddr.MustParse("02:00:00:00:00:10") {
 		t.Fatalf("only the confirmed host is a device: %+v", devs)
 	}
 }
@@ -206,7 +207,7 @@ func TestBuildDevicesReattributesDeletedRouters(t *testing.T) {
 			},
 		},
 	}
-	byMAC := map[string]Device{}
+	byMAC := map[macaddr.MAC]Device{}
 	for _, dev := range l.buildDevices(polled, "") {
 		byMAC[dev.MAC] = dev
 	}
@@ -226,11 +227,11 @@ func TestBuildDevicesReattributesDeletedRouters(t *testing.T) {
 func TestCountClientsPerRouter(t *testing.T) {
 	routers := []Router{{ID: "gateway"}, {ID: "patio"}}
 	devices := []Device{
-		{MAC: "02:00:00:00:00:01", RouterID: "gateway", Band: "cable", Online: true},
-		{MAC: "02:00:00:00:00:02", RouterID: "gateway", Band: "5 GHz", Online: true},
-		{MAC: "02:00:00:00:00:03", RouterID: "gateway", Band: "2.4 GHz", Online: false},
-		{MAC: "02:00:00:00:00:04", RouterID: "patio", Band: "2.4 GHz", Online: true},
-		{MAC: "02:00:00:00:00:05", RouterID: "ghost", Band: "cable", Online: true},
+		{MAC: macaddr.MustParse("02:00:00:00:00:01"), RouterID: "gateway", Band: "cable", Online: true},
+		{MAC: macaddr.MustParse("02:00:00:00:00:02"), RouterID: "gateway", Band: "5 GHz", Online: true},
+		{MAC: macaddr.MustParse("02:00:00:00:00:03"), RouterID: "gateway", Band: "2.4 GHz", Online: false},
+		{MAC: macaddr.MustParse("02:00:00:00:00:04"), RouterID: "patio", Band: "2.4 GHz", Online: true},
+		{MAC: macaddr.MustParse("02:00:00:00:00:05"), RouterID: "ghost", Band: "cable", Online: true},
 	}
 	countClientsPerRouter(routers, devices)
 
@@ -258,8 +259,8 @@ func TestGetRoutersCountsClientsNotLeases(t *testing.T) {
 	// #1818: un cliente nuevo se retiene un minuto antes de listarse. Estos dos
 	// ya estaban vistos, que es lo que este test mide (leases vs asociados).
 	l.noteDevicesSeen([]Device{
-		{MAC: "02:00:00:00:00:01", Online: true, Hostname: "one"},
-		{MAC: "02:00:00:00:00:02", Online: true, Hostname: "two"},
+		{MAC: macaddr.MustParse("02:00:00:00:00:01"), Online: true, Hostname: "one"},
+		{MAC: macaddr.MustParse("02:00:00:00:00:02"), Online: true, Hostname: "two"},
 	}, 1000)
 
 	// Three leases, but only two of those hosts are associated right now.
@@ -317,11 +318,11 @@ func TestBuildDevicesWanSideArp(t *testing.T) {
 		},
 	}
 	devs := l.buildDevices(polled, "eth2")
-	byMAC := map[string]Device{}
+	byMAC := map[macaddr.MAC]Device{}
 	for _, d := range devs {
 		byMAC[d.MAC] = d
 	}
-	ont, ok := byMAC["C0:49:43:A3:D1:34"]
+	ont, ok := byMAC[macaddr.MustParse("C0:49:43:A3:D1:34")]
 	if !ok {
 		t.Fatalf("el ONT no aparece en devices: %+v", devs)
 	}
@@ -331,7 +332,7 @@ func TestBuildDevicesWanSideArp(t *testing.T) {
 	if !ont.Online {
 		t.Fatalf("ONT: %+v, want online (el ARP del puerto WAN es presencia)", ont)
 	}
-	lan, ok := byMAC["AA:BB:CC:00:00:01"]
+	lan, ok := byMAC[macaddr.MustParse("AA:BB:CC:00:00:01")]
 	if !ok {
 		t.Fatalf("el cliente LAN no aparece: %+v", devs)
 	}
@@ -363,11 +364,11 @@ func TestBuildDevicesAbsorbsSwitchMgmtMac(t *testing.T) {
 	}
 	devs := l.buildDevices(polled, "")
 	for _, d := range devs {
-		if d.MAC == "08:BD:43:75:50:CD" {
+		if d.MAC == macaddr.MustParse("08:BD:43:75:50:CD") {
 			t.Fatalf("la MAC de gestión del switch no es un cliente: %+v", d)
 		}
 	}
-	if len(devs) != 1 || devs[0].MAC != "AA:BB:CC:00:00:09" {
+	if len(devs) != 1 || devs[0].MAC != macaddr.MustParse("AA:BB:CC:00:00:09") {
 		t.Fatalf("devices: %+v, want solo el cliente normal", devs)
 	}
 }
@@ -396,14 +397,14 @@ func TestBuildDevicesWanSideOnlyDefaultRoutePeer(t *testing.T) {
 		},
 	}
 	devs := l.buildDevices(polled, "eth1")
-	byMAC := map[string]Device{}
+	byMAC := map[macaddr.MAC]Device{}
 	for _, d := range devs {
 		byMAC[d.MAC] = d
 	}
-	if _, ok := byMAC["0C:EF:15:00:00:02"]; ok {
-		t.Fatalf("el vecino del ISP no puede ser un dispositivo del inventario: %+v", byMAC["0C:EF:15:00:00:02"])
+	if _, ok := byMAC[macaddr.MustParse("0C:EF:15:00:00:02")]; ok {
+		t.Fatalf("el vecino del ISP no puede ser un dispositivo del inventario: %+v", byMAC[macaddr.MustParse("0C:EF:15:00:00:02")])
 	}
-	lan, ok := byMAC["AA:BB:CC:00:00:01"]
+	lan, ok := byMAC[macaddr.MustParse("AA:BB:CC:00:00:01")]
 	if !ok || lan.WanSide {
 		t.Fatalf("el cliente LAN debe seguir: %+v", lan)
 	}
@@ -412,7 +413,7 @@ func TestBuildDevicesWanSideOnlyDefaultRoutePeer(t *testing.T) {
 	delete(polled["gw"].arp, "AA:BB:CC:00:00:01")
 	polled["gw"].wanInfo = probe.WanInfo{}
 	for _, d := range l.buildDevices(polled, "eth1") {
-		if d.MAC != "0C:EF:15:00:00:02" {
+		if d.MAC != macaddr.MustParse("0C:EF:15:00:00:02") {
 			continue
 		}
 		if !d.WanSide {
@@ -442,7 +443,7 @@ func TestBuildDevicesSkipsArpOnUplink(t *testing.T) {
 		},
 	}
 	devs := l.buildDevices(polled, "")
-	if len(devs) != 1 || devs[0].MAC != "AA:BB:CC:00:00:02" {
+	if len(devs) != 1 || devs[0].MAC != macaddr.MustParse("AA:BB:CC:00:00:02") {
 		t.Fatalf("esperaba solo el vecino de la LAN, got %+v", devs)
 	}
 }

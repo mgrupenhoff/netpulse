@@ -4,15 +4,19 @@
 // enlace repetido para ninguna cadena de hubs.
 package adapters
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
+)
 
 func TestTopoSemanticsNestedHubChainHasNoDuplicateLinks(t *testing.T) {
 	routers := []Router{{ID: "unit", Name: "unit", RoleBadge: "Principal", Status: "online"}}
 	devices := []Device{
-		{ID: "A", MAC: "AA:BB:CC:00:00:0A", RouterID: "unit", Band: "cable", Port: "lan1", AttachTo: "unit", Online: true},
-		{ID: "B", MAC: "AA:BB:CC:00:00:0B", RouterID: "unit", Band: "cable", AttachTo: "A", Online: true},
-		{ID: "C", MAC: "AA:BB:CC:00:00:0C", RouterID: "unit", Band: "cable", AttachTo: "B", Online: true},
-		{ID: "D", MAC: "AA:BB:CC:00:00:0D", RouterID: "unit", Band: "cable", AttachTo: "C", Online: true},
+		{ID: "A", MAC: macaddr.MustParse("AA:BB:CC:00:00:0A"), RouterID: "unit", Band: "cable", Port: "lan1", AttachTo: "unit", Online: true},
+		{ID: "B", MAC: macaddr.MustParse("AA:BB:CC:00:00:0B"), RouterID: "unit", Band: "cable", AttachTo: "A", Online: true},
+		{ID: "C", MAC: macaddr.MustParse("AA:BB:CC:00:00:0C"), RouterID: "unit", Band: "cable", AttachTo: "B", Online: true},
+		{ID: "D", MAC: macaddr.MustParse("AA:BB:CC:00:00:0D"), RouterID: "unit", Band: "cable", AttachTo: "C", Online: true},
 	}
 	sem := BuildTopoSemantics(routers, devices, WireGuardStats{}, nil, "", nil, nil, nil)
 

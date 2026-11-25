@@ -206,10 +206,13 @@ func (s *server) handleDeviceDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	// #1278: lápida. Sin ella, la siguiente fuente que reporte la MAC como
 	// online (una entrada cacheada del AP, un colector) la re-daba de alta y
-	// el borrado "no funcionaba".
-	if err := s.db.AddDeletedClient(mac); err != nil {
-		writeError(w, http.StatusInternalServerError, "storage_error", "")
-		return
+	// el borrado "no funcionaba". Si la clave era un registro legado no-MAC
+	// (p. ej. sin formato MAC válido), se borra de device_seen sin lápida.
+	if parsed, err := macaddr.Parse(raw); err == nil {
+		if err := s.db.AddDeletedClient(parsed); err != nil {
+			writeError(w, http.StatusInternalServerError, "storage_error", "")
+			return
+		}
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		writeError(w, http.StatusNotFound, "not_found", "")

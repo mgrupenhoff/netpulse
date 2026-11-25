@@ -16,7 +16,7 @@ import (
 func mustDevice(t *testing.T, devs []Device, mac string) Device {
 	t.Helper()
 	for _, d := range devs {
-		if d.MAC == mac {
+		if d.MAC.String() == mac {
 			return d
 		}
 	}
@@ -141,7 +141,7 @@ func TestBuildDevicesStableOrder(t *testing.T) {
 	if len(devs) != 3 {
 		t.Fatalf("esperado 3 dispositivos, got %d: %+v", len(devs), devs)
 	}
-	macs := []string{devs[0].MAC, devs[1].MAC, devs[2].MAC}
+	macs := []string{devs[0].MAC.String(), devs[1].MAC.String(), devs[2].MAC.String()}
 	want := []string{"AA:AA:AA:AA:AA:AA", "BB:BB:BB:BB:BB:BB", "CC:CC:CC:CC:CC:CC"}
 	for i := range want {
 		if macs[i] != want[i] {

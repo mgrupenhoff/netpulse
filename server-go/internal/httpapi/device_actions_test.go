@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/adapters"
 	"github.com/gnacho/netpulse/server-go/internal/auth"
 	"github.com/gnacho/netpulse/server-go/internal/config"
@@ -756,8 +757,8 @@ type leaseAwareAdapter struct {
 	sirve map[string]string
 }
 
-func (a *leaseAwareAdapter) RouterServingDHCP(mac string) string {
-	return a.sirve[strings.ToUpper(mac)]
+func (a *leaseAwareAdapter) RouterServingDHCP(mac macaddr.MAC) string {
+	return a.sirve[mac.String()]
 }
 
 // El AP "patio" (192.168.1.2) es quien reporta el lease de devMAC: su host

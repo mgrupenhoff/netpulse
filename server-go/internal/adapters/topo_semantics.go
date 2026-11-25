@@ -21,6 +21,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 // Capacidad de los anillos canónicos de model.ts (GATEWAY_RINGS 8+12+16+24,
@@ -480,15 +482,15 @@ func BuildTopoSemantics(routers []Router, devices []Device, wg WireGuardStats, d
 
 	// D1: los Devices cuya MAC es la chassis-MAC de un distnode managed se
 	// representan SOLO como nodo managed (sin chip ni enlaces propios).
-	managedMacs := map[string]bool{}
+	managedMacs := map[macaddr.MAC]bool{}
 	for _, n := range dists {
-		if n.Kind == "managed" && n.Mac != "" {
-			managedMacs[strings.ToUpper(n.Mac)] = true
+		if n.Kind == "managed" && n.Mac.IsValid() {
+			managedMacs[n.Mac] = true
 		}
 	}
 	online := make([]Device, 0, len(devices))
 	for _, d := range devices {
-		if !d.Online || managedMacs[strings.ToUpper(d.MAC)] {
+		if !d.Online || managedMacs[d.MAC] {
 			continue
 		}
 		online = append(online, d)
@@ -499,10 +501,10 @@ func BuildTopoSemantics(routers []Router, devices []Device, wg WireGuardStats, d
 	// FDB (dónde se vio la MAC y en qué puerto) queda como evidencia para
 	// anclar el uplink al padre REAL (p. ej. ap1 cuelga de sw1, no del
 	// gateway) aunque no haya LLDP.
-	routerMacs := map[string]string{} // MAC(upper) → router id
+	routerMacs := map[macaddr.MAC]string{} // MAC → router id
 	for _, r := range routers {
-		if r.MAC != "" {
-			routerMacs[strings.ToUpper(r.MAC)] = r.ID
+		if r.MAC.IsValid() {
+			routerMacs[r.MAC] = r.ID
 		}
 	}
 	uplinkEvidence := map[string]topoParent{}
@@ -513,7 +515,7 @@ func BuildTopoSemantics(routers []Router, devices []Device, wg WireGuardStats, d
 	uplinkSource := map[string]string{}
 	filtered := online[:0]
 	for _, d := range online {
-		if rid, ok := routerMacs[strings.ToUpper(d.MAC)]; ok {
+		if rid, ok := routerMacs[d.MAC]; ok {
 			if rid != d.RouterID {
 				if _, seen := uplinkEvidence[rid]; !seen {
 					uplinkEvidence[rid] = topoParent{parent: d.RouterID, port: d.Port}
@@ -628,14 +630,13 @@ func BuildTopoSemantics(routers []Router, devices []Device, wg WireGuardStats, d
 		// ONT/módem del primer salto nunca casa por IP. Su evidencia es el ARP
 		// aprendido en el puerto WAN del gateway (Device.WanSide); si hay
 		// varios, gana la MAC más baja para que el resultado sea estable.
-		bestMac := ""
+		var bestMac macaddr.MAC
 		for _, d := range online {
 			if !d.WanSide {
 				continue
 			}
-			m := strings.ToLower(d.MAC)
-			if wanPeerID == "" || m < bestMac {
-				wanPeerID, bestMac = d.ID, m
+			if wanPeerID == "" || d.MAC.Compare(bestMac) < 0 {
+				wanPeerID, bestMac = d.ID, d.MAC
 			}
 		}
 	}

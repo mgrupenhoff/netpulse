@@ -5,6 +5,7 @@ package adapters
 import (
 	"testing"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/alerts"
 )
 
@@ -12,15 +13,15 @@ func offlineAlertTestLive() *Live {
 	return &Live{
 		engine:          alerts.New(nil, nil),
 		routers:         []RouterConfig{{ID: "rt1", Name: "Salón"}},
-		offlineOnline:   map[string]bool{},
-		offlineMisses:   map[string]int{},
-		offlineAlerted:  map[string]bool{},
+		offlineOnline:   map[macaddr.MAC]bool{},
+		offlineMisses:   map[macaddr.MAC]int{},
+		offlineAlerted:  map[macaddr.MAC]bool{},
 		offlineAlertNum: 3,
 	}
 }
 
 func offlineMarkedDevice() Device {
-	return Device{MAC: "AA:BB:CC:DD:EE:01", Name: "TV Salón", RouterID: "rt1", NotifyOffline: true, Online: true}
+	return Device{MAC: macaddr.MustParse("AA:BB:CC:DD:EE:01"), Name: "TV Salón", RouterID: "rt1", NotifyOffline: true, Online: true}
 }
 
 // (a) Dispositivo marcado offline N ciclos: una única emisión con ID estable.
@@ -40,7 +41,7 @@ func TestTrackOfflineDevicesEmitsOnceAfterGrace(t *testing.T) {
 		t.Fatalf("esperaba 1 alerta, got %d", len(list))
 	}
 	ev := list[0]
-	if ev.ID != "alert-device-offline-"+d.MAC {
+	if ev.ID != "alert-device-offline-"+d.MAC.String() {
 		t.Fatalf("ID=%q", ev.ID)
 	}
 	if ev.Type != alerts.TypeDeviceOffline {

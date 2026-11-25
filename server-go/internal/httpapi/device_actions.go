@@ -86,7 +86,7 @@ func (s *server) gatewayHost() string {
 // reportó la MAC en su tabla de leases DHCP (issue #537). La demo no lo
 // implementa → la reserva cae al gateway, como antes.
 type leaseRouterResolver interface {
-	RouterServingDHCP(mac string) string
+	RouterServingDHCP(mac macaddr.MAC) string
 }
 
 // reservationTargetHost resuelve DÓNDE vive la reserva DHCP de un dispositivo
@@ -99,7 +99,7 @@ type leaseRouterResolver interface {
 //  2. Fallback: el gateway (red gestionada clásica con un solo servidor DHCP).
 func (s *server) reservationTargetHost(mac macaddr.MAC) string {
 	if lr, ok := s.adapter.(leaseRouterResolver); ok {
-		if routerID := lr.RouterServingDHCP(mac.String()); routerID != "" {
+		if routerID := lr.RouterServingDHCP(mac); routerID != "" {
 			if host := s.hostOfRouter(routerID); host != "" {
 				return host
 			}

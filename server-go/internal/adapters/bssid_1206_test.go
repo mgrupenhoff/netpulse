@@ -7,6 +7,7 @@ package adapters
 import (
 	"testing"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 )
 
@@ -34,13 +35,13 @@ func TestBuildDevicesExcludesOwnBssids(t *testing.T) {
 	}
 	devs := l.buildDevices(polled, "")
 	for _, d := range devs {
-		if d.MAC == "AA:BB:CC:00:00:01" {
+		if d.MAC == macaddr.MustParse("AA:BB:CC:00:00:01") {
 			t.Fatalf("el BSSID propio salió como cliente: %+v", devs)
 		}
 	}
 	found := false
 	for _, d := range devs {
-		if d.MAC == "AA:BB:CC:DD:EE:FF" {
+		if d.MAC == macaddr.MustParse("AA:BB:CC:DD:EE:FF") {
 			found = true
 		}
 	}

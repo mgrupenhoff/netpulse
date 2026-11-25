@@ -3,6 +3,8 @@ package adapters
 import (
 	"reflect"
 	"testing"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 // Tests de la fase LLDP-first (issue #300): los vecinos LLDP son ground truth
@@ -29,7 +31,7 @@ func summarizeDists(dists []DistributionNode) []distSummary {
 	for _, d := range dists {
 		out = append(out, distSummary{
 			id: d.ID, kind: d.Kind, routerID: d.RouterID, port: d.Port,
-			parent: d.Parent, mac: d.Mac, name: d.Name, ip: d.Ip,
+			parent: d.Parent, mac: d.Mac.String(), name: d.Name, ip: d.Ip,
 			macCount: d.MacCount,
 		})
 	}
@@ -218,12 +220,12 @@ func TestTopoSemanticsCadenaLldp(t *testing.T) {
 		{ID: "swA", Name: "GS308E", RoleBadge: "SW", Status: "online"},
 	}
 	dists := []DistributionNode{
-		{ID: "dist-flint2-lan3", Kind: "managed", RouterID: "flint2", Port: "lan3", Mac: macGS308E},
-		{ID: "dist-swA-ge5", Kind: "managed", RouterID: "swA", Port: "ge5", Parent: "dist-flint2-lan3", Mac: macLGS352},
+		{ID: "dist-flint2-lan3", Kind: "managed", RouterID: "flint2", Port: "lan3", Mac: macaddr.MustParse(macGS308E)},
+		{ID: "dist-swA-ge5", Kind: "managed", RouterID: "swA", Port: "ge5", Parent: "dist-flint2-lan3", Mac: macaddr.MustParse(macLGS352)},
 	}
 	devices := []Device{
-		{RouterID: "flint2", Band: "cable", Port: "lan3", ID: "pc1", MAC: "04:D4:C4:8B:30:A7", AttachTo: "dist-flint2-lan3", Online: true},
-		{RouterID: "swA", Band: "cable", Port: "ge5", ID: "pc2", MAC: "DC:A6:32:4F:77:02", AttachTo: "dist-swA-ge5", Online: true},
+		{RouterID: "flint2", Band: "cable", Port: "lan3", ID: "pc1", MAC: macaddr.MustParse("04:D4:C4:8B:30:A7"), AttachTo: "dist-flint2-lan3", Online: true},
+		{RouterID: "swA", Band: "cable", Port: "ge5", ID: "pc2", MAC: macaddr.MustParse("DC:A6:32:4F:77:02"), AttachTo: "dist-swA-ge5", Online: true},
 	}
 	sem := BuildTopoSemantics(routers, devices, WireGuardStats{}, dists, "", nil, nil, nil)
 
@@ -342,7 +344,7 @@ func TestInferTopologySwitchHojaTrasGestionado(t *testing.T) {
 			for mac, wantAttach := range tt.attachTo {
 				found := false
 				for _, d := range gotDevices {
-					if d.MAC != mac {
+					if d.MAC.String() != mac {
 						continue
 					}
 					found = true

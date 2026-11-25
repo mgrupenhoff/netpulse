@@ -3,6 +3,7 @@ package adapters
 import (
 	"testing"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/alerts"
 )
 
@@ -12,7 +13,7 @@ import (
 func TestUnverifiedMacLeavesOneNote(t *testing.T) {
 	l := liveTestLive()
 	l.unverifiedAfterMs = 1 // ms: el cruce se hace moviendo el sello, sin sleeps
-	stray := Device{MAC: "02:11:22:33:44:55", Name: "02:11:22:33:44:55", RouterID: "living", Online: true}
+	stray := Device{MAC: macaddr.MustParse("02:11:22:33:44:55"), Name: "02:11:22:33:44:55", RouterID: "living", Online: true}
 
 	// Primera vista: solo siembra, nada en el feed.
 	l.trackUnknownDevices([]Device{stray}, nil)
@@ -35,7 +36,7 @@ func TestUnverifiedMacLeavesOneNote(t *testing.T) {
 		t.Fatalf("taxonomía: (%s,%v,%s,%s), esperaba (clients,false,info,%s)",
 			a.Category, a.Urgent, a.Severity, a.Type, alerts.TypeUnverifiedMac)
 	}
-	if a.Vars["mac"] != stray.MAC || a.Vars["where"] == "" {
+	if a.Vars["mac"] != stray.MAC.String() || a.Vars["where"] == "" {
 		t.Fatalf("vars incompletas: %+v", a.Vars)
 	}
 
@@ -58,7 +59,7 @@ func TestUnverifiedMacLeavesOneNote(t *testing.T) {
 func TestUnverifiedMacIgnoresKnownHosts(t *testing.T) {
 	l := liveTestLive()
 	l.unverifiedAfterMs = 1
-	known := Device{MAC: "02:AA:BB:CC:DD:EE", Name: "02:AA:BB:CC:DD:EE", IP: "192.168.1.50", RouterID: "living", Online: true}
+	known := Device{MAC: macaddr.MustParse("02:AA:BB:CC:DD:EE"), Name: "02:AA:BB:CC:DD:EE", IP: "192.168.1.50", RouterID: "living", Online: true}
 
 	l.trackUnknownDevices([]Device{known}, nil)
 	if _, ok := l.unverifiedSince[known.MAC]; ok {
@@ -77,7 +78,7 @@ func TestUnverifiedMacIgnoresKnownHosts(t *testing.T) {
 func TestUnverifiedMacClockRestartsWhenItGoes(t *testing.T) {
 	l := liveTestLive()
 	l.unverifiedAfterMs = 1
-	stray := Device{MAC: "02:99:88:77:66:55", Name: "02:99:88:77:66:55", RouterID: "living", Online: true}
+	stray := Device{MAC: macaddr.MustParse("02:99:88:77:66:55"), Name: "02:99:88:77:66:55", RouterID: "living", Online: true}
 
 	l.trackUnknownDevices([]Device{stray}, nil)
 	if _, ok := l.unverifiedSince[stray.MAC]; !ok {

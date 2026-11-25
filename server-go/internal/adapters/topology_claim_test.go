@@ -1,6 +1,10 @@
 package adapters
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
+)
 
 // #1417: flota con switches gestionados sondeados por SNMP como "external"
 // (el montaje de #1137). El gateway los ve por LLDP en su puerto de uplink;
@@ -184,7 +188,7 @@ func TestClaim1417Guardas(t *testing.T) {
 	devices := []Device{
 		dev("11:11:11:11:11:01", "gw", "cable"),
 		dev("11:11:11:11:11:02", "gw", "5GHz"),
-		{ID: "d-hub", MAC: "11:11:11:11:11:03", RouterID: "gw", Band: "cable", Online: true, AttachTo: "d-citadel-01"},
+		{ID: "d-hub", MAC: macaddr.MustParse("11:11:11:11:11:03"), RouterID: "gw", Band: "cable", Online: true, AttachTo: "d-citadel-01"},
 	}
 	dists := []DistributionNode{}
 	gwID := "gw"

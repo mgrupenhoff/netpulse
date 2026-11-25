@@ -47,8 +47,8 @@ func (s *server) buildRackHints(ctx context.Context, mounts []rack.MountRow) []r
 	routerMAC := map[string]macaddr.MAC{}
 	if ov := s.lastOv(); ov != nil {
 		for _, r := range ov.Routers {
-			if parsed, err := macaddr.Parse(r.MAC); err == nil {
-				routerMAC[r.ID] = parsed
+			if r.MAC.IsValid() {
+				routerMAC[r.ID] = r.MAC
 			}
 		}
 	}
@@ -58,7 +58,7 @@ func (s *server) buildRackHints(ctx context.Context, mounts []rack.MountRow) []r
 	// generan hint.
 	perPort := map[string]int{}
 	for _, d := range s.adapter.GetDevices(ctx) {
-		if d.Band != "cable" || d.MAC == "" || d.Port == "" {
+		if d.Band != "cable" || !d.MAC.IsValid() || d.Port == "" {
 			continue
 		}
 		perPort[d.RouterID+"|"+d.Port]++
@@ -87,15 +87,13 @@ func (s *server) buildRackHints(ctx context.Context, mounts []rack.MountRow) []r
 		})
 	}
 	for _, d := range s.adapter.GetDevices(ctx) {
-		if d.Band != "cable" || d.MAC == "" || d.Port == "" {
+		if d.Band != "cable" || !d.MAC.IsValid() || d.Port == "" {
 			continue
 		}
 		if perPort[d.RouterID+"|"+d.Port] != 1 {
 			continue
 		}
-		if to, err := macaddr.Parse(d.MAC); err == nil {
-			addHint(routerMAC[d.RouterID], to, d.Port, "")
-		}
+		addHint(routerMAC[d.RouterID], d.MAC, d.Port, "")
 	}
 
 	// Uplinks entre miembros de flota montados: el FDB de la unidad designada

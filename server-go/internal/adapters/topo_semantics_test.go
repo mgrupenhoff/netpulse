@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"reflect"
 	"testing"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 // Golden test de la topología semántica (SPEC-65 D65-3): para el canon demo,
@@ -99,13 +101,13 @@ func TestTopoSemanticsHiddenPeers(t *testing.T) {
 	devices := make([]Device, 0, 62+42)
 	for i := 0; i < 62; i++ {
 		devices = append(devices, Device{
-			ID: fmt.Sprintf("gw-%02d", i), MAC: fmt.Sprintf("00:00:00:00:01:%02d", i),
+			ID: fmt.Sprintf("gw-%02d", i), MAC: macaddr.MustParse(fmt.Sprintf("00:00:00:00:01:%02d", i)),
 			RouterID: "gw", Band: "5 GHz", Online: true,
 		})
 	}
 	for i := 0; i < 42; i++ {
 		devices = append(devices, Device{
-			ID: fmt.Sprintf("ap-%02d", i), MAC: fmt.Sprintf("00:00:00:00:02:%02d", i),
+			ID: fmt.Sprintf("ap-%02d", i), MAC: macaddr.MustParse(fmt.Sprintf("00:00:00:00:02:%02d", i)),
 			RouterID: "ap", Band: "2.4 GHz", Online: true,
 		})
 	}
@@ -155,9 +157,9 @@ func TestTopoSemanticsSinRouters(t *testing.T) {
 // debe duplicar su cable: lo genera solo el bucle de hijos de distnodes.
 func TestTopoSemanticsDeviceHubBajoDistnode(t *testing.T) {
 	devices := []Device{
-		{RouterID: "gateway", Band: "cable", Port: "lan1", ID: "host", MAC: "c8:ff:bf:08:6f:ba", AttachTo: "dist-gateway-lan1", Online: true, Infra: "hypervisor"},
-		{RouterID: "gateway", Band: "cable", Port: "lan1", ID: "ct1", MAC: "bc:24:11:00:00:01", AttachTo: "host", Online: true, Infra: "ct"},
-		{RouterID: "gateway", Band: "cable", Port: "lan1", ID: "ct2", MAC: "bc:24:11:00:00:02", AttachTo: "host", Online: true, Infra: "ct"},
+		{RouterID: "gateway", Band: "cable", Port: "lan1", ID: "host", MAC: macaddr.MustParse("c8:ff:bf:08:6f:ba"), AttachTo: "dist-gateway-lan1", Online: true, Infra: "hypervisor"},
+		{RouterID: "gateway", Band: "cable", Port: "lan1", ID: "ct1", MAC: macaddr.MustParse("bc:24:11:00:00:01"), AttachTo: "host", Online: true, Infra: "ct"},
+		{RouterID: "gateway", Band: "cable", Port: "lan1", ID: "ct2", MAC: macaddr.MustParse("bc:24:11:00:00:02"), AttachTo: "host", Online: true, Infra: "ct"},
 	}
 	routers := []Router{{ID: "gateway", Name: "gateway", RoleBadge: "Principal", Status: "online"}}
 	dists := []DistributionNode{{ID: "dist-gateway-lan1", Kind: "inferred", RouterID: "gateway", Port: "lan1"}}
@@ -198,8 +200,8 @@ func TestTopoSemanticsWanPeer(t *testing.T) {
 		{ID: "gw", Name: "gateway", RoleBadge: "Principal"},
 	}
 	devices := []Device{
-		{ID: "modem", MAC: "AA:BB:CC:00:00:01", RouterID: "gw", Band: "cable", Online: true, IP: "100.64.0.1"},
-		{ID: "nas", MAC: "AA:BB:CC:00:00:02", RouterID: "gw", Band: "cable", Online: true, IP: "192.168.1.10"},
+		{ID: "modem", MAC: macaddr.MustParse("AA:BB:CC:00:00:01"), RouterID: "gw", Band: "cable", Online: true, IP: "100.64.0.1"},
+		{ID: "nas", MAC: macaddr.MustParse("AA:BB:CC:00:00:02"), RouterID: "gw", Band: "cable", Online: true, IP: "192.168.1.10"},
 	}
 	sem := BuildTopoSemantics(routers, devices, WireGuardStats{}, nil, "100.64.0.1", nil, nil, nil)
 	if sem.WanPeer != "modem" {
@@ -237,14 +239,14 @@ func TestTopoSemanticsWanPeer(t *testing.T) {
 // count. Mirrors the model.ts hubOf guard.
 func TestTopoSemanticsWiredNoPortHonorsNonGatewayRouter(t *testing.T) {
 	routers := []Router{
-		{ID: "gw", Name: "gateway", RoleBadge: "Principal", MAC: "AA:BB:CC:00:00:01"},
-		{ID: "nas", Name: "nas", RoleBadge: "SW", MAC: "AA:BB:CC:00:00:02"},
+		{ID: "gw", Name: "gateway", RoleBadge: "Principal", MAC: macaddr.MustParse("AA:BB:CC:00:00:01")},
+		{ID: "nas", Name: "nas", RoleBadge: "SW", MAC: macaddr.MustParse("AA:BB:CC:00:00:02")},
 	}
 	devices := []Device{
 		// The NAS itself, seen on a gateway port (so it is a real switch node).
-		{ID: "dev-nas", MAC: "AA:BB:CC:00:00:02", RouterID: "gw", Band: "cable", Online: true, Port: "3"},
+		{ID: "dev-nas", MAC: macaddr.MustParse("AA:BB:CC:00:00:02"), RouterID: "gw", Band: "cable", Online: true, Port: "3"},
 		// Docker container behind the NAS: cable, no port, attributed to nas.
-		{ID: "docker", MAC: "02:42:AC:11:00:03", RouterID: "nas", Band: "cable", Online: true},
+		{ID: "docker", MAC: macaddr.MustParse("02:42:AC:11:00:03"), RouterID: "nas", Band: "cable", Online: true},
 	}
 	sem := BuildTopoSemantics(routers, devices, WireGuardStats{}, nil, "", nil, nil, nil)
 
@@ -269,15 +271,15 @@ func TestTopoSemanticsWiredNoPortHonorsNonGatewayRouter(t *testing.T) {
 // no haya LLDP. La unidad deja de duplicarse como chip de cliente.
 func TestTopoSemanticsFdbUplinkParent(t *testing.T) {
 	routers := []Router{
-		{ID: "gw", Name: "gateway", RoleBadge: "Principal", MAC: "AA:BB:CC:00:00:01"},
-		{ID: "sw1", Name: "sw1", MAC: "AA:BB:CC:00:00:02"},
-		{ID: "ap1", Name: "ap1", MAC: "AA:BB:CC:00:00:03"},
+		{ID: "gw", Name: "gateway", RoleBadge: "Principal", MAC: macaddr.MustParse("AA:BB:CC:00:00:01")},
+		{ID: "sw1", Name: "sw1", MAC: macaddr.MustParse("AA:BB:CC:00:00:02")},
+		{ID: "ap1", Name: "ap1", MAC: macaddr.MustParse("AA:BB:CC:00:00:03")},
 	}
 	devices := []Device{
 		// sw1 visto en el puerto 1 del gateway; ap1 en el puerto 5 de sw1.
-		{ID: "dev-sw1", MAC: "AA:BB:CC:00:00:02", RouterID: "gw", Band: "cable", Online: true, Port: "1"},
-		{ID: "dev-ap1", MAC: "AA:BB:CC:00:00:03", RouterID: "sw1", Band: "cable", Online: true, Port: "5"},
-		{ID: "nas", MAC: "AA:BB:CC:00:00:09", RouterID: "gw", Band: "cable", Online: true, Port: "2"},
+		{ID: "dev-sw1", MAC: macaddr.MustParse("AA:BB:CC:00:00:02"), RouterID: "gw", Band: "cable", Online: true, Port: "1"},
+		{ID: "dev-ap1", MAC: macaddr.MustParse("AA:BB:CC:00:00:03"), RouterID: "sw1", Band: "cable", Online: true, Port: "5"},
+		{ID: "nas", MAC: macaddr.MustParse("AA:BB:CC:00:00:09"), RouterID: "gw", Band: "cable", Online: true, Port: "2"},
 	}
 	sem := BuildTopoSemantics(routers, devices, WireGuardStats{}, nil, "", nil, nil, nil)
 	links := map[string]TopoLink{}
@@ -306,12 +308,12 @@ func TestTopoSemanticsFdbUplinkParent(t *testing.T) {
 // aparezcan como devices: la evidencia directa del poller basta.
 func TestTopoSemanticsFdbEvidenceSinDevices(t *testing.T) {
 	routers := []Router{
-		{ID: "gw", Name: "gateway", RoleBadge: "Principal", MAC: "AA:BB:CC:00:00:01"},
-		{ID: "sw1", Name: "sw1", MAC: "AA:BB:CC:00:00:02"},
-		{ID: "ap1", Name: "ap1", MAC: "AA:BB:CC:00:00:03"},
+		{ID: "gw", Name: "gateway", RoleBadge: "Principal", MAC: macaddr.MustParse("AA:BB:CC:00:00:01")},
+		{ID: "sw1", Name: "sw1", MAC: macaddr.MustParse("AA:BB:CC:00:00:02")},
+		{ID: "ap1", Name: "ap1", MAC: macaddr.MustParse("AA:BB:CC:00:00:03")},
 	}
 	devices := []Device{
-		{ID: "nas", MAC: "AA:BB:CC:00:00:09", RouterID: "gw", Band: "cable", Online: true, Port: "2"},
+		{ID: "nas", MAC: macaddr.MustParse("AA:BB:CC:00:00:09"), RouterID: "gw", Band: "cable", Online: true, Port: "2"},
 	}
 	ev := map[string]topoParent{
 		"sw1": {parent: "gw", port: "1"},
@@ -336,11 +338,11 @@ func TestTopoSemanticsFdbEvidenceSinDevices(t *testing.T) {
 // directa cuando ambas existen.
 func TestTopoSemanticsDeviceEvidenceManda(t *testing.T) {
 	routers := []Router{
-		{ID: "gw", Name: "gateway", RoleBadge: "Principal", MAC: "AA:BB:CC:00:00:01"},
-		{ID: "ap1", Name: "ap1", MAC: "AA:BB:CC:00:00:03"},
+		{ID: "gw", Name: "gateway", RoleBadge: "Principal", MAC: macaddr.MustParse("AA:BB:CC:00:00:01")},
+		{ID: "ap1", Name: "ap1", MAC: macaddr.MustParse("AA:BB:CC:00:00:03")},
 	}
 	devices := []Device{
-		{ID: "dev-ap1", MAC: "AA:BB:CC:00:00:03", RouterID: "gw", Band: "cable", Online: true, Port: "4"},
+		{ID: "dev-ap1", MAC: macaddr.MustParse("AA:BB:CC:00:00:03"), RouterID: "gw", Band: "cable", Online: true, Port: "4"},
 	}
 	ev := map[string]topoParent{"ap1": {parent: "swX", port: "9"}}
 	sem := BuildTopoSemantics(routers, devices, WireGuardStats{}, nil, "", ev, nil, nil)
@@ -614,11 +616,11 @@ func TestFleetFdbEvidenceRegisteredMac(t *testing.T) {
 // -> AP, sin saltarse el switch intermedio.
 func TestTopoSemanticsUplinkViaDistNode(t *testing.T) {
 	routers := []Router{
-		{ID: "gw", Name: "gateway", RoleBadge: "Principal", MAC: "AA:BB:CC:00:00:01"},
-		{ID: "ap1", Name: "ap1", MAC: "AA:BB:CC:00:00:03"},
+		{ID: "gw", Name: "gateway", RoleBadge: "Principal", MAC: macaddr.MustParse("AA:BB:CC:00:00:01")},
+		{ID: "ap1", Name: "ap1", MAC: macaddr.MustParse("AA:BB:CC:00:00:03")},
 	}
 	devices := []Device{
-		{ID: "nas", MAC: "AA:BB:CC:00:00:09", RouterID: "gw", Band: "cable", Online: true, Port: "2"},
+		{ID: "nas", MAC: macaddr.MustParse("AA:BB:CC:00:00:09"), RouterID: "gw", Band: "cable", Online: true, Port: "2"},
 	}
 	dists := []DistributionNode{
 		{ID: "dist-gw-lan1", RouterID: "gw", Kind: "inferred", Port: "lan1"},
@@ -786,9 +788,9 @@ func TestFleetLldpEvidenceNoCycle(t *testing.T) {
 	// Degradada la evidencia en bucle, la FDB decide y el gateway conserva
 	// hijos: gw -> ap1 -> ap2.
 	routers := []Router{
-		{ID: "gw", Name: "gateway", RoleBadge: "Principal", MAC: "AA:BB:CC:00:00:01"},
-		{ID: "ap1", Name: "ap1", MAC: "AA:BB:CC:00:00:02"},
-		{ID: "ap2", Name: "ap2", MAC: "AA:BB:CC:00:00:03"},
+		{ID: "gw", Name: "gateway", RoleBadge: "Principal", MAC: macaddr.MustParse("AA:BB:CC:00:00:01")},
+		{ID: "ap1", Name: "ap1", MAC: macaddr.MustParse("AA:BB:CC:00:00:02")},
+		{ID: "ap2", Name: "ap2", MAC: macaddr.MustParse("AA:BB:CC:00:00:03")},
 	}
 	fdb := map[string]topoParent{
 		"ap1": {parent: "gw", port: "lan1"},
@@ -810,9 +812,9 @@ func TestFleetLldpEvidenceNoCycle(t *testing.T) {
 // truth de dos equipos que se anuncian por el cable).
 func TestTopoSemanticsLldpEvidenceWins(t *testing.T) {
 	routers := []Router{
-		{ID: "gw", Name: "gateway", RoleBadge: "Principal", MAC: "AA:BB:CC:00:00:01"},
-		{ID: "sw1", Name: "sw1", MAC: "AA:BB:CC:00:00:02"},
-		{ID: "ap1", Name: "ap1", MAC: "AA:BB:CC:00:00:03"},
+		{ID: "gw", Name: "gateway", RoleBadge: "Principal", MAC: macaddr.MustParse("AA:BB:CC:00:00:01")},
+		{ID: "sw1", Name: "sw1", MAC: macaddr.MustParse("AA:BB:CC:00:00:02")},
+		{ID: "ap1", Name: "ap1", MAC: macaddr.MustParse("AA:BB:CC:00:00:03")},
 	}
 	fdb := map[string]topoParent{"ap1": {parent: "gw", port: "9"}}
 	lldp := map[string]topoParent{"ap1": {parent: "sw1", port: "two-gigabitEthernet 1/0/21"}}
@@ -832,9 +834,9 @@ func TestTopoSemanticsLldpEvidenceWins(t *testing.T) {
 // y si no fija puerto se conserva el que la inferencia hubiera dado.
 func TestTopoSemanticsOverrideEvidenceWins(t *testing.T) {
 	routers := []Router{
-		{ID: "gw", Name: "gateway", RoleBadge: "Principal", MAC: "AA:BB:CC:00:00:01"},
-		{ID: "sw1", Name: "sw1", MAC: "AA:BB:CC:00:00:02"},
-		{ID: "ap1", Name: "ap1", MAC: "AA:BB:CC:00:00:03"},
+		{ID: "gw", Name: "gateway", RoleBadge: "Principal", MAC: macaddr.MustParse("AA:BB:CC:00:00:01")},
+		{ID: "sw1", Name: "sw1", MAC: macaddr.MustParse("AA:BB:CC:00:00:02")},
+		{ID: "ap1", Name: "ap1", MAC: macaddr.MustParse("AA:BB:CC:00:00:03")},
 	}
 	lldp := map[string]topoParent{"ap1": {parent: "gw", port: "lan4"}}
 	ovr := map[string]topoParent{"ap1": {parent: "sw1"}}
@@ -854,8 +856,8 @@ func TestTopoSemanticsOverrideEvidenceWins(t *testing.T) {
 // tag de evidencia (Evidence vacía). El fallback al gateway no es evidencia.
 func TestTopoSemanticsFallbackSinEvidencia(t *testing.T) {
 	routers := []Router{
-		{ID: "gw", Name: "gateway", RoleBadge: "Principal", MAC: "AA:BB:CC:00:00:01"},
-		{ID: "ap1", Name: "ap1", MAC: "AA:BB:CC:00:00:03"},
+		{ID: "gw", Name: "gateway", RoleBadge: "Principal", MAC: macaddr.MustParse("AA:BB:CC:00:00:01")},
+		{ID: "ap1", Name: "ap1", MAC: macaddr.MustParse("AA:BB:CC:00:00:03")},
 	}
 	sem := BuildTopoSemantics(routers, nil, WireGuardStats{}, nil, "", nil, nil, nil)
 	for _, l := range sem.Links {
@@ -874,14 +876,14 @@ func TestTopoSemanticsFallbackSinEvidencia(t *testing.T) {
 // y los clientes del blob pasan a colgar del switch (su posición física).
 func TestTopoSemanticsAbsorbeDistnodeSombra(t *testing.T) {
 	routers := []Router{
-		{ID: "gw", Name: "gateway", Role: "Gateway principal", RoleBadge: "Principal", MAC: "AA:BB:CC:00:00:01"},
-		{ID: "sw", Name: "switch", Role: "Switch", RoleBadge: "SW", MAC: "AA:BB:CC:00:00:02"},
+		{ID: "gw", Name: "gateway", Role: "Gateway principal", RoleBadge: "Principal", MAC: macaddr.MustParse("AA:BB:CC:00:00:01")},
+		{ID: "sw", Name: "switch", Role: "Switch", RoleBadge: "SW", MAC: macaddr.MustParse("AA:BB:CC:00:00:02")},
 	}
 	devices := []Device{
-		{ID: "cam", MAC: "AA:BB:CC:00:00:09", RouterID: "sw", Band: "cable", Online: true, AttachTo: "dist-gw-lan1"},
+		{ID: "cam", MAC: macaddr.MustParse("AA:BB:CC:00:00:09"), RouterID: "sw", Band: "cable", Online: true, AttachTo: "dist-gw-lan1"},
 		// Equipo de un switch NO gestionado colgado del gateway: el blob se
 		// absorbe pero este cliente NO se re-ancla al switch (no es suyo).
-		{ID: "pc", MAC: "AA:BB:CC:00:00:0A", RouterID: "gw", Band: "cable", Online: true, AttachTo: "dist-gw-lan1"},
+		{ID: "pc", MAC: macaddr.MustParse("AA:BB:CC:00:00:0A"), RouterID: "gw", Band: "cable", Online: true, AttachTo: "dist-gw-lan1"},
 	}
 	dists := []DistributionNode{
 		{ID: "dist-gw-lan1", RouterID: "gw", Kind: "inferred", Port: "lan1"},
@@ -930,8 +932,8 @@ func TestTopoSemanticsAbsorbeDistnodeSombra(t *testing.T) {
 func TestTopoSemanticsWanPeerByWanSide(t *testing.T) {
 	routers := []Router{{ID: "gw", Name: "Gateway", RoleBadge: "Principal"}}
 	devices := []Device{
-		{ID: "ont", MAC: "c0-49-43-a3-d1-34", IP: "192.168.1.1", Online: true, WanSide: true, Band: "cable", RouterID: "gw"},
-		{ID: "pc", MAC: "aa-bb-cc-00-00-01", Online: true, Band: "cable", RouterID: "gw"},
+		{ID: "ont", MAC: macaddr.MustParse("c0-49-43-a3-d1-34"), IP: "192.168.1.1", Online: true, WanSide: true, Band: "cable", RouterID: "gw"},
+		{ID: "pc", MAC: macaddr.MustParse("aa-bb-cc-00-00-01"), Online: true, Band: "cable", RouterID: "gw"},
 	}
 	sem := BuildTopoSemantics(routers, devices, WireGuardStats{}, nil, "123.113.96.1", nil, nil, nil)
 	if sem.WanPeer != "ont" {
@@ -950,8 +952,8 @@ func TestTopoSemanticsWanPeerByWanSide(t *testing.T) {
 func TestTopoSemanticsWanPeerByIPWins(t *testing.T) {
 	routers := []Router{{ID: "gw", Name: "Gateway", RoleBadge: "Principal"}}
 	devices := []Device{
-		{ID: "brasa", MAC: "00-00-00-00-00-aa", IP: "123.113.96.1", Online: true, Band: "cable", RouterID: "gw"},
-		{ID: "ont", MAC: "c0-49-43-a3-d1-34", IP: "192.168.1.1", Online: true, WanSide: true, Band: "cable", RouterID: "gw"},
+		{ID: "brasa", MAC: macaddr.MustParse("00-00-00-00-00-aa"), IP: "123.113.96.1", Online: true, Band: "cable", RouterID: "gw"},
+		{ID: "ont", MAC: macaddr.MustParse("c0-49-43-a3-d1-34"), IP: "192.168.1.1", Online: true, WanSide: true, Band: "cable", RouterID: "gw"},
 	}
 	sem := BuildTopoSemantics(routers, devices, WireGuardStats{}, nil, "123.113.96.1", nil, nil, nil)
 	if sem.WanPeer != "brasa" {
