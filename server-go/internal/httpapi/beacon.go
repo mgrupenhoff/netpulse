@@ -203,10 +203,8 @@ func (s *server) ingestBeacon(src string, raw []byte) {
 		// descartan (firmware razonable).
 		macs := make(map[string]string, len(p.FDB))
 		for mac, port := range p.FDB {
-			if norm := macaddr.Normalize(mac); norm != "" {
-				macs[norm] = port
-			} else if mac != "" {
-				beaconWarn.Printf("fdb\x00"+mac, "skipping FDB entry with invalid MAC %q (router=%s)", mac, p.Slug)
+			if m, ok := macaddr.ParseOrWarn(beaconWarn, "beacon.fdb router="+p.Slug, mac); ok {
+				macs[m.String()] = port
 			}
 		}
 		fdbPayload := &probe.Payload{
@@ -290,14 +288,11 @@ func (s *server) ingestBeacon(src string, raw []byte) {
 	if p.Up > 0 || p.Fw != "" {
 		b := &probe.BoardInfo{}
 		b.Release.Description = "RTLPlayground " + p.Fw
-		bridgeMAC := macaddr.Normalize(p.Mac)
-		if bridgeMAC == "" && p.Mac != "" {
-			beaconWarn.Printf("bridge\x00"+p.Mac, "ignoring invalid bridge MAC %q (router=%s)", p.Mac, p.Slug)
-		}
+		brMac, _ := macaddr.ParseOrWarn(beaconWarn, "beacon.bridge router="+p.Slug, p.Mac)
 		pl.Data.System = &probe.SystemData{
 			Board:     b,
 			SysInfo:   &probe.SysInfo{Uptime: float64(p.Up)},
-			BridgeMAC: bridgeMAC,
+			BridgeMAC: brMac.String(),
 		}
 	} else {
 		// #639: el beacon no lleva firmware/uptime; el server los obtiene de

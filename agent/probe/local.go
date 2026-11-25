@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 // Runner ejecuta un comando de shell local y devuelve su stdout.
@@ -1014,12 +1016,13 @@ func bandTagWirelessSide(side map[string]string, radios []Radio) map[string]stri
 // hexFlipLAA devuelve la MAC con el bit localmente-administrada (0x02 del
 // primer octeto) volteado, en formato colon-upper como el resto del FDB.
 func hexFlipLAA(mac string) (string, error) {
-	b, err := net.ParseMAC(mac)
-	if err != nil || len(b) == 0 {
+	m, err := macaddr.Parse(mac)
+	if err != nil {
 		return "", err
 	}
+	b := m.As6()
 	b[0] ^= 0x02
-	return strings.ToUpper(b.String()), nil
+	return macaddr.From6(b).String(), nil
 }
 
 // probeLldp: vecinos LLDP de lldpd (#489). Contrato: Available=false cuando

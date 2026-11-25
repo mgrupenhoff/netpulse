@@ -55,7 +55,8 @@ func TestBeaconWarnsOncePerInvalidMAC(t *testing.T) {
 		t.Fatalf("avisos: %q (want uno por FDB y otro por la MAC del puente)", lines)
 	}
 	joined := strings.Join(lines, "\n")
-	if !strings.Contains(joined, `FDB entry with invalid MAC "corta"`) || !strings.Contains(joined, `bridge MAC "mala"`) {
+	if !strings.Contains(joined, `beacon.fdb router=switch16: ignoring invalid MAC "corta"`) ||
+		!strings.Contains(joined, `beacon.bridge router=switch16: ignoring invalid MAC "mala"`) {
 		t.Fatalf("avisos: %q", lines)
 	}
 }

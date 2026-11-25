@@ -23,31 +23,21 @@ import (
 // Descarta la MAC nula (loopback) y cualquier línea que no traiga una MAC
 // ethernet válida.
 func ParseIfaceMACs(out string) []string {
-	seen := make(map[string]bool, 8)
+	seen := make(map[macaddr.MAC]bool, 8)
 	macs := make([]string, 0, 8)
 	for _, line := range strings.Split(out, "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 2 {
 			continue
 		}
-		mac := normalizeIfaceMAC(fields[len(fields)-1])
-		if mac == "" || seen[mac] {
+		m, err := macaddr.Parse(fields[len(fields)-1])
+		// La MAC nula es la de loopback y no identifica a nadie.
+		if err != nil || m.As6() == [6]byte{} || seen[m] {
 			continue
 		}
-		seen[mac] = true
-		macs = append(macs, mac)
+		seen[m] = true
+		macs = append(macs, m.String())
 	}
 	sort.Strings(macs)
 	return macs
-}
-
-// normalizeIfaceMAC acepta solo MAC ethernet de 6 octetos en hex (forma
-// canónica de macaddr.Normalize). La MAC nula es la de loopback y no
-// identifica a nadie.
-func normalizeIfaceMAC(raw string) string {
-	mac := macaddr.Normalize(raw)
-	if mac == "00:00:00:00:00:00" {
-		return ""
-	}
-	return mac
 }

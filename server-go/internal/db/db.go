@@ -1060,7 +1060,7 @@ const macUpperMigratedKey = "mac_upper_tables_migrated"
 // Patrones GLOB de una MAC de 17 caracteres. topology_overrides solo admite la
 // forma con ':', porque sus columnas también guardan ids de router (slugs con
 // '-', que pueden parecer una MAC con guiones); las demás tablas solo guardan
-// MACs y aceptan también '-'. Como macaddr.Normalize, el separador debe ser el
+// MACs y aceptan también '-'. Como macaddr.Parse, el separador debe ser el
 // mismo en las cinco posiciones: "aa-bb:cc-…" no es una MAC.
 var (
 	colonMACGlob = strings.Repeat("[0-9A-Fa-f][0-9A-Fa-f]:", 5) + "[0-9A-Fa-f][0-9A-Fa-f]"

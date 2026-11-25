@@ -215,7 +215,7 @@ func TestMACMigrationRunsOnce(t *testing.T) {
 }
 
 // TestMigrationLeavesMixedSeparatorsAlone: una cadena con separadores mezclados
-// ('-' y ':') no es una MAC para macaddr.Normalize, así que la migración no la
+// ('-' y ':') no es una MAC para macaddr.Parse, así que la migración no la
 // reescribe ni la usa para pisar el override real de la MAC canónica.
 func TestMigrationLeavesMixedSeparatorsAlone(t *testing.T) {
 	dataDir := t.TempDir()

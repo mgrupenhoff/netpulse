@@ -285,7 +285,7 @@ func (s *server) attachRTLConsole(slug, host string, pl *probe.Payload) {
 	sd := &probe.SystemData{
 		Board:     b,
 		SysInfo:   &probe.SysInfo{Uptime: time.Since(e.BootUnix).Seconds()},
-		BridgeMAC: strings.ToUpper(e.MAC),
+		BridgeMAC: canonMAC(e.MAC),
 	}
 	pl.Data.System = sd
 }
