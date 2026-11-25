@@ -792,7 +792,7 @@ type FdbUplink struct {
 type FleetFdbProvider interface {
 	// FleetFdbUplinks: enlaces derivados del FDB de la unidad designada
 	// (#1186). infraID vacío o inexistente → vacío.
-	FleetFdbUplinks(infraID, infraMAC string) map[string]FdbUplink
+	FleetFdbUplinks(infraID string, infraMAC macaddr.MAC) map[string]FdbUplink
 }
 
 // DiscoveryMode es el modo de descubrimiento de clientes elegido para una red o

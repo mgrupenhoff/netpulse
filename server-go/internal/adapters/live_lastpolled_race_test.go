@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 func TestAuditFleetFdbUplinksConcurrentSetRouters(t *testing.T) {
@@ -21,7 +23,7 @@ func TestAuditFleetFdbUplinksConcurrentSetRouters(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			_ = live.FleetFdbUplinks("router-0", "")
+			_ = live.FleetFdbUplinks("router-0", macaddr.MAC{})
 		}()
 		go func() {
 			defer wg.Done()

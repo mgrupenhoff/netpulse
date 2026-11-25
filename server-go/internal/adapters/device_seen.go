@@ -143,8 +143,8 @@ func (l *Live) fleetSeenMACs() map[macaddr.MAC]bool {
 	}
 	l.mu.Lock()
 	for _, p := range l.lastPolled {
-		if m, ok := macaddr.ParseOrWarn(macWarn, "device_seen.br_mac", p.brMac); ok {
-			macs[m] = true
+		if p.brMac.IsValid() {
+			macs[p.brMac] = true
 		}
 		for _, r := range p.radios {
 			if r.BSSID.IsValid() {

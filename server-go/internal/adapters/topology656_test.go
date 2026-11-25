@@ -10,6 +10,8 @@ package adapters
 
 import (
 	"testing"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 // busca un Device por MAC; falla si no existe.
@@ -33,21 +35,21 @@ func TestBuildDevicesDumbAPWiredClient(t *testing.T) {
 	polled := map[string]*routerPolled{
 		"gateway": {
 			cfg:   RouterConfig{ID: "gateway", Name: "Main", IsGateway: true},
-			brMac: "GG:GG:GG:GG:GG:GG",
-			fdb: map[string]string{
-				"GG:GG:GG:GG:GG:GG": "lan1", // bridge del gateway (excluida)
-				"11:11:11:11:11:11": "lan1", // cliente directo del gateway
-				"66:66:66:66:66:66": "lan2", // cliente del dumb AP (también vedo por el gateway)
+			brMac: macaddr.MustParse("00:00:00:00:00:01"),
+			fdb: map[macaddr.MAC]string{
+				macaddr.MustParse("00:00:00:00:00:01"): "lan1", // bridge del gateway (excluida)
+				macaddr.MustParse("11:11:11:11:11:11"): "lan1", // cliente directo del gateway
+				macaddr.MustParse("66:66:66:66:66:66"): "lan2", // cliente del dumb AP (también vedo por el gateway)
 			},
 		},
 		"dumbap": {
 			cfg:   RouterConfig{ID: "dumbap", Name: "Luizjana2", Host: "192.168.1.2"},
-			brMac: "AA:AA:AA:AA:AA:AA",
-			fdb: map[string]string{
-				"66:66:66:66:66:66": "lan1", // boca LOCAL del dumb AP (no-infra)
-				"GG:GG:GG:GG:GG:GG": "lan2", // MAC bridge del gateway → uplink
-				"AA:AA:AA:AA:AA:AA": "lan2", // bridge propio → uplink
-				"11:11:11:11:11:11": "lan2", // cliente del gateway, tránsito por el uplink
+			brMac: macaddr.MustParse("AA:AA:AA:AA:AA:AA"),
+			fdb: map[macaddr.MAC]string{
+				macaddr.MustParse("66:66:66:66:66:66"): "lan1", // boca LOCAL del dumb AP (no-infra)
+				macaddr.MustParse("00:00:00:00:00:01"): "lan2", // MAC bridge del gateway → uplink
+				macaddr.MustParse("AA:AA:AA:AA:AA:AA"): "lan2", // bridge propio → uplink
+				macaddr.MustParse("11:11:11:11:11:11"): "lan2", // cliente del gateway, tránsito por el uplink
 			},
 		},
 	}
@@ -73,10 +75,10 @@ func TestBuildDevicesOwnBridgeExcluded(t *testing.T) {
 		{ID: "gateway", Name: "Main", IsGateway: true},
 	}, nil)
 	polled := map[string]*routerPolled{
-		"gateway": {cfg: RouterConfig{ID: "gateway", IsGateway: true}, brMac: "GG:GG:GG:GG:GG:GG",
-			fdb: map[string]string{"GG:GG:GG:GG:GG:GG": "lan1"}},
-		"dumbap": {cfg: RouterConfig{ID: "dumbap"}, brMac: "AA:AA:AA:AA:AA:AA",
-			fdb: map[string]string{"GG:GG:GG:GG:GG:GG": "lan2", "AA:AA:AA:AA:AA:AA": "lan2"}},
+		"gateway": {cfg: RouterConfig{ID: "gateway", IsGateway: true}, brMac: macaddr.MustParse("00:00:00:00:00:01"),
+			fdb: map[macaddr.MAC]string{macaddr.MustParse("00:00:00:00:00:01"): "lan1"}},
+		"dumbap": {cfg: RouterConfig{ID: "dumbap"}, brMac: macaddr.MustParse("AA:AA:AA:AA:AA:AA"),
+			fdb: map[macaddr.MAC]string{macaddr.MustParse("00:00:00:00:00:01"): "lan2", macaddr.MustParse("AA:AA:AA:AA:AA:AA"): "lan2"}},
 	}
 	devs := l.buildDevices(polled, "")
 	if len(devs) != 0 {
@@ -94,20 +96,20 @@ func TestBuildDevicesAgentOnlySpecific(t *testing.T) {
 	polled := map[string]*routerPolled{
 		"gateway": {
 			cfg:   RouterConfig{ID: "gateway", IsGateway: true},
-			brMac: "GG:GG:GG:GG:GG:GG",
-			fdb: map[string]string{
-				"GG:GG:GG:GG:GG:GG": "lan1",
-				"77:77:77:77:77:77": "lan2", // cliente del switch (visto también por el gateway)
+			brMac: macaddr.MustParse("00:00:00:00:00:01"),
+			fdb: map[macaddr.MAC]string{
+				macaddr.MustParse("00:00:00:00:00:01"): "lan1",
+				macaddr.MustParse("77:77:77:77:77:77"): "lan2", // cliente del switch (visto también por el gateway)
 			},
 		},
 		"switch16": {
 			cfg:       RouterConfig{ID: "switch16", Name: "SW-16", Host: "192.168.1.6", AgentOnly: true},
-			brMac:     "BB:BB:BB:BB:BB:BB",
+			brMac:     macaddr.MustParse("BB:BB:BB:BB:BB:BB"),
 			agentKind: "external",
-			fdb: map[string]string{
-				"77:77:77:77:77:77": "lan3", // boca local del switch
-				"BB:BB:BB:BB:BB:BB": "lan1", // bridge propio → uplink
-				"GG:GG:GG:GG:GG:GG": "lan1", // MAC bridge del gateway → uplink
+			fdb: map[macaddr.MAC]string{
+				macaddr.MustParse("77:77:77:77:77:77"): "lan3", // boca local del switch
+				macaddr.MustParse("BB:BB:BB:BB:BB:BB"): "lan1", // bridge propio → uplink
+				macaddr.MustParse("00:00:00:00:00:01"): "lan1", // MAC bridge del gateway → uplink
 			},
 		},
 	}
@@ -128,12 +130,12 @@ func TestBuildDevicesStableOrder(t *testing.T) {
 	polled := map[string]*routerPolled{
 		"gw": {
 			cfg:   RouterConfig{ID: "gw", Name: "GW", IsGateway: true},
-			brMac: "GG:GG:GG:GG:GG:GG",
-			fdb: map[string]string{
-				"GG:GG:GG:GG:GG:GG": "lan1",
-				"CC:CC:CC:CC:CC:CC": "lan1",
-				"AA:AA:AA:AA:AA:AA": "lan1",
-				"BB:BB:BB:BB:BB:BB": "lan1",
+			brMac: macaddr.MustParse("00:00:00:00:00:01"),
+			fdb: map[macaddr.MAC]string{
+				macaddr.MustParse("00:00:00:00:00:01"): "lan1",
+				macaddr.MustParse("CC:CC:CC:CC:CC:CC"): "lan1",
+				macaddr.MustParse("AA:AA:AA:AA:AA:AA"): "lan1",
+				macaddr.MustParse("BB:BB:BB:BB:BB:BB"): "lan1",
 			},
 		},
 	}

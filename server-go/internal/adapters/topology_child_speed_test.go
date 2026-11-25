@@ -2,7 +2,11 @@
 // (#1429).
 package adapters
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
+)
 
 // El caso de crowedavid: enlace FDB sw1↔ap1 sin velocidad en el lado del
 // padre (la boca del switch no reporta o no casa); el HIJO (OpenWrt) sabe la
@@ -83,8 +87,8 @@ func TestFillUplinkSpeedsFromChildDownPort(t *testing.T) {
 // sin velocidad.
 func TestLldpUplinkSpeedFromChildPort(t *testing.T) {
 	polled := map[string]*routerPolled{
-		"gw": {brMac: "AA:BB:CC:00:00:01", cfg: RouterConfig{ID: "gw", Name: "gateway"}},
-		"ap1": {brMac: "AA:BB:CC:00:00:02", cfg: RouterConfig{ID: "ap1", Name: "ap1"},
+		"gw": {brMac: macaddr.MustParse("AA:BB:CC:00:00:01"), cfg: RouterConfig{ID: "gw", Name: "gateway"}},
+		"ap1": {brMac: macaddr.MustParse("AA:BB:CC:00:00:02"), cfg: RouterConfig{ID: "ap1", Name: "ap1"},
 			lldp:  []LldpNeighbor{{Port: "lan1", Chassis: "gateway", PortDesc: "lan2"}},
 			ports: []EthPort{{ID: "lan1", Up: true, Speed: "2.5 Gbps"}}},
 	}
@@ -103,8 +107,8 @@ func TestLldpUplinkSpeedFromChildPort(t *testing.T) {
 // directo del lado que sondea el enlace); la del hijo solo rellena el hueco.
 func TestLldpUplinkSpeedParentWins(t *testing.T) {
 	polled := map[string]*routerPolled{
-		"gw": {brMac: "AA:BB:CC:00:00:01", cfg: RouterConfig{ID: "gw", Name: "gateway"}},
-		"ap1": {brMac: "AA:BB:CC:00:00:02", cfg: RouterConfig{ID: "ap1", Name: "ap1"},
+		"gw": {brMac: macaddr.MustParse("AA:BB:CC:00:00:01"), cfg: RouterConfig{ID: "gw", Name: "gateway"}},
+		"ap1": {brMac: macaddr.MustParse("AA:BB:CC:00:00:02"), cfg: RouterConfig{ID: "ap1", Name: "ap1"},
 			lldp:  []LldpNeighbor{{Port: "lan1", Chassis: "gateway", PortDesc: "lan2"}},
 			ports: []EthPort{{ID: "lan1", Up: true, Speed: "2.5 Gbps"}}},
 	}

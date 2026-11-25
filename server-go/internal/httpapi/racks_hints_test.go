@@ -20,7 +20,7 @@ func (a *rackHintsStubAdapter) GetDevices(context.Context) []adapters.Device {
 	return a.devices
 }
 
-func (a *rackHintsStubAdapter) FleetFdbUplinks(string, string) map[string]adapters.FdbUplink {
+func (a *rackHintsStubAdapter) FleetFdbUplinks(string, macaddr.MAC) map[string]adapters.FdbUplink {
 	return a.uplinks
 }
 

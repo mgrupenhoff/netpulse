@@ -18,22 +18,26 @@ func TestFdbMemoConcurrentReaders(t *testing.T) {
 	l := NewLive(nil, nil, []RouterConfig{{ID: "gateway", Name: "GW", IsGateway: true}}, nil)
 	baseNow := time.Now().UnixMilli()
 	expiredNow := baseNow + fdbStickyTTL.Milliseconds() + 5_000
+	gwMAC := macaddr.MustParse("60:60:60:60:60:60")
+	apMAC := macaddr.MustParse("AA:AA:AA:AA:AA:AA")
+	cli1MAC := macaddr.MustParse("44:44:44:44:44:44")
+	cli2MAC := macaddr.MustParse("55:55:55:55:55:55")
 
 	// El AP ve dos clientes cableados en bocas locales: ambos entran en la memo.
 	polledInsert := map[string]*routerPolled{
 		"gateway": {
 			cfg:   RouterConfig{ID: "gateway", Name: "GW", IsGateway: true},
-			brMac: "GG:GG:GG:GG:GG:GG",
-			fdb:   map[string]string{"GG:GG:GG:GG:GG:GG": "lan1", "AA:AA:AA:AA:AA:AA": "lan4"},
-			arp:   map[macaddr.MAC]string{macaddr.MustParse("44:44:44:44:44:44"): "192.168.13.123"},
+			brMac: gwMAC,
+			fdb:   map[macaddr.MAC]string{gwMAC: "lan1", apMAC: "lan4"},
+			arp:   map[macaddr.MAC]string{cli1MAC: "192.168.13.123"},
 		},
 		"ap": {
 			cfg:   RouterConfig{ID: "ap", Name: "AP"},
-			brMac: "AA:AA:AA:AA:AA:AA",
-			fdb: map[string]string{
-				"AA:AA:AA:AA:AA:AA": "lan1",
-				"44:44:44:44:44:44": "lan3",
-				"55:55:55:55:55:55": "lan2",
+			brMac: apMAC,
+			fdb: map[macaddr.MAC]string{
+				apMAC:   "lan1",
+				cli1MAC: "lan3",
+				cli2MAC: "lan2",
 			},
 		},
 	}
@@ -43,14 +47,14 @@ func TestFdbMemoConcurrentReaders(t *testing.T) {
 	polledPrune := map[string]*routerPolled{
 		"gateway": {
 			cfg:   RouterConfig{ID: "gateway", Name: "GW", IsGateway: true},
-			brMac: "GG:GG:GG:GG:GG:GG",
-			fdb:   map[string]string{"GG:GG:GG:GG:GG:GG": "lan1", "AA:AA:AA:AA:AA:AA": "lan4"},
-			arp:   map[macaddr.MAC]string{macaddr.MustParse("44:44:44:44:44:44"): "192.168.13.123"},
+			brMac: gwMAC,
+			fdb:   map[macaddr.MAC]string{gwMAC: "lan1", apMAC: "lan4"},
+			arp:   map[macaddr.MAC]string{cli1MAC: "192.168.13.123"},
 		},
 		"ap": {
 			cfg:   RouterConfig{ID: "ap", Name: "AP"},
-			brMac: "AA:AA:AA:AA:AA:AA",
-			fdb:   map[string]string{"AA:AA:AA:AA:AA:AA": "lan1"},
+			brMac: apMAC,
+			fdb:   map[macaddr.MAC]string{apMAC: "lan1"},
 		},
 	}
 

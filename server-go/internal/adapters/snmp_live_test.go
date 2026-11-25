@@ -118,13 +118,13 @@ func TestSnmpFdbMapNoDrop(t *testing.T) {
 	if len(m) != 3 {
 		t.Fatalf("fdbMap len = %d, want 3 (no drop)", len(m))
 	}
-	if got := m["AA:BB:CC:DD:EE:01"]; got != "lan3" {
+	if got := m[macaddr.MustParse("aa:bb:cc:dd:ee:01")]; got != "lan3" {
 		t.Errorf("ee:01 = %q, want lan3", got)
 	}
-	if got := m["AA:BB:CC:DD:EE:02"]; got != "port-99" {
+	if got := m[macaddr.MustParse("aa:bb:cc:dd:ee:02")]; got != "port-99" {
 		t.Errorf("ee:02 = %q, want port-99 (fallback ifIndex)", got)
 	}
-	if got := m["AA:BB:CC:DD:EE:03"]; got != "port-0" {
+	if got := m[macaddr.MustParse("aa:bb:cc:dd:ee:03")]; got != "port-0" {
 		t.Errorf("ee:03 = %q, want port-0 (generic)", got)
 	}
 }
@@ -285,13 +285,13 @@ func TestSnmpFdbMapDropsInternalCPUPort(t *testing.T) {
 	}
 	names := map[int]string{1: "1/0/1", 9: "CPU Interface:  3/1", 10: "Internal stack"}
 	m := snmpFdbMap(fdb, names)
-	if _, ok := m["08:BD:43:75:50:CD"]; ok {
+	if _, ok := m[macaddr.MustParse("08:BD:43:75:50:CD")]; ok {
 		t.Fatalf("la MAC del puerto CPU no debe entrar en el FDB: %v", m)
 	}
-	if _, ok := m["AA:BB:CC:00:00:02"]; ok {
+	if _, ok := m[macaddr.MustParse("AA:BB:CC:00:00:02")]; ok {
 		t.Fatalf("la MAC del puerto interno no debe entrar en el FDB: %v", m)
 	}
-	if m["AA:BB:CC:00:00:01"] != "1/0/1" {
+	if m[macaddr.MustParse("AA:BB:CC:00:00:01")] != "1/0/1" {
 		t.Fatalf("el puerto normal se perdió: %v", m)
 	}
 }
@@ -310,21 +310,21 @@ func TestSnmpSelfMacs(t *testing.T) {
 		t.Fatalf("selfMacs %v, want las dos del puerto CPU", got)
 	}
 	for _, mac := range got {
-		if mac == "AA:BB:CC:00:00:01" {
+		if mac == macaddr.MustParse("AA:BB:CC:00:00:01") {
 			t.Fatalf("una MAC de puerto normal no es identidad: %v", got)
 		}
 	}
 	// Esa identidad se absorbe aunque otro miembro (el gateway) la aprenda.
 	l := NewLive(nil, nil, nil, nil)
 	polled := map[string]*routerPolled{
-		"sw": {cfg: RouterConfig{ID: "sw", Type: "managed-switch"}, selfMacs: []string{"08:BD:43:75:50:CF"}},
-		"gw": {cfg: RouterConfig{ID: "gw", IsGateway: true}, fdb: map[string]string{
-			"08:BD:43:75:50:CF": "br-lan",
-			"AA:BB:CC:00:00:09": "br-lan",
+		"sw": {cfg: RouterConfig{ID: "sw", Type: "managed-switch"}, selfMacs: []macaddr.MAC{macaddr.MustParse("08:BD:43:75:50:CF")}},
+		"gw": {cfg: RouterConfig{ID: "gw", IsGateway: true}, fdb: map[macaddr.MAC]string{
+			macaddr.MustParse("08:BD:43:75:50:CF"): "br-lan",
+			macaddr.MustParse("AA:BB:CC:00:00:09"): "br-lan",
 		}},
 	}
 	devs := l.buildDevices(polled, "")
-	if len(devs) != 1 || devs[0].MAC != macaddr.MustParse("AA:BB:CC:00:00:09") {
+	if len(devs) != 1 || devs[0].MAC.String() != "AA:BB:CC:00:00:09" {
 		t.Fatalf("devices: %+v, want solo el cliente real", devs)
 	}
 }

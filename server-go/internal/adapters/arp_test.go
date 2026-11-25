@@ -75,7 +75,7 @@ func TestBuildDevicesArpRouterExcluded(t *testing.T) {
 	polled := map[string]*routerPolled{
 		"patio": {
 			cfg:   RouterConfig{ID: "patio", Name: "Patio", Host: "192.168.1.2"},
-			brMac: "AA:BB:CC:DD:EE:FF",
+			brMac: macaddr.MustParse("AA:BB:CC:DD:EE:FF"),
 			arp: map[macaddr.MAC]string{
 				macaddr.MustParse("AA:BB:CC:DD:EE:FF"): "192.168.1.60",
 			},

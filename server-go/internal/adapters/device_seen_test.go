@@ -191,7 +191,7 @@ func TestFilterTombstonedFinalList(t *testing.T) {
 func TestPurgeFleetSeenIncludesRadioBSSIDs(t *testing.T) {
 	d := openLiveTestDB(t)
 	l := &Live{db: d, lastPolled: map[string]*routerPolled{
-		"ap1": {brMac: "aa:aa:aa:aa:aa:01", radios: []Radio{
+		"ap1": {brMac: macaddr.MustParse("aa:aa:aa:aa:aa:01"), radios: []Radio{
 			{Name: "2.4 GHz", BSSID: macaddr.MustParse("aa:aa:aa:aa:aa:02")},
 			{Name: "5 GHz", BSSID: macaddr.MustParse("AA-AA-AA-AA-AA-03")}, // guiones: normaliza
 			{Name: "5 GHz"}, // sin BSSID: no-op
@@ -224,7 +224,7 @@ func TestPurgeFleetSeenIncludesRadioBSSIDs(t *testing.T) {
 func TestFilterTombstonedAlsoFiltersFleetMACs(t *testing.T) {
 	d := openLiveTestDB(t)
 	l := &Live{db: d, lastPolled: map[string]*routerPolled{
-		"ap1": {brMac: "aa:aa:aa:aa:aa:01", radios: []Radio{{Name: "2.4 GHz", BSSID: macaddr.MustParse("aa:aa:aa:aa:aa:02")}}},
+		"ap1": {brMac: macaddr.MustParse("aa:aa:aa:aa:aa:01"), radios: []Radio{{Name: "2.4 GHz", BSSID: macaddr.MustParse("aa:aa:aa:aa:aa:02")}}},
 	}}
 	devs := []Device{
 		{MAC: macaddr.MustParse("AA:AA:AA:AA:AA:01")}, // bridge

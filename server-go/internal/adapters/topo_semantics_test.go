@@ -360,9 +360,9 @@ func TestTopoSemanticsDeviceEvidenceManda(t *testing.T) {
 // #1051: fleetFdbEvidence deriva el padre del FDB crudo de cada poller.
 func TestFleetFdbEvidence(t *testing.T) {
 	polled := map[string]*routerPolled{
-		"gw":  {brMac: "aa:bb:cc:00:00:01", fdb: map[string]string{"AA:BB:CC:00:00:02": "1"}},
-		"sw1": {brMac: "AA:BB:CC:00:00:02", fdb: map[string]string{"AA:BB:CC:00:00:03": "5"}},
-		"ap1": {brMac: "AA:BB:CC:00:00:03", fdb: map[string]string{}},
+		"gw":  {brMac: macaddr.MustParse("aa:bb:cc:00:00:01"), fdb: map[macaddr.MAC]string{macaddr.MustParse("AA:BB:CC:00:00:02"): "1"}},
+		"sw1": {brMac: macaddr.MustParse("AA:BB:CC:00:00:02"), fdb: map[macaddr.MAC]string{macaddr.MustParse("AA:BB:CC:00:00:03"): "5"}},
+		"ap1": {brMac: macaddr.MustParse("AA:BB:CC:00:00:03"), fdb: map[macaddr.MAC]string{}},
 	}
 	ev := fleetFdbEvidence(polled, "gw", nil, nil)
 	if got := ev["sw1"]; got.parent != "gw" || got.port != "1" {
@@ -384,29 +384,29 @@ func TestFleetFdbEvidence(t *testing.T) {
 // hacia core), no aguas abajo. El root derivado de la MAC del padre electo sí
 // lo detecta y descarta el candidato.
 func TestFleetFdbEvidenceGatewayMacInvisibleRootByParent(t *testing.T) {
-	const (
-		macGW   = "AA:BB:CC:00:00:01"
-		macCore = "AA:BB:CC:00:00:02"
-		macMid  = "AA:BB:CC:00:00:03"
-		macEdge = "AA:BB:CC:00:00:04"
-		macNAS  = "AA:BB:CC:00:00:05"
+	var (
+		macGW   = macaddr.MustParse("AA:BB:CC:00:00:01")
+		macCore = macaddr.MustParse("AA:BB:CC:00:00:02")
+		macMid  = macaddr.MustParse("AA:BB:CC:00:00:03")
+		macEdge = macaddr.MustParse("AA:BB:CC:00:00:04")
+		macNAS  = macaddr.MustParse("AA:BB:CC:00:00:05")
 	)
 	polled := map[string]*routerPolled{
-		"gw": {brMac: macGW, fdb: map[string]string{
+		"gw": {brMac: macGW, fdb: map[macaddr.MAC]string{
 			macCore: "lan1", macMid: "lan1", macEdge: "lan1", macNAS: "lan1",
 		}},
-		"core": {brMac: macCore, fdb: map[string]string{
+		"core": {brMac: macCore, fdb: map[macaddr.MAC]string{
 			macMid: "xg2", macEdge: "xg2", macNAS: "xg4", // sin macGW: invisible
 		}},
-		"mid": {brMac: macMid, fdb: map[string]string{
+		"mid": {brMac: macMid, fdb: map[macaddr.MAC]string{
 			macCore: "sfp1", macEdge: "sfp2", macNAS: "sfp1", // NAS por su uplink
 		}},
-		"edge": {brMac: macEdge, fdb: map[string]string{
+		"edge": {brMac: macEdge, fdb: map[macaddr.MAC]string{
 			// Su uplink Te7 ve TODO el núcleo (tránsito plano), incluido el
 			// propio core: eso es lo que hace derivable el root.
 			macCore: "Te7", macMid: "Te7", macNAS: "Te7",
 		}},
-		"nas": {brMac: macNAS, fdb: map[string]string{macCore: "wan"}},
+		"nas": {brMac: macNAS, fdb: map[macaddr.MAC]string{macCore: "wan"}},
 	}
 	ev := fleetFdbEvidence(polled, "gw", nil, nil)
 	if got := ev["mid"]; got.parent != "core" || got.port != "xg2" || got.childPort != "sfp1" {
@@ -427,12 +427,12 @@ func TestFleetFdbEvidenceGatewayMacInvisibleRootByParent(t *testing.T) {
 // el artefacto de estrella plana) y el cable lleva ambos puertos.
 func TestFleetFdbEvidenceBothPorts(t *testing.T) {
 	polled := map[string]*routerPolled{
-		"gw": {brMac: "AA:BB:CC:00:00:01", fdb: map[string]string{"AA:BB:CC:00:00:02": "1"}},
-		"sw": {brMac: "AA:BB:CC:00:00:02", fdb: map[string]string{
-			"AA:BB:CC:00:00:01": "7", // uplink hacia el gw
-			"AA:BB:CC:00:00:03": "3", // rt colgado del puerto 3
+		"gw": {brMac: macaddr.MustParse("AA:BB:CC:00:00:01"), fdb: map[macaddr.MAC]string{macaddr.MustParse("AA:BB:CC:00:00:02"): "1"}},
+		"sw": {brMac: macaddr.MustParse("AA:BB:CC:00:00:02"), fdb: map[macaddr.MAC]string{
+			macaddr.MustParse("AA:BB:CC:00:00:01"): "7", // uplink hacia el gw
+			macaddr.MustParse("AA:BB:CC:00:00:03"): "3", // rt colgado del puerto 3
 		}},
-		"rt": {brMac: "AA:BB:CC:00:00:03", fdb: map[string]string{"AA:BB:CC:00:00:02": "1"}},
+		"rt": {brMac: macaddr.MustParse("AA:BB:CC:00:00:03"), fdb: map[macaddr.MAC]string{macaddr.MustParse("AA:BB:CC:00:00:02"): "1"}},
 	}
 	ev := fleetFdbEvidence(polled, "gw", nil, nil)
 	sw := ev["sw"]
@@ -453,34 +453,34 @@ func TestFleetFdbEvidenceBothPorts(t *testing.T) {
 // gateway). Un candidato aprendido fuera del root port no puede ser padre.
 func TestFleetFdbEvidenceRootPortDescartaDownstream(t *testing.T) {
 	polled := map[string]*routerPolled{
-		"gateway": {brMac: "94:83:C4:BA:BF:AA", fdb: map[string]string{
-			"8C:DE:F9:33:71:58": "lan4", // rt2
-			"9C:9D:7E:1B:EA:B2": "lan1", // rt3
-			"9C:9D:7E:54:EF:B8": "lan1", // rt4
-			"78:D8:00:32:31:49": "lan1", // switch16
+		"gateway": {brMac: macaddr.MustParse("94:83:C4:BA:BF:AA"), fdb: map[macaddr.MAC]string{
+			macaddr.MustParse("8C:DE:F9:33:71:58"): "lan4", // rt2
+			macaddr.MustParse("9C:9D:7E:1B:EA:B2"): "lan1", // rt3
+			macaddr.MustParse("9C:9D:7E:54:EF:B8"): "lan1", // rt4
+			macaddr.MustParse("78:D8:00:32:31:49"): "lan1", // switch16
 		}},
-		"redmi-ax6": {brMac: "8C:DE:F9:33:71:58", fdb: map[string]string{
-			"94:83:C4:BA:BF:AA": "wan",
-			"9C:9D:7E:1B:EA:B2": "wan",
-			"9C:9D:7E:54:EF:B8": "wan",
+		"redmi-ax6": {brMac: macaddr.MustParse("8C:DE:F9:33:71:58"), fdb: map[macaddr.MAC]string{
+			macaddr.MustParse("94:83:C4:BA:BF:AA"): "wan",
+			macaddr.MustParse("9C:9D:7E:1B:EA:B2"): "wan",
+			macaddr.MustParse("9C:9D:7E:54:EF:B8"): "wan",
 		}},
-		"redmi-ax6-2": {brMac: "9C:9D:7E:1B:EA:B2", fdb: map[string]string{
-			"94:83:C4:BA:BF:AA": "lan1",
-			"8C:DE:F9:33:71:58": "lan1",
-			"9C:9D:7E:54:EF:B8": "lan1",
-			"78:D8:00:32:31:49": "lan1",
+		"redmi-ax6-2": {brMac: macaddr.MustParse("9C:9D:7E:1B:EA:B2"), fdb: map[macaddr.MAC]string{
+			macaddr.MustParse("94:83:C4:BA:BF:AA"): "lan1",
+			macaddr.MustParse("8C:DE:F9:33:71:58"): "lan1",
+			macaddr.MustParse("9C:9D:7E:54:EF:B8"): "lan1",
+			macaddr.MustParse("78:D8:00:32:31:49"): "lan1",
 		}},
-		"redmi-ax6-3": {brMac: "9C:9D:7E:54:EF:B8", fdb: map[string]string{
-			"94:83:C4:BA:BF:AA": "lan1",
-			"8C:DE:F9:33:71:58": "lan1",
-			"9C:9D:7E:1B:EA:B2": "lan1",
-			"78:D8:00:32:31:49": "lan1",
+		"redmi-ax6-3": {brMac: macaddr.MustParse("9C:9D:7E:54:EF:B8"), fdb: map[macaddr.MAC]string{
+			macaddr.MustParse("94:83:C4:BA:BF:AA"): "lan1",
+			macaddr.MustParse("8C:DE:F9:33:71:58"): "lan1",
+			macaddr.MustParse("9C:9D:7E:1B:EA:B2"): "lan1",
+			macaddr.MustParse("78:D8:00:32:31:49"): "lan1",
 		}},
-		"switch16": {brMac: "78:D8:00:32:31:49", fdb: map[string]string{
-			"94:83:C4:BA:BF:AA": "lan7", // gateway: root port real
-			"8C:DE:F9:33:71:58": "lan7", // rt2 también cuelga del gateway
-			"9C:9D:7E:1B:EA:B2": "lan3", // rt3: puerto de cobre 3
-			"9C:9D:7E:54:EF:B8": "lan6", // rt4: puerto de cobre 6
+		"switch16": {brMac: macaddr.MustParse("78:D8:00:32:31:49"), fdb: map[macaddr.MAC]string{
+			macaddr.MustParse("94:83:C4:BA:BF:AA"): "lan7", // gateway: root port real
+			macaddr.MustParse("8C:DE:F9:33:71:58"): "lan7", // rt2 también cuelga del gateway
+			macaddr.MustParse("9C:9D:7E:1B:EA:B2"): "lan3", // rt3: puerto de cobre 3
+			macaddr.MustParse("9C:9D:7E:54:EF:B8"): "lan6", // rt4: puerto de cobre 6
 		}},
 	}
 	ev := fleetFdbEvidence(polled, "gateway", nil, nil)
@@ -509,31 +509,31 @@ func TestFleetFdbEvidenceRootPortDescartaDownstream(t *testing.T) {
 // cambiar la resolución: cada padre aprende a su hijo en puerto de bajada.
 func TestFleetFdbEvidenceArbolContribuidor(t *testing.T) {
 	polled := map[string]*routerPolled{
-		"gw": {brMac: "AA:00:00:00:00:01", fdb: map[string]string{
-			"AA:00:00:00:00:02": "lan1", // sw1
-			"AA:00:00:00:00:03": "lan1", // ap1
-			"AA:00:00:00:00:04": "lan1", // sw2
-			"AA:00:00:00:00:05": "lan1", // ap2 (estrella plana)
+		"gw": {brMac: macaddr.MustParse("AA:00:00:00:00:01"), fdb: map[macaddr.MAC]string{
+			macaddr.MustParse("AA:00:00:00:00:02"): "lan1", // sw1
+			macaddr.MustParse("AA:00:00:00:00:03"): "lan1", // ap1
+			macaddr.MustParse("AA:00:00:00:00:04"): "lan1", // sw2
+			macaddr.MustParse("AA:00:00:00:00:05"): "lan1", // ap2 (estrella plana)
 		}},
-		"sw1": {brMac: "AA:00:00:00:00:02", fdb: map[string]string{
-			"AA:00:00:00:00:01": "1", // root port hacia el gw
-			"AA:00:00:00:00:03": "3", // ap1
-			"AA:00:00:00:00:04": "4", // sw2
-			"AA:00:00:00:00:05": "4", // ap2 (tránsito FDB)
+		"sw1": {brMac: macaddr.MustParse("AA:00:00:00:00:02"), fdb: map[macaddr.MAC]string{
+			macaddr.MustParse("AA:00:00:00:00:01"): "1", // root port hacia el gw
+			macaddr.MustParse("AA:00:00:00:00:03"): "3", // ap1
+			macaddr.MustParse("AA:00:00:00:00:04"): "4", // sw2
+			macaddr.MustParse("AA:00:00:00:00:05"): "4", // ap2 (tránsito FDB)
 		}},
-		"ap1": {brMac: "AA:00:00:00:00:03", fdb: map[string]string{
-			"AA:00:00:00:00:01": "1",
-			"AA:00:00:00:00:02": "1", // sw1 por su uplink
+		"ap1": {brMac: macaddr.MustParse("AA:00:00:00:00:03"), fdb: map[macaddr.MAC]string{
+			macaddr.MustParse("AA:00:00:00:00:01"): "1",
+			macaddr.MustParse("AA:00:00:00:00:02"): "1", // sw1 por su uplink
 		}},
-		"sw2": {brMac: "AA:00:00:00:00:04", fdb: map[string]string{
-			"AA:00:00:00:00:01": "8", // root port hacia sw1
-			"AA:00:00:00:00:02": "8", // sw1 por su uplink
-			"AA:00:00:00:00:05": "7", // ap2
+		"sw2": {brMac: macaddr.MustParse("AA:00:00:00:00:04"), fdb: map[macaddr.MAC]string{
+			macaddr.MustParse("AA:00:00:00:00:01"): "8", // root port hacia sw1
+			macaddr.MustParse("AA:00:00:00:00:02"): "8", // sw1 por su uplink
+			macaddr.MustParse("AA:00:00:00:00:05"): "7", // ap2
 		}},
-		"ap2": {brMac: "AA:00:00:00:00:05", fdb: map[string]string{
-			"AA:00:00:00:00:01": "1",
-			"AA:00:00:00:00:02": "1",
-			"AA:00:00:00:00:04": "1", // sw2 por su uplink
+		"ap2": {brMac: macaddr.MustParse("AA:00:00:00:00:05"), fdb: map[macaddr.MAC]string{
+			macaddr.MustParse("AA:00:00:00:00:01"): "1",
+			macaddr.MustParse("AA:00:00:00:00:02"): "1",
+			macaddr.MustParse("AA:00:00:00:00:04"): "1", // sw2 por su uplink
 		}},
 	}
 	ev := fleetFdbEvidence(polled, "gw", nil, nil)
@@ -558,21 +558,21 @@ func TestFleetFdbEvidenceArbolContribuidor(t *testing.T) {
 // un override manual.
 func TestFleetFdbEvidenceRegisteredMac(t *testing.T) {
 	polled := map[string]*routerPolled{
-		"gw": {brMac: "AA:BB:CC:00:00:01", fdb: map[string]string{
-			"AA:BB:CC:00:00:02": "br-lan", // switch por uplink
-			"A0:36:9F:7E:38:BC": "br-lan", // NAS en tránsito (estrella plana)
+		"gw": {brMac: macaddr.MustParse("AA:BB:CC:00:00:01"), fdb: map[macaddr.MAC]string{
+			macaddr.MustParse("AA:BB:CC:00:00:02"): "br-lan", // switch por uplink
+			macaddr.MustParse("A0:36:9F:7E:38:BC"): "br-lan", // NAS en tránsito (estrella plana)
 		}},
-		"sw1": {brMac: "AA:BB:CC:00:00:02", fdb: map[string]string{
-			"AA:BB:CC:00:00:01": "1",   // root port hacia gw
-			"A0:36:9F:7E:38:BC": "xg4", // NIC del NAS, boca local
+		"sw1": {brMac: macaddr.MustParse("AA:BB:CC:00:00:02"), fdb: map[macaddr.MAC]string{
+			macaddr.MustParse("AA:BB:CC:00:00:01"): "1",   // root port hacia gw
+			macaddr.MustParse("A0:36:9F:7E:38:BC"): "xg4", // NIC del NAS, boca local
 		}},
 		// NAS: su bridge es docker0 (MAC que nadie aprende en la LAN).
-		"nas": {brMac: "02:42:AC:11:00:03", fdb: map[string]string{}},
+		"nas": {brMac: macaddr.MustParse("02:42:AC:11:00:03"), fdb: map[macaddr.MAC]string{}},
 	}
-	registered := map[string]string{
-		"gw":  "AA:BB:CC:00:00:01",
-		"sw1": "AA:BB:CC:00:00:02",
-		"nas": "A0:36:9F:7E:38:BC",
+	registered := map[string]macaddr.MAC{
+		"gw":  macaddr.MustParse("AA:BB:CC:00:00:01"),
+		"sw1": macaddr.MustParse("AA:BB:CC:00:00:02"),
+		"nas": macaddr.MustParse("A0:36:9F:7E:38:BC"),
 	}
 	ev := fleetFdbEvidence(polled, "gw", registered, nil)
 	got := ev["nas"]
@@ -588,16 +588,20 @@ func TestFleetFdbEvidenceRegisteredMac(t *testing.T) {
 	// (su uplink se sabe por LLDP, no por FDB) no tiene profundidad propia;
 	// sin semilla el NAS caería al padre provisional del gateway.
 	polled2 := map[string]*routerPolled{
-		"gw": {brMac: "AA:BB:CC:00:00:01", fdb: map[string]string{
-			"A0:36:9F:7E:38:BC": "eth1", // NAS en tránsito por el uplink
+		"gw": {brMac: macaddr.MustParse("AA:BB:CC:00:00:01"), fdb: map[macaddr.MAC]string{
+			macaddr.MustParse("A0:36:9F:7E:38:BC"): "eth1", // NAS en tránsito por el uplink
 		}},
-		"core": {brMac: "AA:BB:CC:00:00:07", fdb: map[string]string{
-			"AA:BB:CC:00:00:01": "xg7", // root port hacia gw
-			"A0:36:9F:7E:38:BC": "xg4", // NIC del NAS
+		"core": {brMac: macaddr.MustParse("AA:BB:CC:00:00:07"), fdb: map[macaddr.MAC]string{
+			macaddr.MustParse("AA:BB:CC:00:00:01"): "xg7", // root port hacia gw
+			macaddr.MustParse("A0:36:9F:7E:38:BC"): "xg4", // NIC del NAS
 		}},
-		"nas": {brMac: "02:42:AC:11:00:03", fdb: map[string]string{}},
+		"nas": {brMac: macaddr.MustParse("02:42:AC:11:00:03"), fdb: map[macaddr.MAC]string{}},
 	}
-	registered2 := map[string]string{"nas": "A0:36:9F:7E:38:BC", "core": "AA:BB:CC:00:00:07", "gw": "AA:BB:CC:00:00:01"}
+	registered2 := map[string]macaddr.MAC{
+		"nas":  macaddr.MustParse("A0:36:9F:7E:38:BC"),
+		"core": macaddr.MustParse("AA:BB:CC:00:00:07"),
+		"gw":   macaddr.MustParse("AA:BB:CC:00:00:01"),
+	}
 	// Sin semilla: el core no tiene candidato padre y su profundidad nunca
 	// se conoce → el NAS se queda con el padre provisional (estrella plana).
 	if got := fleetFdbEvidence(polled2, "gw", registered2, nil)["nas"]; got.parent != "gw" {
@@ -648,21 +652,21 @@ func TestTopoSemanticsUplinkViaDistNode(t *testing.T) {
 // LLDP, pero su root port es el 8 (hacia sw1), no el 7.
 func TestFleetLldpEvidenceRootPort(t *testing.T) {
 	polled := map[string]*routerPolled{
-		"gw": {brMac: "AA:BB:CC:00:00:01", cfg: RouterConfig{ID: "gw", Name: "gateway"}},
-		"sw1": {brMac: "AA:BB:CC:00:00:02", cfg: RouterConfig{ID: "sw1", Name: "sw1", Type: "managed-switch"},
-			fdb: map[string]string{"AA:BB:CC:00:00:01": "two-gigabitEthernet 1/0/20"},
+		"gw": {brMac: macaddr.MustParse("AA:BB:CC:00:00:01"), cfg: RouterConfig{ID: "gw", Name: "gateway"}},
+		"sw1": {brMac: macaddr.MustParse("AA:BB:CC:00:00:02"), cfg: RouterConfig{ID: "sw1", Name: "sw1", Type: "managed-switch"},
+			fdb: map[macaddr.MAC]string{macaddr.MustParse("AA:BB:CC:00:00:01"): "two-gigabitEthernet 1/0/20"},
 			lldp: []LldpNeighbor{
 				{Port: "two-gigabitEthernet 1/0/20", Chassis: "gateway"},
 				{Port: "two-gigabitEthernet 1/0/21", Chassis: "ap1"},
 				{Port: "two-gigabitEthernet 1/0/22", Chassis: "sw2"},
 			}},
-		"sw2": {brMac: "AA:BB:CC:00:00:04", cfg: RouterConfig{ID: "sw2", Name: "sw2", Type: "managed-switch"},
-			fdb: map[string]string{"AA:BB:CC:00:00:01": "ten-gigabitEthernet 1/0/8"},
+		"sw2": {brMac: macaddr.MustParse("AA:BB:CC:00:00:04"), cfg: RouterConfig{ID: "sw2", Name: "sw2", Type: "managed-switch"},
+			fdb: map[macaddr.MAC]string{macaddr.MustParse("AA:BB:CC:00:00:01"): "ten-gigabitEthernet 1/0/8"},
 			lldp: []LldpNeighbor{
 				{Port: "two-gigabitEthernet 1/0/7", Chassis: "ap2"},
 				{Port: "ten-gigabitEthernet 1/0/8", Chassis: "sw1"},
 			}},
-		"ap2": {brMac: "AA:BB:CC:00:00:05", cfg: RouterConfig{ID: "ap2", Name: "ap2"},
+		"ap2": {brMac: macaddr.MustParse("AA:BB:CC:00:00:05"), cfg: RouterConfig{ID: "ap2", Name: "ap2"},
 			lldp: []LldpNeighbor{{Port: "eth0", Chassis: "sw2", PortDesc: "two-gigabitEthernet 1/0/7"}}},
 	}
 	ev := fleetLldpEvidence(polled, "gw")
@@ -698,14 +702,14 @@ func TestFleetLldpEvidenceRootPort(t *testing.T) {
 // gestionado (hacia el núcleo) sobre un router regular.
 func TestFleetLldpEvidenceAmbiguoPrefiereSwitch(t *testing.T) {
 	polled := map[string]*routerPolled{
-		"gw": {brMac: "AA:BB:CC:00:00:01", cfg: RouterConfig{ID: "gw", Name: "gateway"}},
-		"sw": {brMac: "AA:BB:CC:00:00:02", cfg: RouterConfig{ID: "sw", Name: "sw", Type: "managed-switch"},
+		"gw": {brMac: macaddr.MustParse("AA:BB:CC:00:00:01"), cfg: RouterConfig{ID: "gw", Name: "gateway"}},
+		"sw": {brMac: macaddr.MustParse("AA:BB:CC:00:00:02"), cfg: RouterConfig{ID: "sw", Name: "sw", Type: "managed-switch"},
 			lldp: []LldpNeighbor{
 				{Port: "p1", Chassis: "rta"},
 				{Port: "p2", Chassis: "swb"},
 			}},
-		"rta": {brMac: "AA:BB:CC:00:00:03", cfg: RouterConfig{ID: "rta", Name: "rta"}},
-		"swb": {brMac: "AA:BB:CC:00:00:04", cfg: RouterConfig{ID: "swb", Name: "swb", Type: "managed-switch"}},
+		"rta": {brMac: macaddr.MustParse("AA:BB:CC:00:00:03"), cfg: RouterConfig{ID: "rta", Name: "rta"}},
+		"swb": {brMac: macaddr.MustParse("AA:BB:CC:00:00:04"), cfg: RouterConfig{ID: "swb", Name: "swb", Type: "managed-switch"}},
 	}
 	ev := fleetLldpEvidence(polled, "gw")
 	if got := ev["sw"]; got.parent != "swb" {
@@ -722,22 +726,22 @@ func TestFleetLldpEvidenceAmbiguoPrefiereSwitch(t *testing.T) {
 // para etiquetas (displayName), solo se excluye de la evidencia.
 func TestFleetLldpEvidenceIgnoresLocDescIdentity(t *testing.T) {
 	polled := map[string]*routerPolled{
-		"gw": {brMac: "AA:BB:CC:00:00:01", cfg: RouterConfig{ID: "gw", Name: "gateway"}},
+		"gw": {brMac: macaddr.MustParse("AA:BB:CC:00:00:01"), cfg: RouterConfig{ID: "gw", Name: "gateway"}},
 		// sw1 estilo Omada: los tres vecinos son anotaciones locPortDesc
 		// (rem table sin identidad). Sin FDB de la MAC del gateway.
-		"sw1": {brMac: "AA:BB:CC:00:00:02", cfg: RouterConfig{ID: "sw1", Name: "sw1", Type: "managed-switch"},
+		"sw1": {brMac: macaddr.MustParse("AA:BB:CC:00:00:02"), cfg: RouterConfig{ID: "sw1", Name: "sw1", Type: "managed-switch"},
 			lldp: []LldpNeighbor{
 				{Port: "two-gigabitEthernet 1/0/20", Chassis: "gateway", ChassisFromLocDesc: true},
 				{Port: "two-gigabitEthernet 1/0/21", Chassis: "ap1", ChassisFromLocDesc: true},
 				{Port: "two-gigabitEthernet 1/0/22", Chassis: "sw2", ChassisFromLocDesc: true},
 			}},
-		"sw2": {brMac: "AA:BB:CC:00:00:04", cfg: RouterConfig{ID: "sw2", Name: "sw2", Type: "managed-switch"},
+		"sw2": {brMac: macaddr.MustParse("AA:BB:CC:00:00:04"), cfg: RouterConfig{ID: "sw2", Name: "sw2", Type: "managed-switch"},
 			lldp: []LldpNeighbor{
 				{Port: "two-gigabitEthernet 1/0/7", Chassis: "ap2", ChassisFromLocDesc: true},
 				{Port: "two-gigabitEthernet 1/0/8", Chassis: "sw1", ChassisFromLocDesc: true},
 			}},
-		"ap1": {brMac: "AA:BB:CC:00:00:03", cfg: RouterConfig{ID: "ap1", Name: "ap1"}},
-		"ap2": {brMac: "AA:BB:CC:00:00:05", cfg: RouterConfig{ID: "ap2", Name: "ap2"}},
+		"ap1": {brMac: macaddr.MustParse("AA:BB:CC:00:00:03"), cfg: RouterConfig{ID: "ap1", Name: "ap1"}},
+		"ap2": {brMac: macaddr.MustParse("AA:BB:CC:00:00:05"), cfg: RouterConfig{ID: "ap2", Name: "ap2"}},
 	}
 	ev := fleetLldpEvidence(polled, "gw")
 	if len(ev) != 0 {
@@ -745,12 +749,12 @@ func TestFleetLldpEvidenceIgnoresLocDescIdentity(t *testing.T) {
 	}
 	// Mezcla: un vecino con identidad remota real y otro sintetizado; el
 	// real es el único candidato y manda.
-	polled["sw1"] = &routerPolled{brMac: "AA:BB:CC:00:00:02", cfg: RouterConfig{ID: "sw1", Name: "sw1", Type: "managed-switch"},
+	polled["sw1"] = &routerPolled{brMac: macaddr.MustParse("AA:BB:CC:00:00:02"), cfg: RouterConfig{ID: "sw1", Name: "sw1", Type: "managed-switch"},
 		lldp: []LldpNeighbor{
 			{Port: "two-gigabitEthernet 1/0/21", Chassis: "ap1", ChassisFromLocDesc: true},
 			{Port: "ten-gigabitEthernet 1/0/25", Chassis: "rta", PortDesc: "lan2"},
 		}}
-	polled["rta"] = &routerPolled{brMac: "AA:BB:CC:00:00:06", cfg: RouterConfig{ID: "rta", Name: "rta"}}
+	polled["rta"] = &routerPolled{brMac: macaddr.MustParse("AA:BB:CC:00:00:06"), cfg: RouterConfig{ID: "rta", Name: "rta"}}
 	ev = fleetLldpEvidence(polled, "gw")
 	if got := ev["sw1"]; got.parent != "rta" || got.port != "lan2" {
 		t.Fatalf("sw1: %+v, want rta/lan2 (el candidato real; el de locDesc no cuenta)", got)
@@ -764,10 +768,10 @@ func TestFleetLldpEvidenceIgnoresLocDescIdentity(t *testing.T) {
 // degrada y decide la FDB: el gateway conserva hijos y no hay bucle.
 func TestFleetLldpEvidenceNoCycle(t *testing.T) {
 	polled := map[string]*routerPolled{
-		"gw": {brMac: "AA:BB:CC:00:00:01", cfg: RouterConfig{ID: "gw", Name: "gateway"}},
-		"ap1": {brMac: "AA:BB:CC:00:00:02", cfg: RouterConfig{ID: "ap1", Name: "ap1"},
+		"gw": {brMac: macaddr.MustParse("AA:BB:CC:00:00:01"), cfg: RouterConfig{ID: "gw", Name: "gateway"}},
+		"ap1": {brMac: macaddr.MustParse("AA:BB:CC:00:00:02"), cfg: RouterConfig{ID: "ap1", Name: "ap1"},
 			lldp: []LldpNeighbor{{Port: "eth1", Chassis: "ap2", PortDesc: "eth0"}}},
-		"ap2": {brMac: "AA:BB:CC:00:00:03", cfg: RouterConfig{ID: "ap2", Name: "ap2"},
+		"ap2": {brMac: macaddr.MustParse("AA:BB:CC:00:00:03"), cfg: RouterConfig{ID: "ap2", Name: "ap2"},
 			lldp: []LldpNeighbor{{Port: "eth0", Chassis: "ap1", PortDesc: "eth1"}}},
 	}
 	ev := fleetLldpEvidence(polled, "gw")

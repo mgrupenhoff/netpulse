@@ -55,7 +55,7 @@ func (l *Live) applySnmpSwitchPortTraffic(polled map[string]*routerPolled, devic
 		if p == nil || !p.cfg.SnmpEnabled || len(p.fdb) == 0 {
 			return portKey{}, false
 		}
-		port, ok := p.fdb[d.MAC.String()]
+		port, ok := p.fdb[d.MAC]
 		if !ok {
 			return portKey{}, false
 		}

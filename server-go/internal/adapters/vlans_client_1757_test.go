@@ -15,13 +15,13 @@ func TestBuildDevicesVlanDesdeFdb(t *testing.T) {
 	polled := map[string]*routerPolled{
 		"rutto": {
 			cfg: RouterConfig{ID: "rutto", Name: "RUTTO", Host: "192.168.1.3"},
-			fdb: map[string]string{
-				"AA:BB:CC:DD:EE:01": "eth0.999",
-				"AA:BB:CC:DD:EE:02": "eth0.777",
+			fdb: map[macaddr.MAC]string{
+				macaddr.MustParse("AA:BB:CC:DD:EE:01"): "eth0.999",
+				macaddr.MustParse("AA:BB:CC:DD:EE:02"): "eth0.777",
 			},
-			fdbVlans: map[string]int{
-				"AA:BB:CC:DD:EE:01": 999,
-				"AA:BB:CC:DD:EE:02": 777,
+			fdbVlans: map[macaddr.MAC]int{
+				macaddr.MustParse("AA:BB:CC:DD:EE:01"): 999,
+				macaddr.MustParse("AA:BB:CC:DD:EE:02"): 777,
 			},
 		},
 	}
@@ -51,7 +51,7 @@ func TestBuildDevicesSinVlanEnFdbNoInventa(t *testing.T) {
 	polled := map[string]*routerPolled{
 		"rutto": {
 			cfg: RouterConfig{ID: "rutto", Name: "RUTTO"},
-			fdb: map[string]string{"AA:BB:CC:DD:EE:03": "lan1"},
+			fdb: map[macaddr.MAC]string{macaddr.MustParse("AA:BB:CC:DD:EE:03"): "lan1"},
 		},
 	}
 	devs := l.buildDevices(polled, "")
@@ -73,12 +73,12 @@ func TestBuildDevicesVlanNoCruzaRouters(t *testing.T) {
 	polled := map[string]*routerPolled{
 		"rutto": {
 			cfg: RouterConfig{ID: "rutto", Name: "RUTTO"},
-			fdb: map[string]string{"AA:BB:CC:DD:EE:04": "eth0"},
+			fdb: map[macaddr.MAC]string{macaddr.MustParse("AA:BB:CC:DD:EE:04"): "eth0"},
 			arp: map[macaddr.MAC]string{macaddr.MustParse("AA:BB:CC:DD:EE:04"): "192.168.1.40"},
 		},
 		"ap": {
 			cfg:      RouterConfig{ID: "ap", Name: "AP"},
-			fdbVlans: map[string]int{"AA:BB:CC:DD:EE:04": 888},
+			fdbVlans: map[macaddr.MAC]int{macaddr.MustParse("AA:BB:CC:DD:EE:04"): 888},
 		},
 	}
 	devs := l.buildDevices(polled, "")

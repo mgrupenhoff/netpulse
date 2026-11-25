@@ -21,12 +21,15 @@ import (
 func TestUpdateFdbMemoGatewayUplinkWithoutApBrMac(t *testing.T) {
 	l := NewLive(nil, nil, []RouterConfig{{ID: "gateway", Name: "GW", IsGateway: true}}, nil)
 	now := int64(1_700_000_000_000)
+	gwMAC := macaddr.MustParse("60:60:60:60:60:60")
+	apMAC := macaddr.MustParse("AA:AA:AA:AA:AA:AA")
+	cliMAC := macaddr.MustParse("44:44:44:44:44:44")
 	// Tick 1: el gateway aprende la brMac del AP en lan4 → clasifica lan4 como uplink.
 	polled1 := map[string]*routerPolled{
-		"gateway": {cfg: RouterConfig{ID: "gateway", IsGateway: true}, brMac: "GG:GG:GG:GG:GG:GG",
-			fdb: map[string]string{"GG:GG:GG:GG:GG:GG": "lan1", "AA:AA:AA:AA:AA:AA": "lan4"}},
-		"ap": {cfg: RouterConfig{ID: "ap", Name: "Luizjana2"}, brMac: "AA:AA:AA:AA:AA:AA",
-			fdb: map[string]string{"AA:AA:AA:AA:AA:AA": "lan1", "44:44:44:44:44:44": "lan3"}},
+		"gateway": {cfg: RouterConfig{ID: "gateway", IsGateway: true}, brMac: gwMAC,
+			fdb: map[macaddr.MAC]string{gwMAC: "lan1", apMAC: "lan4"}},
+		"ap": {cfg: RouterConfig{ID: "ap", Name: "Luizjana2"}, brMac: apMAC,
+			fdb: map[macaddr.MAC]string{apMAC: "lan1", cliMAC: "lan3"}},
 	}
 	l.updateFdbMemo(polled1, now)
 
@@ -34,14 +37,14 @@ func TestUpdateFdbMemoGatewayUplinkWithoutApBrMac(t *testing.T) {
 	// sí aparece en lan4 (uplink). La clasificación persistente debe impedir que
 	// el gateway grabe lan4 como boca local y pise la observación del AP.
 	polled2 := map[string]*routerPolled{
-		"gateway": {cfg: RouterConfig{ID: "gateway", IsGateway: true}, brMac: "GG:GG:GG:GG:GG:GG",
-			fdb: map[string]string{"GG:GG:GG:GG:GG:GG": "lan1", "44:44:44:44:44:44": "lan4"}},
-		"ap": {cfg: RouterConfig{ID: "ap", Name: "Luizjana2"}, brMac: "AA:AA:AA:AA:AA:AA",
-			fdb: map[string]string{"AA:AA:AA:AA:AA:AA": "lan1", "44:44:44:44:44:44": "lan3"}},
+		"gateway": {cfg: RouterConfig{ID: "gateway", IsGateway: true}, brMac: gwMAC,
+			fdb: map[macaddr.MAC]string{gwMAC: "lan1", cliMAC: "lan4"}},
+		"ap": {cfg: RouterConfig{ID: "ap", Name: "Luizjana2"}, brMac: apMAC,
+			fdb: map[macaddr.MAC]string{apMAC: "lan1", cliMAC: "lan3"}},
 	}
 	memo := l.updateFdbMemo(polled2, now)
-	if m, ok := memo["44:44:44:44:44:44"]; !ok || m.routerID != "ap" || m.port != "lan3" {
-		t.Fatalf("la memo debe quedar en el AP (lan3), got %+v", memo["44:44:44:44:44:44"])
+	if m, ok := memo[cliMAC]; !ok || m.routerID != "ap" || m.port != "lan3" {
+		t.Fatalf("la memo debe quedar en el AP (lan3), got %+v", memo[cliMAC])
 	}
 	devs := l.buildDevices(polled2, "")
 	if d := mustDevice(t, devs, "44:44:44:44:44:44"); d.RouterID != "ap" {
@@ -54,11 +57,13 @@ func TestUpdateFdbMemoGatewayUplinkWithoutApBrMac(t *testing.T) {
 func TestBuildDevicesKeepsApWhenApPollFails(t *testing.T) {
 	l := NewLive(nil, nil, []RouterConfig{{ID: "gateway", Name: "GW", IsGateway: true}}, nil)
 	now := time.Now().UnixMilli()
-	l.fdbMemo["44:44:44:44:44:44"] = fdbPortMemo{routerID: "ap", port: "lan3", ts: now}
+	gwMAC := macaddr.MustParse("60:60:60:60:60:60")
+	cliMAC := macaddr.MustParse("44:44:44:44:44:44")
+	l.fdbMemo[cliMAC] = fdbPortMemo{routerID: "ap", port: "lan3", ts: now}
 	polled := map[string]*routerPolled{
-		"gateway": {cfg: RouterConfig{ID: "gateway", IsGateway: true}, brMac: "GG:GG:GG:GG:GG:GG",
-			fdb: map[string]string{"GG:GG:GG:GG:GG:GG": "lan1"},
-			arp: map[macaddr.MAC]string{macaddr.MustParse("44:44:44:44:44:44"): "192.168.13.123"}},
+		"gateway": {cfg: RouterConfig{ID: "gateway", IsGateway: true}, brMac: gwMAC,
+			fdb: map[macaddr.MAC]string{gwMAC: "lan1"},
+			arp: map[macaddr.MAC]string{cliMAC: "192.168.13.123"}},
 	}
 	devs := l.buildDevices(polled, "")
 	if d := mustDevice(t, devs, "44:44:44:44:44:44"); d.RouterID != "ap" {
@@ -72,17 +77,19 @@ func TestBuildDevicesKeepsApWhenApPollFails(t *testing.T) {
 func TestUpdateFdbMemoRefreshesOnlineDevice(t *testing.T) {
 	l := NewLive(nil, nil, []RouterConfig{{ID: "gateway", Name: "GW", IsGateway: true}}, nil)
 	now := int64(1_700_000_000_000)
-	l.fdbMemo["44:44:44:44:44:44"] = fdbPortMemo{
+	gwMAC := macaddr.MustParse("60:60:60:60:60:60")
+	cliMAC := macaddr.MustParse("44:44:44:44:44:44")
+	l.fdbMemo[cliMAC] = fdbPortMemo{
 		routerID: "ap", port: "lan3",
 		ts: now - fdbStickyTTL.Milliseconds() - 5_000,
 	}
 	polled := map[string]*routerPolled{
-		"gateway": {cfg: RouterConfig{ID: "gateway", IsGateway: true}, brMac: "GG:GG:GG:GG:GG:GG",
-			fdb: map[string]string{"GG:GG:GG:GG:GG:GG": "lan1"},
-			arp: map[macaddr.MAC]string{macaddr.MustParse("44:44:44:44:44:44"): "192.168.13.123"}},
+		"gateway": {cfg: RouterConfig{ID: "gateway", IsGateway: true}, brMac: gwMAC,
+			fdb: map[macaddr.MAC]string{gwMAC: "lan1"},
+			arp: map[macaddr.MAC]string{cliMAC: "192.168.13.123"}},
 	}
 	memo := l.updateFdbMemo(polled, now)
-	m, ok := memo["44:44:44:44:44:44"]
+	m, ok := memo[cliMAC]
 	if !ok {
 		t.Fatalf("la memo del device online no debería podarse: %+v", memo)
 	}
@@ -100,18 +107,21 @@ func TestUpdateFdbMemoRefreshesOnlineDevice(t *testing.T) {
 func TestUpdateFdbMemoDeterministicWinner(t *testing.T) {
 	l := NewLive(nil, nil, []RouterConfig{{ID: "gateway", Name: "GW", IsGateway: true}}, nil)
 	now := int64(1_700_000_000_000)
+	gwMAC := macaddr.MustParse("60:60:60:60:60:60")
+	apMAC := macaddr.MustParse("AA:AA:AA:AA:AA:AA")
+	cliMAC := macaddr.MustParse("44:44:44:44:44:44")
 	// Clasificación persistente: lan4 del gateway es el uplink hacia el AP.
 	l.uplinkPorts["gateway"] = map[string]bool{"lan4": true}
 	polled := map[string]*routerPolled{
-		"gateway": {cfg: RouterConfig{ID: "gateway", IsGateway: true}, brMac: "GG:GG:GG:GG:GG:GG",
-			fdb: map[string]string{"GG:GG:GG:GG:GG:GG": "lan1", "44:44:44:44:44:44": "lan4"}},
-		"ap": {cfg: RouterConfig{ID: "ap"}, brMac: "AA:AA:AA:AA:AA:AA",
-			fdb: map[string]string{"AA:AA:AA:AA:AA:AA": "lan1", "44:44:44:44:44:44": "lan3"}},
+		"gateway": {cfg: RouterConfig{ID: "gateway", IsGateway: true}, brMac: gwMAC,
+			fdb: map[macaddr.MAC]string{gwMAC: "lan1", cliMAC: "lan4"}},
+		"ap": {cfg: RouterConfig{ID: "ap"}, brMac: apMAC,
+			fdb: map[macaddr.MAC]string{apMAC: "lan1", cliMAC: "lan3"}},
 	}
 	for i := 0; i < 50; i++ {
 		memo := l.updateFdbMemo(polled, now)
-		if m, ok := memo["44:44:44:44:44:44"]; !ok || m.routerID != "ap" || m.port != "lan3" {
-			t.Fatalf("iteración %d: el ganador debería ser siempre ap/lan3, got %+v", i, memo["44:44:44:44:44:44"])
+		if m, ok := memo[cliMAC]; !ok || m.routerID != "ap" || m.port != "lan3" {
+			t.Fatalf("iteración %d: el ganador debería ser siempre ap/lan3, got %+v", i, memo[cliMAC])
 		}
 	}
 }

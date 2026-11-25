@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 )
 
@@ -96,7 +97,7 @@ func TestLldpFromProbe(t *testing.T) {
 	if len(got) != len(nbs) {
 		t.Fatalf("longitud: %d vs %d", len(got), len(nbs))
 	}
-	if got[0].Port != "lan3" || got[0].Chassis != "GS308E" || got[0].ChassisMac != "28:C6:8E:1D:90:44" {
+	if got[0].Port != "lan3" || got[0].Chassis != "GS308E" || got[0].ChassisMac != macaddr.MustParse("28:C6:8E:1D:90:44") {
 		t.Fatalf("conversión n[0]: %+v", got[0])
 	}
 	// métodos del tipo adapters intactos tras la conversión
@@ -165,13 +166,14 @@ func TestBuildRouterLldpUplink(t *testing.T) {
 		{ID: "flint2", Host: "192.168.8.1", IsGateway: true},
 		{ID: "living", Host: "192.168.8.2"},
 	}, nil)
+	gwMAC := macaddr.MustParse("94:83:C4:00:00:01")
 	gw := &routerPolled{cfg: RouterConfig{ID: "flint2", Host: "192.168.8.1", IsGateway: true},
-		brMac: "94:83:C4:00:00:01", fdb: map[string]string{}, lldp: []LldpNeighbor{}}
+		brMac: gwMAC, fdb: map[macaddr.MAC]string{}, lldp: []LldpNeighbor{}}
 	ap := &routerPolled{cfg: RouterConfig{ID: "living", Host: "192.168.8.2"},
-		brMac: "94:83:C4:00:00:02",
-		fdb:   map[string]string{"94:83:C4:00:00:01": "lan1"},
+		brMac: macaddr.MustParse("94:83:C4:00:00:02"),
+		fdb:   map[macaddr.MAC]string{gwMAC: "lan1"},
 		lldp: []LldpNeighbor{{
-			Port: "lan1", Chassis: "Flint 2", ChassisMac: "94:83:C4:00:00:01",
+			Port: "lan1", Chassis: "Flint 2", ChassisMac: gwMAC,
 			Mgmt: "192.168.8.1", Caps: []string{"Bridge", "Router"}, PortDesc: "lan3",
 		}}}
 	l.lastPolled = map[string]*routerPolled{"flint2": gw, "living": ap}
@@ -190,14 +192,14 @@ func TestBuildRouterLldpUplink(t *testing.T) {
 		t.Fatalf("gateway no debería llevar Lldp: %+v", rgw.Lldp)
 	}
 	// El anuncio llega por OTRO puerto (no es el uplink) → sin campo
-	ap.fdb["94:83:C4:00:00:01"] = "lan2"
+	ap.fdb[gwMAC] = "lan2"
 	if r := l.buildRouter(ap, nil); r.Lldp != nil {
 		t.Fatalf("anuncio por puerto distinto al del FDB: %+v", r.Lldp)
 	}
 	// Vecino LLDP que NO es un router de la config (ni MAC, ni IP, ni nombre)
 	// → sin campo
-	ap.fdb["94:83:C4:00:00:01"] = "lan1"
-	ap.lldp[0].ChassisMac = "28:C6:8E:1D:90:44"
+	ap.fdb[gwMAC] = "lan1"
+	ap.lldp[0].ChassisMac = macaddr.MustParse("28:C6:8E:1D:90:44")
 	ap.lldp[0].Chassis = "GS308E"
 	ap.lldp[0].Mgmt = "192.168.8.13"
 	if r := l.buildRouter(ap, nil); r.Lldp != nil {
@@ -260,14 +262,14 @@ func TestUplinkLldpIdentityFallback(t *testing.T) {
 		{ID: "living", Host: "192.168.8.2"},
 	}, nil)
 	gw := &routerPolled{cfg: RouterConfig{ID: "flint2", Name: "Flint 2", Host: "192.168.8.1", IsGateway: true},
-		brMac: "94:83:C4:00:00:01", fdb: map[string]string{}, lldp: []LldpNeighbor{}}
+		brMac: macaddr.MustParse("94:83:C4:00:00:01"), fdb: map[macaddr.MAC]string{}, lldp: []LldpNeighbor{}}
 	// El AP anuncia el gateway con chassis-ID = MAC de eth0 (NO la br-lan),
 	// pero su mgmt-IP coincide con el Host del gateway → uplink identificado.
 	ap := &routerPolled{cfg: RouterConfig{ID: "living", Name: "Living", Host: "192.168.8.2"},
-		brMac: "94:83:C4:00:00:02",
-		fdb:   map[string]string{},
+		brMac: macaddr.MustParse("94:83:C4:00:00:02"),
+		fdb:   map[macaddr.MAC]string{},
 		lldp: []LldpNeighbor{{
-			Port: "lan1", Chassis: "Flint 2", ChassisMac: "94:83:C4:99:99:99",
+			Port: "lan1", Chassis: "Flint 2", ChassisMac: macaddr.MustParse("94:83:C4:99:99:99"),
 			Mgmt: "192.168.8.1", Caps: []string{"Bridge", "Router"}, PortDesc: "lan3",
 		}}}
 	l.lastPolled = map[string]*routerPolled{"flint2": gw, "living": ap}
@@ -281,12 +283,12 @@ func TestUplinkLldpIdentityFallback(t *testing.T) {
 	// Fallback por nombre del chasis (sin mgmt-IP anunciada).
 	ap.lldp[0].Mgmt = ""
 	ap.lldp[0].Chassis = "living-2" // hostname del router, no su Name config
-	ap.lldp[0].ChassisMac = "94:83:C4:99:99:98"
+	ap.lldp[0].ChassisMac = macaddr.MustParse("94:83:C4:99:99:98")
 	if r := l.buildRouter(ap, nil); r.Lldp != nil {
 		t.Fatalf("nombre sin coincidir no debe casar: %+v", r.Lldp)
 	}
 	ap.lldp[0].Chassis = "Flint 2"
-	ap.lldp[0].ChassisMac = "94:83:C4:99:99:98"
+	ap.lldp[0].ChassisMac = macaddr.MustParse("94:83:C4:99:99:98")
 	if r := l.buildRouter(ap, nil); r.Lldp == nil {
 		t.Fatal("uplink por nombre del chasis debería identificarse (fallback #252)")
 	}

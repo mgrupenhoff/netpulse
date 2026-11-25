@@ -9,8 +9,16 @@ import (
 
 // FDB/port helpers para los tests de inferencia.
 func polledWithFDB(routerID, brMac string, fdb map[string]string) map[string]*routerPolled {
+	var parsedBr macaddr.MAC
+	if brMac != "" {
+		parsedBr = macaddr.MustParse(brMac)
+	}
+	parsedFdb := make(map[macaddr.MAC]string, len(fdb))
+	for k, v := range fdb {
+		parsedFdb[macaddr.MustParse(k)] = v
+	}
 	return map[string]*routerPolled{
-		routerID: {cfg: RouterConfig{ID: routerID}, brMac: brMac, fdb: fdb},
+		routerID: {cfg: RouterConfig{ID: routerID}, brMac: parsedBr, fdb: parsedFdb},
 	}
 }
 
@@ -100,7 +108,7 @@ func TestInferTopologyExclusiones(t *testing.T) {
 		"F2:6D:19:A8:44:C2": "lan1", // cliente wifi del AP (otro routerId)
 	})
 	// El AP también aparece en polled con su propia brMac
-	polled["living"] = &routerPolled{cfg: RouterConfig{ID: "living"}, brMac: "94:83:C4:00:00:02", fdb: map[string]string{}}
+	polled["living"] = &routerPolled{cfg: RouterConfig{ID: "living"}, brMac: macaddr.MustParse("94:83:C4:00:00:02"), fdb: map[macaddr.MAC]string{}}
 	devices := []Device{
 		dev("F2:6D:19:A8:44:C2", "living", "5 GHz"),
 	}
@@ -130,13 +138,13 @@ func TestInferTopologyWanIgnorado(t *testing.T) {
 // gateway). El mismo patrón en el gateway SÍ crea nodo inferido.
 func TestInferTopologyApMultiMacSinEvidencia(t *testing.T) {
 	polled := map[string]*routerPolled{
-		"flint2": {cfg: RouterConfig{ID: "flint2", IsGateway: true}, brMac: "94:83:C4:00:00:01", fdb: map[string]string{
-			"78:2B:CB:AA:01:01": "lan3",
-			"8C:EA:48:AA:02:02": "lan3",
+		"flint2": {cfg: RouterConfig{ID: "flint2", IsGateway: true}, brMac: macaddr.MustParse("94:83:C4:00:00:01"), fdb: map[macaddr.MAC]string{
+			macaddr.MustParse("78:2B:CB:AA:01:01"): "lan3",
+			macaddr.MustParse("8C:EA:48:AA:02:02"): "lan3",
 		}},
-		"rt2": {cfg: RouterConfig{ID: "rt2"}, brMac: "94:83:C4:00:00:02", fdb: map[string]string{
-			"3C:D9:2B:AA:03:03": "lan2",
-			"50:EC:50:AA:04:04": "lan2",
+		"rt2": {cfg: RouterConfig{ID: "rt2"}, brMac: macaddr.MustParse("94:83:C4:00:00:02"), fdb: map[macaddr.MAC]string{
+			macaddr.MustParse("3C:D9:2B:AA:03:03"): "lan2",
+			macaddr.MustParse("50:EC:50:AA:04:04"): "lan2",
 		}},
 	}
 	devices := []Device{
@@ -160,11 +168,11 @@ func TestInferTopologyApMultiMacSinEvidencia(t *testing.T) {
 // exactamente un host) = servidor con VMs colgando de ese AP.
 func TestInferTopologyApHipervisor(t *testing.T) {
 	polled := map[string]*routerPolled{
-		"flint2": {cfg: RouterConfig{ID: "flint2", IsGateway: true}, brMac: "94:83:C4:00:00:01", fdb: map[string]string{}},
-		"rt2": {cfg: RouterConfig{ID: "rt2"}, brMac: "94:83:C4:00:00:02", fdb: map[string]string{
-			"3C:52:82:10:20:30": "lan1", // host
-			"BC:24:11:00:20:10": "lan1", // CT1
-			"BC:24:11:00:20:11": "lan1", // CT2
+		"flint2": {cfg: RouterConfig{ID: "flint2", IsGateway: true}, brMac: macaddr.MustParse("94:83:C4:00:00:01"), fdb: map[macaddr.MAC]string{}},
+		"rt2": {cfg: RouterConfig{ID: "rt2"}, brMac: macaddr.MustParse("94:83:C4:00:00:02"), fdb: map[macaddr.MAC]string{
+			macaddr.MustParse("3C:52:82:10:20:30"): "lan1", // host
+			macaddr.MustParse("BC:24:11:00:20:10"): "lan1", // CT1
+			macaddr.MustParse("BC:24:11:00:20:11"): "lan1", // CT2
 		}},
 	}
 	devices := []Device{
@@ -188,9 +196,9 @@ func TestInferTopologyApHipervisor(t *testing.T) {
 // que en el gateway).
 func TestInferTopologyApCableadoDirecto(t *testing.T) {
 	polled := map[string]*routerPolled{
-		"flint2": {cfg: RouterConfig{ID: "flint2", IsGateway: true}, brMac: "94:83:C4:00:00:01", fdb: map[string]string{}},
-		"rt2": {cfg: RouterConfig{ID: "rt2"}, brMac: "94:83:C4:00:00:02", fdb: map[string]string{
-			"00:11:32:9C:51:B7": "lan3",
+		"flint2": {cfg: RouterConfig{ID: "flint2", IsGateway: true}, brMac: macaddr.MustParse("94:83:C4:00:00:01"), fdb: map[macaddr.MAC]string{}},
+		"rt2": {cfg: RouterConfig{ID: "rt2"}, brMac: macaddr.MustParse("94:83:C4:00:00:02"), fdb: map[macaddr.MAC]string{
+			macaddr.MustParse("00:11:32:9C:51:B7"): "lan3",
 		}},
 	}
 	devices := []Device{dev("00:11:32:9C:51:B7", "rt2", "cable")}
@@ -208,7 +216,7 @@ func TestInferTopologyApCableadoDirecto(t *testing.T) {
 // gs308eNeighbor: switch gestionado anunciándose en lan3 (fixture GS308E).
 func gs308eNeighbor() []LldpNeighbor {
 	return []LldpNeighbor{{
-		Port: "lan3", Chassis: "GS308E", ChassisMac: "28:C6:8E:1D:90:44",
+		Port: "lan3", Chassis: "GS308E", ChassisMac: macaddr.MustParse("28:C6:8E:1D:90:44"),
 		Mgmt: "192.168.8.13", Caps: []string{"Bridge"}, PortDesc: "ge5",
 	}}
 }
@@ -220,11 +228,11 @@ func gs308eNeighbor() []LldpNeighbor {
 // managed (con Mac = chassis-MAC), y NUNCA cuelga de su propio nodo.
 func TestInferTopologySwitchManagedLldp(t *testing.T) {
 	polled := map[string]*routerPolled{
-		"flint2": {cfg: RouterConfig{ID: "flint2", IsGateway: true}, brMac: "94:83:C4:00:00:01",
-			fdb: map[string]string{
-				"28:C6:8E:1D:90:44": "lan3", // el propio GS308E
-				"04:D4:C4:8B:30:A7": "lan3", // PC tras el switch
-				"DC:A6:32:4F:77:02": "lan3", // Raspberry tras el switch
+		"flint2": {cfg: RouterConfig{ID: "flint2", IsGateway: true}, brMac: macaddr.MustParse("94:83:C4:00:00:01"),
+			fdb: map[macaddr.MAC]string{
+				macaddr.MustParse("28:C6:8E:1D:90:44"): "lan3", // el propio GS308E
+				macaddr.MustParse("04:D4:C4:8B:30:A7"): "lan3", // PC tras el switch
+				macaddr.MustParse("DC:A6:32:4F:77:02"): "lan3", // Raspberry tras el switch
 			},
 			lldp: gs308eNeighbor()},
 	}
@@ -277,10 +285,10 @@ func TestInferTopologySwitchManagedLldp(t *testing.T) {
 // fantasma: nodo "inferred" exactamente como antes.
 func TestInferTopologyMultiMacSinLldpSigueFantasma(t *testing.T) {
 	polled := map[string]*routerPolled{
-		"flint2": {cfg: RouterConfig{ID: "flint2", IsGateway: true}, brMac: "94:83:C4:00:00:01",
-			fdb: map[string]string{
-				"78:2B:CB:AA:01:01": "lan3",
-				"8C:EA:48:AA:02:02": "lan3",
+		"flint2": {cfg: RouterConfig{ID: "flint2", IsGateway: true}, brMac: macaddr.MustParse("94:83:C4:00:00:01"),
+			fdb: map[macaddr.MAC]string{
+				macaddr.MustParse("78:2B:CB:AA:01:01"): "lan3",
+				macaddr.MustParse("8C:EA:48:AA:02:02"): "lan3",
 			}},
 	}
 	devices := []Device{
@@ -294,7 +302,7 @@ func TestInferTopologyMultiMacSinLldpSigueFantasma(t *testing.T) {
 	// Vecino LLDP cuya chassis-MAC NO está aprendida en ese puerto → tampoco
 	// promociona (no es el equipo que multiplexa).
 	polled["flint2"].lldp = []LldpNeighbor{{
-		Port: "lan3", Chassis: "OtroEquipo", ChassisMac: "00:00:00:00:00:99",
+		Port: "lan3", Chassis: "OtroEquipo", ChassisMac: macaddr.MustParse("00:00:00:00:00:99"),
 	}}
 	_, dists = inferTopology(polled, devices)
 	if len(dists) != 1 || dists[0].Kind != "inferred" {
@@ -302,7 +310,7 @@ func TestInferTopologyMultiMacSinLldpSigueFantasma(t *testing.T) {
 	}
 	// Vecino en OTRO puerto → no promociona este
 	polled["flint2"].lldp = []LldpNeighbor{{
-		Port: "lan1", Chassis: "GS308E", ChassisMac: "78:2B:CB:AA:01:01",
+		Port: "lan1", Chassis: "GS308E", ChassisMac: macaddr.MustParse("78:2B:CB:AA:01:01"),
 	}}
 	_, dists = inferTopology(polled, devices)
 	if len(dists) != 1 || dists[0].Kind != "inferred" {
@@ -314,11 +322,11 @@ func TestInferTopologyMultiMacSinLldpSigueFantasma(t *testing.T) {
 // switch gestionado identificado colgando del AP, no del gateway.
 func TestInferTopologyManagedTrasAP(t *testing.T) {
 	polled := map[string]*routerPolled{
-		"flint2": {cfg: RouterConfig{ID: "flint2", IsGateway: true}, brMac: "94:83:C4:00:00:01", fdb: map[string]string{}},
-		"living": {cfg: RouterConfig{ID: "living"}, brMac: "94:83:C4:00:00:02",
-			fdb: map[string]string{
-				"28:C6:8E:1D:90:44": "lan3",
-				"04:D4:C4:8B:30:A7": "lan3",
+		"flint2": {cfg: RouterConfig{ID: "flint2", IsGateway: true}, brMac: macaddr.MustParse("94:83:C4:00:00:01"), fdb: map[macaddr.MAC]string{}},
+		"living": {cfg: RouterConfig{ID: "living"}, brMac: macaddr.MustParse("94:83:C4:00:00:02"),
+			fdb: map[macaddr.MAC]string{
+				macaddr.MustParse("28:C6:8E:1D:90:44"): "lan3",
+				macaddr.MustParse("04:D4:C4:8B:30:A7"): "lan3",
 			},
 			lldp: gs308eNeighbor()},
 	}
@@ -341,18 +349,18 @@ func TestInferTopologyManagedTrasAP(t *testing.T) {
 // multi-MAC se promueve a "managed" igualmente.
 func TestInferTopologyManagedPorIdentidad(t *testing.T) {
 	polled := map[string]*routerPolled{
-		"flint2": {cfg: RouterConfig{ID: "flint2", IsGateway: true}, brMac: "94:83:C4:00:00:01",
-			fdb: map[string]string{
-				"04:D4:C4:8B:30:A7": "lan3", // PC tras el switch
-				"DC:A6:32:4F:77:02": "lan3", // Raspberry tras el switch
+		"flint2": {cfg: RouterConfig{ID: "flint2", IsGateway: true}, brMac: macaddr.MustParse("94:83:C4:00:00:01"),
+			fdb: map[macaddr.MAC]string{
+				macaddr.MustParse("04:D4:C4:8B:30:A7"): "lan3", // PC tras el switch
+				macaddr.MustParse("DC:A6:32:4F:77:02"): "lan3", // Raspberry tras el switch
 			}},
 		"switch1": {cfg: RouterConfig{ID: "switch1", Name: "LGS352C", Host: "192.168.8.20", Type: "managed-switch", AgentOnly: true},
-			brMac: "94:83:C4:00:00:0A", fdb: map[string]string{}},
+			brMac: macaddr.MustParse("94:83:C4:00:00:0A"), fdb: map[macaddr.MAC]string{}},
 	}
 	// El gateway recibe el anuncio del switch en lan3 con chassis-MAC que NO
 	// está en su FDB, pero con mgmt-IP = Host del switch.
 	polled["flint2"].lldp = []LldpNeighbor{{
-		Port: "lan3", Chassis: "lgs352c", ChassisMac: "AA:BB:CC:DD:EE:0A",
+		Port: "lan3", Chassis: "lgs352c", ChassisMac: macaddr.MustParse("AA:BB:CC:DD:EE:0A"),
 		Mgmt: "192.168.8.20", Caps: []string{"Bridge"}, PortDesc: "lan3",
 	}}
 	devices := []Device{
@@ -385,8 +393,8 @@ func TestInferTopologyManagedPorIdentidad(t *testing.T) {
 // MAC (cableado directo): no hay nodo, pero el Device queda identificado.
 func TestInferTopologyLldpIdentificaDeviceDirecto(t *testing.T) {
 	polled := map[string]*routerPolled{
-		"flint2": {cfg: RouterConfig{ID: "flint2", IsGateway: true}, brMac: "94:83:C4:00:00:01",
-			fdb:  map[string]string{"28:C6:8E:1D:90:44": "lan3"},
+		"flint2": {cfg: RouterConfig{ID: "flint2", IsGateway: true}, brMac: macaddr.MustParse("94:83:C4:00:00:01"),
+			fdb:  map[macaddr.MAC]string{macaddr.MustParse("28:C6:8E:1D:90:44"): "lan3"},
 			lldp: gs308eNeighbor()},
 	}
 	devices := []Device{dev("28:C6:8E:1D:90:44", "flint2", "cable")}
@@ -408,8 +416,8 @@ func TestInferTopologyPortLabelLuCI(t *testing.T) {
 		VlanLabels: map[string]string{"1": "LAN"},
 	}
 	polled := map[string]*routerPolled{
-		"flint2": {cfg: RouterConfig{ID: "flint2", IsGateway: true}, brMac: "94:83:C4:00:00:01",
-			fdb:  map[string]string{"28:C6:8E:1D:90:44": "lan1", "04:D4:C4:8B:30:A7": "lan3", "DC:A6:32:4F:77:02": "lan3"},
+		"flint2": {cfg: RouterConfig{ID: "flint2", IsGateway: true}, brMac: macaddr.MustParse("94:83:C4:00:00:01"),
+			fdb:  map[macaddr.MAC]string{macaddr.MustParse("28:C6:8E:1D:90:44"): "lan1", macaddr.MustParse("04:D4:C4:8B:30:A7"): "lan3", macaddr.MustParse("DC:A6:32:4F:77:02"): "lan3"},
 			luci: luci},
 	}
 	devices := []Device{
@@ -429,8 +437,8 @@ func TestInferTopologyPortLabelLuCI(t *testing.T) {
 	}
 	// Sin etiquetas → PortLabel vacío (omitempty).
 	noLuci := map[string]*routerPolled{
-		"flint2": {cfg: RouterConfig{ID: "flint2", IsGateway: true}, brMac: "94:83:C4:00:00:01",
-			fdb: map[string]string{"28:C6:8E:1D:90:44": "lan1"}},
+		"flint2": {cfg: RouterConfig{ID: "flint2", IsGateway: true}, brMac: macaddr.MustParse("94:83:C4:00:00:01"),
+			fdb: map[macaddr.MAC]string{macaddr.MustParse("28:C6:8E:1D:90:44"): "lan1"}},
 	}
 	devices = []Device{dev("28:C6:8E:1D:90:44", "flint2", "cable")}
 	devices, _ = inferTopology(noLuci, devices)

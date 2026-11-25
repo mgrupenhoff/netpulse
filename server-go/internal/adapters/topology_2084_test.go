@@ -13,6 +13,8 @@ package adapters
 import (
 	"strings"
 	"testing"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 // El enlace real ya esta aprendido en otro puerto: el LLDP de este puerto no
@@ -27,23 +29,23 @@ func TestInferTopologyNoDuplicaSwitchAprendidoPorOtroPuerto(t *testing.T) {
 	polled := map[string]*routerPolled{
 		"nsw-off-a3": {
 			cfg:   RouterConfig{ID: "nsw-off-a3", Name: "NSW-OFF-A3", Host: "192.168.2.11", Type: "managed-switch"},
-			brMac: "A0:40:A0:5E:FE:7B",
-			fdb: map[string]string{
-				macB:    "Fiber Backplane", // el enlace real
-				macAP:   "01-NightHawk X10",
-				macCli1: "01-NightHawk X10",
+			brMac: macaddr.MustParse("A0:40:A0:5E:FE:7B"),
+			fdb: map[macaddr.MAC]string{
+				macaddr.MustParse(macB):    "Fiber Backplane", // el enlace real
+				macaddr.MustParse(macAP):   "01-NightHawk X10",
+				macaddr.MustParse(macCli1): "01-NightHawk X10",
 			},
 			lldp: []LldpNeighbor{{
-				Port: "01-NightHawk X10", Chassis: "NSW-OFF-7A", ChassisMac: macBLl,
+				Port: "01-NightHawk X10", Chassis: "NSW-OFF-7A", ChassisMac: macaddr.MustParse(macBLl),
 				Mgmt: "192.168.2.12", Caps: []string{"Bridge"}, PortDesc: "01-NightHawk X10",
 			}},
 		},
 		"nsw-off-7a": {
 			cfg:   RouterConfig{ID: "nsw-off-7a", Name: "NSW-OFF-7A", Host: "192.168.2.12", Type: "managed-switch"},
-			brMac: macB,
-			fdb: map[string]string{
-				"94:83:C4:00:00:01": "Fiber Backplane",
-				"10:20:30:40:50:60": "Fiber Backplane",
+			brMac: macaddr.MustParse(macB),
+			fdb: map[macaddr.MAC]string{
+				macaddr.MustParse("94:83:C4:00:00:01"): "Fiber Backplane",
+				macaddr.MustParse("10:20:30:40:50:60"): "Fiber Backplane",
 			},
 		},
 	}
@@ -69,21 +71,21 @@ func TestInferTopologyMantieneCadenaCuandoElPuertoEsElEnlace(t *testing.T) {
 	polled := map[string]*routerPolled{
 		"flint2": {
 			cfg:   RouterConfig{ID: "flint2", IsGateway: true},
-			brMac: "94:83:C4:00:00:01",
-			fdb: map[string]string{
-				macChild:            "lan3",
-				"04:D4:C4:8B:30:A7": "lan3",
-				"DC:A6:32:4F:77:02": "lan3",
+			brMac: macaddr.MustParse("94:83:C4:00:00:01"),
+			fdb: map[macaddr.MAC]string{
+				macaddr.MustParse(macChild):            "lan3",
+				macaddr.MustParse("04:D4:C4:8B:30:A7"): "lan3",
+				macaddr.MustParse("DC:A6:32:4F:77:02"): "lan3",
 			},
 			lldp: []LldpNeighbor{{
-				Port: "lan3", Chassis: "GS308E", ChassisMac: macChild,
+				Port: "lan3", Chassis: "GS308E", ChassisMac: macaddr.MustParse(macChild),
 				Mgmt: "192.168.8.13", Caps: []string{"Bridge"}, PortDesc: "ge5",
 			}},
 		},
 		"swA": {
 			cfg:   RouterConfig{ID: "swA", Name: "GS308E", Type: "managed-switch", AgentOnly: true},
-			brMac: macChild,
-			fdb:   map[string]string{"AA:BB:CC:DD:EE:0A": "ge5"},
+			brMac: macaddr.MustParse(macChild),
+			fdb:   map[macaddr.MAC]string{macaddr.MustParse("AA:BB:CC:DD:EE:0A"): "ge5"},
 		},
 	}
 	devices := []Device{
@@ -112,16 +114,16 @@ func TestInferTopologyPuertoHipervisorEmiteUnSoloNodo(t *testing.T) {
 	polled := map[string]*routerPolled{
 		"gw": {
 			cfg:   RouterConfig{ID: "gw", IsGateway: true},
-			brMac: gwMac,
-			fdb:   map[string]string{"10:20:30:40:50:99": "lan1"},
+			brMac: macaddr.MustParse(gwMac),
+			fdb:   map[macaddr.MAC]string{macaddr.MustParse("10:20:30:40:50:99"): "lan1"},
 		},
 		"swB": {
 			cfg:   RouterConfig{ID: "swB", Name: "NSW-OFF-7A", Type: "external", SnmpEnabled: true},
-			brMac: "A0:40:A0:5E:FE:7A",
-			fdb: map[string]string{
-				gwMac:  "ge1", // root port (uplink)
-				hostMu: "ge2",
-				vmMac:  "ge2",
+			brMac: macaddr.MustParse("A0:40:A0:5E:FE:7A"),
+			fdb: map[macaddr.MAC]string{
+				macaddr.MustParse(gwMac):  "ge1", // root port (uplink)
+				macaddr.MustParse(hostMu): "ge2",
+				macaddr.MustParse(vmMac):  "ge2",
 			},
 		},
 	}

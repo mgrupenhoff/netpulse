@@ -11,17 +11,16 @@ import (
 )
 
 func TestIsBatadvBlaMAC(t *testing.T) {
-	yes := []string{
-		"BA:BE:11:22:33:44",
-		"ba:be:aa:bb:cc:dd",
-		"BA-BE-00-11-22-33",
+	yes := []macaddr.MAC{
+		macaddr.MustParse("BA:BE:11:22:33:44"),
+		macaddr.MustParse("ba:be:aa:bb:cc:dd"),
+		macaddr.MustParse("BA-BE-00-11-22-33"),
 	}
-	no := []string{
-		"",
-		"BA:BF:11:22:33:44",
-		"AA:BB:CC:DD:EE:FF",
-		"BA:BE:11:22:33",    // no es una MAC de 6 octetos
-		"D2:95:DE:65:C5:B0", // NMRP: localmente administrada, pero no es BLA
+	no := []macaddr.MAC{
+		{}, // valor cero / ausente
+		macaddr.MustParse("BA:BF:11:22:33:44"),
+		macaddr.MustParse("AA:BB:CC:DD:EE:FF"),
+		macaddr.MustParse("D2:95:DE:65:C5:B0"), // NMRP: localmente administrada, pero no es BLA
 	}
 	for _, mac := range yes {
 		if !isBatadvBlaMAC(mac) {
@@ -36,23 +35,25 @@ func TestIsBatadvBlaMAC(t *testing.T) {
 }
 
 func TestWithoutBatadvBla(t *testing.T) {
-	in := map[string]string{
-		"BA:BE:11:22:33:44": "lan1",
-		"AA:BB:CC:DD:EE:01": "lan1",
+	blaMAC := macaddr.MustParse("BA:BE:11:22:33:44")
+	cliMAC := macaddr.MustParse("AA:BB:CC:DD:EE:01")
+	in := map[macaddr.MAC]string{
+		blaMAC: "lan1",
+		cliMAC: "lan1",
 	}
 	out := withoutBatadvBla(in)
-	if _, ok := out["BA:BE:11:22:33:44"]; ok {
+	if _, ok := out[blaMAC]; ok {
 		t.Fatalf("la MAC de BLA sigue en el FDB: %+v", out)
 	}
-	if out["AA:BB:CC:DD:EE:01"] != "lan1" {
+	if out[cliMAC] != "lan1" {
 		t.Fatalf("se perdió un cliente real: %+v", out)
 	}
 	// El mapa original no se muta: el payload del agente se comparte.
-	if _, ok := in["BA:BE:11:22:33:44"]; !ok {
+	if _, ok := in[blaMAC]; !ok {
 		t.Fatalf("withoutBatadvBla mutó el mapa de entrada")
 	}
 	// Sin nada que quitar se devuelve el mismo mapa, sin asignar.
-	clean := map[string]string{"AA:BB:CC:DD:EE:02": "lan2"}
+	clean := map[macaddr.MAC]string{macaddr.MustParse("AA:BB:CC:DD:EE:02"): "lan2"}
 	if got := withoutBatadvBla(clean); len(got) != 1 {
 		t.Fatalf("FDB limpio alterado: %+v", got)
 	}
@@ -63,16 +64,16 @@ func TestBuildDevicesSkipsBatadvBla(t *testing.T) {
 	polled := map[string]*routerPolled{
 		"gw": {
 			cfg: RouterConfig{ID: "gw", Name: "GW", Host: "192.168.1.1"},
-			fdb: map[string]string{
-				"BA:BE:11:22:33:44": "lan1", // sonda del mesh
-				"AA:BB:CC:DD:EE:01": "lan1", // cliente real
+			fdb: map[macaddr.MAC]string{
+				macaddr.MustParse("BA:BE:11:22:33:44"): "lan1", // sonda del mesh
+				macaddr.MustParse("AA:BB:CC:DD:EE:01"): "lan1", // cliente real
 			},
 			arp: map[macaddr.MAC]string{macaddr.MustParse("AA:BB:CC:DD:EE:01"): "192.168.1.50"},
 		},
 	}
 	devs := l.buildDevices(polled, "")
 	for _, d := range devs {
-		if isBatadvBlaMAC(d.MAC.String()) {
+		if isBatadvBlaMAC(d.MAC) {
 			t.Fatalf("la MAC de BLA llegó a la lista de clientes: %+v", d)
 		}
 	}
@@ -90,10 +91,10 @@ func TestPolledFromAgentDropsBatadvBla(t *testing.T) {
 		},
 	}}}
 	out := l.polledFromAgent(RouterConfig{ID: "sw", Type: "external"}, p)
-	if _, ok := out.fdb["BA:BE:55:66:77:88"]; ok {
+	if _, ok := out.fdb[macaddr.MustParse("BA:BE:55:66:77:88")]; ok {
 		t.Fatalf("el polled del agente conserva la MAC de BLA: %+v", out.fdb)
 	}
-	if out.fdb["AA:BB:CC:DD:EE:02"] != "lan2" {
+	if out.fdb[macaddr.MustParse("AA:BB:CC:DD:EE:02")] != "lan2" {
 		t.Fatalf("se perdió un cliente real: %+v", out.fdb)
 	}
 }
@@ -114,32 +115,32 @@ func TestIsBatadvBackhaulPort(t *testing.T) {
 }
 
 func TestBuildDevicesPrefersPhysicalLANOverBatadvBackhaul(t *testing.T) {
-	const hueMAC = "00:17:88:11:22:33"
-	const eufyMAC = "8C:85:80:44:55:66"
+	hueMAC := macaddr.MustParse("00:17:88:11:22:33")
+	eufyMAC := macaddr.MustParse("8C:85:80:44:55:66")
 
 	for iter := 0; iter < 50; iter++ {
 		l := NewLive(nil, nil, nil, nil)
 		polled := map[string]*routerPolled{
 			"gw": {
 				cfg:   RouterConfig{ID: "gw", Name: "Gateway", Host: "192.168.1.1", IsGateway: true},
-				brMac: "AA:AA:AA:00:00:01",
+				brMac: macaddr.MustParse("AA:AA:AA:00:00:01"),
 				arp: map[macaddr.MAC]string{
-					macaddr.MustParse(hueMAC):  "192.168.40.10",
-					macaddr.MustParse(eufyMAC): "192.168.40.11",
+					hueMAC:  "192.168.40.10",
+					eufyMAC: "192.168.40.11",
 				},
 			},
 			"mx1": {
 				cfg:   RouterConfig{ID: "mx1", Name: "MX5300 #1", Host: "192.168.1.2"},
-				brMac: "AA:AA:AA:00:00:02",
-				fdb: map[string]string{
+				brMac: macaddr.MustParse("AA:AA:AA:00:00:02"),
+				fdb: map[macaddr.MAC]string{
 					hueMAC:  "lan3",
 					eufyMAC: "lan2",
 				},
 			},
 			"mx2": {
 				cfg:   RouterConfig{ID: "mx2", Name: "MX5300 #2", Host: "192.168.1.3"},
-				brMac: "AA:AA:AA:00:00:03",
-				fdb: map[string]string{
+				brMac: macaddr.MustParse("AA:AA:AA:00:00:03"),
+				fdb: map[macaddr.MAC]string{
 					hueMAC:  "bat0.40",
 					eufyMAC: "bat0.40",
 				},
@@ -147,9 +148,9 @@ func TestBuildDevicesPrefersPhysicalLANOverBatadvBackhaul(t *testing.T) {
 		}
 		l.updateFdbMemo(polled, 1_000_000)
 		devs := l.buildDevices(polled, "gw")
-		byMac := make(map[string]Device, len(devs))
+		byMac := make(map[macaddr.MAC]Device, len(devs))
 		for _, d := range devs {
-			byMac[d.MAC.String()] = d
+			byMac[d.MAC] = d
 		}
 		if got := byMac[hueMAC].RouterID; got != "mx1" {
 			t.Fatalf("iter %d: Hue Bridge attributed to %q, want mx1", iter, got)

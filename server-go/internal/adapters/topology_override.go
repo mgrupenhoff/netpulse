@@ -193,7 +193,7 @@ func applyTopologyOverrides(routers []Router, devices []Device, dists []Distribu
 			if d.RouterID != host.RouterID || d.Port != host.Port {
 				continue
 			}
-			if d.ID == host.ID || !isHypervisorMAC(d.MAC.String()) {
+			if d.ID == host.ID || !isHypervisorMAC(d.MAC) {
 				continue
 			}
 			d.AttachTo = host.ID

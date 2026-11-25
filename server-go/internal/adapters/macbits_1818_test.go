@@ -38,7 +38,7 @@ func TestBuildDevicesMarksLocallyAdministeredFromFDB(t *testing.T) {
 	polled := map[string]*routerPolled{
 		"gw": {
 			cfg:      RouterConfig{ID: "gw", IsGateway: true},
-			fdb:      map[string]string{"D2:95:DE:65:C5:B0": "lan2", "04:F4:1C:F3:46:65": "lan3"},
+			fdb:      map[macaddr.MAC]string{macaddr.MustParse("D2:95:DE:65:C5:B0"): "lan2", macaddr.MustParse("04:F4:1C:F3:46:65"): "lan3"},
 			arp:      map[macaddr.MAC]string{},
 			arpStale: map[macaddr.MAC]bool{},
 		},

@@ -600,6 +600,21 @@ func parseMACMap[V any](src string, in map[string]V) map[macaddr.MAC]V {
 	return out
 }
 
+// parseMACSlice convierte un slice de wire ([]string) a []macaddr.MAC,
+// descartando entradas inválidas.
+func parseMACSlice(src string, in []string) []macaddr.MAC {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]macaddr.MAC, 0, len(in))
+	for _, raw := range in {
+		if m, ok := macaddr.ParseOrWarn(macWarn, src, raw); ok {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
 // GetWirelessClients: clientes wifi asociados (MAC → señal/banda). Port del
 // fix #373 (#368) al sondeo SSH: ubus hostapd get_clients primero (una
 // llamada ubus barata por AP, sin ucode/iwinfo), fallback de iwinfo combinado
@@ -791,12 +806,12 @@ func naturalLess(a, b string) bool {
 // GetBridgeFdb: MAC aprendida → puerto (brctl showmacs + port_no).
 // Devuelve nil en error para que el anti-parpadeo de pollRouter conserve la
 // última lista buena en vez de sustituirla por un FDB vacío (#694).
-func (c *OpenWrtClient) GetBridgeFdb() map[string]string {
+func (c *OpenWrtClient) GetBridgeFdb() map[macaddr.MAC]string {
 	out, err := c.pool.Run(c.Host, probe.CmdBridgeFDB, 0)
 	if err != nil {
 		return nil
 	}
-	return parseBridgeFdb(out)
+	return parseMACMap("openwrt.fdb", parseBridgeFdb(out))
 }
 
 // parseBridgeFdb parsea la salida ==PORTS==/==MACS== del JS.
@@ -805,12 +820,13 @@ func parseBridgeFdb(out string) map[string]string {
 }
 
 // GetBridgeMac: MAC del bridge br-lan (para reconocer uplinks).
-func (c *OpenWrtClient) GetBridgeMac() string {
+func (c *OpenWrtClient) GetBridgeMac() macaddr.MAC {
 	out, err := c.pool.Run(c.Host, probe.CmdBridgeMAC, 0)
 	if err != nil {
-		return ""
+		return macaddr.MAC{}
 	}
-	return strings.ToUpper(strings.TrimSpace(out))
+	m, _ := macaddr.ParseOrWarn(macWarn, "openwrt.bridge_mac", strings.TrimSpace(out))
+	return m
 }
 
 // GetLuCILabels: etiquetas de puertos/VLANs de LuCI (issue #258), si el

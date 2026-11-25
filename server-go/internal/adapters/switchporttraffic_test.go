@@ -18,11 +18,11 @@ func TestApplySnmpSwitchPortTraffic(t *testing.T) {
 				{ID: "snmp-3", Label: "1/g3", RxBps: 14e6, TxBps: 0.14e6},
 				{ID: "snmp-4", Label: "1/g4", RxBps: 5e6, TxBps: 0},
 			},
-			fdb: map[string]string{
-				"AA:00:00:00:00:01": "1/g3",
-				"AA:00:00:00:00:02": "1/g3",
-				"AA:00:00:00:00:03": "1/g4",
-				"AA:00:00:00:00:04": "1/g3",
+			fdb: map[macaddr.MAC]string{
+				macaddr.MustParse("AA:00:00:00:00:01"): "1/g3",
+				macaddr.MustParse("AA:00:00:00:00:02"): "1/g3",
+				macaddr.MustParse("AA:00:00:00:00:03"): "1/g4",
+				macaddr.MustParse("AA:00:00:00:00:04"): "1/g3",
 			},
 		},
 	}
@@ -61,7 +61,7 @@ func TestApplySnmpSwitchPortTrafficSkipsAgentRouters(t *testing.T) {
 		"gw": {
 			cfg:   RouterConfig{ID: "gw"}, // SnmpEnabled false
 			ports: []EthPort{{ID: "lan1", Label: "LAN 1", RxBps: 100e6}},
-			fdb:   map[string]string{"BB:00:00:00:00:01": "lan1"},
+			fdb:   map[macaddr.MAC]string{macaddr.MustParse("BB:00:00:00:00:01"): "lan1"},
 		},
 	}
 	devices := []Device{{MAC: macaddr.MustParse("BB:00:00:00:00:01"), Online: true, RouterID: "gw", TrafficMbps: 1}}

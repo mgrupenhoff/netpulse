@@ -1,20 +1,24 @@
 package adapters
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
+)
 
 // #1791: el switch hoja detras de un switch gestionado no se inferia cuando
 // ningun distnode "managed" casaba por MAC con el bridge address del switch.
 // En su red el switch es SNMP (external+SNMP) y no hay LLDP que lo identifique,
 // asi que la inferencia nunca arrancaba y los clientes quedaban en el fan-out.
 func TestInferTopologyLeafTrasSwitchSnmpSinDistnode(t *testing.T) {
-	gwMac := "94:83:C4:00:00:01"
-	swMac := "78:55:36:00:00:02"
+	gwMac := macaddr.MustParse("94:83:C4:00:00:01")
+	swMac := macaddr.MustParse("78:55:36:00:00:02")
 	polled := map[string]*routerPolled{
-		"gw": {cfg: RouterConfig{ID: "gw", IsGateway: true}, brMac: gwMac, fdb: map[string]string{swMac: "lan2"}},
-		"sw": {cfg: RouterConfig{ID: "sw", Type: "external", SnmpEnabled: true}, brMac: swMac, fdb: map[string]string{
-			gwMac:               "1", // root port: el uplink no genera nodo
-			"AA:BB:CC:00:00:11": "3",
-			"AA:BB:CC:00:00:12": "3",
+		"gw": {cfg: RouterConfig{ID: "gw", IsGateway: true}, brMac: gwMac, fdb: map[macaddr.MAC]string{swMac: "lan2"}},
+		"sw": {cfg: RouterConfig{ID: "sw", Type: "external", SnmpEnabled: true}, brMac: swMac, fdb: map[macaddr.MAC]string{
+			gwMac:                                  "1", // root port: el uplink no genera nodo
+			macaddr.MustParse("AA:BB:CC:00:00:11"): "3",
+			macaddr.MustParse("AA:BB:CC:00:00:12"): "3",
 		}},
 	}
 	devices := []Device{
@@ -48,14 +52,14 @@ func TestInferTopologyLeafTrasSwitchSnmpSinDistnode(t *testing.T) {
 // Mismo caso con el tipo managed-switch y sin LLDP: antes tambien fallaba,
 // porque el ancla exigia un distnode managed con la chassis-MAC exacta.
 func TestInferTopologyLeafTrasManagedSwitchSinLldp(t *testing.T) {
-	gwMac := "94:83:C4:00:00:01"
-	swMac := "78:55:36:00:00:02"
+	gwMac := macaddr.MustParse("94:83:C4:00:00:01")
+	swMac := macaddr.MustParse("78:55:36:00:00:02")
 	polled := map[string]*routerPolled{
-		"gw": {cfg: RouterConfig{ID: "gw", IsGateway: true}, brMac: gwMac, fdb: map[string]string{swMac: "lan2"}},
-		"sw": {cfg: RouterConfig{ID: "sw", Type: "managed-switch"}, brMac: swMac, fdb: map[string]string{
-			gwMac:               "1",
-			"AA:BB:CC:00:00:11": "5",
-			"AA:BB:CC:00:00:12": "5",
+		"gw": {cfg: RouterConfig{ID: "gw", IsGateway: true}, brMac: gwMac, fdb: map[macaddr.MAC]string{swMac: "lan2"}},
+		"sw": {cfg: RouterConfig{ID: "sw", Type: "managed-switch"}, brMac: swMac, fdb: map[macaddr.MAC]string{
+			gwMac:                                  "1",
+			macaddr.MustParse("AA:BB:CC:00:00:11"): "5",
+			macaddr.MustParse("AA:BB:CC:00:00:12"): "5",
 		}},
 	}
 	devices := []Device{
@@ -77,14 +81,14 @@ func TestInferTopologyLeafTrasManagedSwitchSinLldp(t *testing.T) {
 // El guardarraíl se mantiene: un AP con agente (AgentOnly) NO genera nodos
 // hoja, porque su puerto multi-MAC es su uplink y no un switch local.
 func TestInferTopologyApConAgenteNoGeneraHojas(t *testing.T) {
-	gwMac := "94:83:C4:00:00:01"
-	apMac := "8C:DE:F9:00:00:03"
+	gwMac := macaddr.MustParse("94:83:C4:00:00:01")
+	apMac := macaddr.MustParse("8C:DE:F9:00:00:03")
 	polled := map[string]*routerPolled{
-		"gw": {cfg: RouterConfig{ID: "gw", IsGateway: true}, brMac: gwMac, fdb: map[string]string{apMac: "lan2"}},
-		"ap": {cfg: RouterConfig{ID: "ap", Type: "openwrt", AgentOnly: true}, brMac: apMac, fdb: map[string]string{
-			gwMac:               "lan1",
-			"AA:BB:CC:00:00:11": "lan2",
-			"AA:BB:CC:00:00:12": "lan2",
+		"gw": {cfg: RouterConfig{ID: "gw", IsGateway: true}, brMac: gwMac, fdb: map[macaddr.MAC]string{apMac: "lan2"}},
+		"ap": {cfg: RouterConfig{ID: "ap", Type: "openwrt", AgentOnly: true}, brMac: apMac, fdb: map[macaddr.MAC]string{
+			gwMac:                                  "lan1",
+			macaddr.MustParse("AA:BB:CC:00:00:11"): "lan2",
+			macaddr.MustParse("AA:BB:CC:00:00:12"): "lan2",
 		}},
 	}
 	devices := []Device{

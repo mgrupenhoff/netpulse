@@ -12,7 +12,6 @@ package adapters
 
 import (
 	"fmt"
-	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -869,12 +868,12 @@ func (l *Live) polledFromAgent(cfg RouterConfig, p *probe.Payload) *routerPolled
 		out.latencyMs = sd.LatencyMs
 		out.lossPct = sd.LossPct
 		out.backhaul = sd.Backhaul
-		out.brMac = sd.BridgeMAC
+		out.brMac, _ = macaddr.ParseOrWarn(macWarn, "agent.bridge_mac", sd.BridgeMAC)
 		// #1765: identidades propias del equipo. El agente manda las MACs de
 		// todas sus interfaces; sin esto solo se absorbía la del bridge y el
 		// resto (VLANs, puerto CPU de un switch DSA, radios) aparecía como
 		// cliente desconocido cuando un vecino las aprendía en su FDB.
-		out.selfMacs = sd.IfaceMACs
+		out.selfMacs = parseMACSlice("agent.self_mac", sd.IfaceMACs)
 		out.flash = sd.Flash
 		out.firmwareAvailable = sd.FirmwareAvailable
 	} else if cached != nil && cached.system != nil && cached.systemKind == agentSourceClass(p.Kind) {
@@ -994,7 +993,7 @@ func (l *Live) polledFromAgent(cfg RouterConfig, p *probe.Payload) *routerPolled
 	}
 	if fd := p.Data.FDB; fd != nil {
 		if fd.MACs != nil {
-			out.fdb = fd.MACs
+			out.fdb = parseMACMap("agent.fdb", fd.MACs)
 		}
 		// Sección FDB fresca: el hint wireless-side se pisa tal cual, incluso
 		// vacío (nadie lo refresca ya: agente caído o pasado a SSH). Solo un
@@ -1004,31 +1003,24 @@ func (l *Live) polledFromAgent(cfg RouterConfig, p *probe.Payload) *routerPolled
 		// #1757: VLAN real de cada cliente cableado, tal como el bridge la
 		// aprendió. Se pisa tal cual (incluso vacío) por la misma razón que el
 		// hint wireless-side: una sección fresca es la verdad del equipo.
-		out.fdbVlans = fd.VLANs
+		out.fdbVlans = parseMACMap("agent.fdb_vlans", fd.VLANs)
 		if len(fd.Ports) > 0 {
 			out.ports = ethPortsToAdapter(fd.Ports)
 			// #291: los pushers externos declaran el puerto del FDB como
 			// número ("1") mientras sus bocas usan id "lan1". Normalizar
 			// para que el enriquecimiento del detalle (MAC→nombre por boca)
-			// y la topología casen ambas claves.
-			// fd.MACs es el mapa del payload publicado en AgentRegistry, que
-			// otras goroutines leen (persistAgentState, el beacon periódico):
-			// se reescribe sobre una copia, hecha solo si hay algo que cambiar.
+			// y la topología casen ambas claves. out.fdb es una copia nueva
+			// propiedad de este routerPolled (nunca muta fd.MACs).
 			ids := map[string]bool{}
 			for _, ep := range out.ports {
 				ids[ep.ID] = true
 			}
 			if len(ids) > 0 {
-				copied := false
-				for mac, port := range fd.MACs {
+				for mac, port := range out.fdb {
 					if port == "wan" || ids[port] {
 						continue
 					}
 					if lan := "lan" + port; ids[lan] {
-						if !copied {
-							out.fdb = maps.Clone(fd.MACs)
-							copied = true
-						}
 						out.fdb[mac] = lan
 					}
 				}
@@ -1090,7 +1082,7 @@ func (l *Live) polledFromAgent(cfg RouterConfig, p *probe.Payload) *routerPolled
 
 	if cached == nil {
 		cached = &extrasSnapshot{ports: []EthPort{}, radios: []Radio{},
-			wireless: map[macaddr.MAC]WirelessClient{}, fdb: map[string]string{}}
+			wireless: map[macaddr.MAC]WirelessClient{}, fdb: map[macaddr.MAC]string{}}
 	}
 	if out.ports == nil {
 		// Copia: cached.ports es el slice de un routerPolled ya publicado en

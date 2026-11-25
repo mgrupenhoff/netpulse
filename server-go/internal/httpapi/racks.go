@@ -104,7 +104,7 @@ func (s *server) buildRackHints(ctx context.Context, mounts []rack.MountRow) []r
 	if prov, ok := s.adapter.(adapters.FleetFdbProvider); ok {
 		infra := s.uplinkUnitID()
 		if infra != "" {
-			for childID, up := range prov.FleetFdbUplinks(infra, routerMAC[infra].String()) {
+			for childID, up := range prov.FleetFdbUplinks(infra, routerMAC[infra]) {
 				addHint(routerMAC[up.ParentID], routerMAC[childID], up.Port, up.ChildPort)
 			}
 		}

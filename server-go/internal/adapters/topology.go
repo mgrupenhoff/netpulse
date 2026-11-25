@@ -42,19 +42,20 @@ import (
 // ---------------------------------------------------------------------------
 
 // hypervisorOUI: prefijos de MAC de hipervisores conocidos.
-var hypervisorOUI = []string{
-	"BC:24:11", // Proxmox VE
-	"00:50:56", // VMware (ESXi/Workstation)
-	"00:0C:29", // VMware
-	"00:15:5D", // Hyper-V
-	"52:54:00", // KVM/QEMU
-	"08:00:27", // VirtualBox
+var hypervisorOUI = [][3]byte{
+	{0xBC, 0x24, 0x11}, // Proxmox VE
+	{0x00, 0x50, 0x56}, // VMware (ESXi/Workstation)
+	{0x00, 0x0C, 0x29}, // VMware
+	{0x00, 0x15, 0x5D}, // Hyper-V
+	{0x52, 0x54, 0x00}, // KVM/QEMU
+	{0x08, 0x00, 0x27}, // VirtualBox
 }
 
-func isHypervisorMAC(mac string) bool {
-	upper := strings.ToUpper(mac)
+func isHypervisorMAC(mac macaddr.MAC) bool {
+	b := mac.As6()
+	oui := [3]byte{b[0], b[1], b[2]}
 	for _, p := range hypervisorOUI {
-		if strings.HasPrefix(upper, p) {
+		if oui == p {
 			return true
 		}
 	}
@@ -62,8 +63,8 @@ func isHypervisorMAC(mac string) bool {
 }
 
 // fdbByPort invierte el FDB: puerto → MACs (el WAN no es distribución LAN).
-func fdbByPort(fdb map[string]string) map[string][]string {
-	byPort := map[string][]string{}
+func fdbByPort(fdb map[macaddr.MAC]string) map[string][]macaddr.MAC {
+	byPort := map[string][]macaddr.MAC{}
 	for mac, port := range fdb {
 		if port == "wan" {
 			continue
@@ -73,25 +74,12 @@ func fdbByPort(fdb map[string]string) map[string][]string {
 	return byPort
 }
 
-// fdbPortOf devuelve el puerto donde el FDB aprendio `mac`, comparando sin
-// distinguir mayusculas (las claves del FDB no vienen normalizadas). #2084:
-// si el vecino LLDP ya se aprende por otro puerto, el anuncio de este no es
-// un enlace hacia ese equipo.
-func fdbPortOf(fdb map[string]string, mac string) (string, bool) {
-	for m, port := range fdb {
-		if strings.EqualFold(m, mac) {
-			return port, true
-		}
-	}
-	return "", false
-}
-
 // keptMacsForPort: MACs del puerto `port` que cuentan como clientes reales
 // del router (excluye las bridge-MACs de routers y los clientes de OTROS
 // routers: los clientes wifi de un AP aparecen en el FDB del gateway por el
 // puerto del uplink).
-func keptMacsForPort(portMACs []string, routerID string, byMAC map[string]int, devices []Device, routerMACs map[string]bool) []string {
-	kept := make([]string, 0, len(portMACs))
+func keptMacsForPort(portMACs []macaddr.MAC, routerID string, byMAC map[macaddr.MAC]int, devices []Device, routerMACs map[macaddr.MAC]bool) []macaddr.MAC {
+	kept := make([]macaddr.MAC, 0, len(portMACs))
 	for _, mac := range portMACs {
 		if routerMACs[mac] {
 			continue
@@ -116,8 +104,8 @@ func keptMacsForPort(portMACs []string, routerID string, byMAC map[string]int, d
 // transitan por el switch). A diferencia de keptMacsForPort, NO filtra por
 // RouterID: los clientes cableados de un switch se atribuyen al DHCP server
 // (casi siempre el gateway), no al switch, y aquí importa el enlace físico.
-func leafSwitchClients(portMACs []string, byMAC map[string]int, devices []Device, routerMACs map[string]bool) []string {
-	kept := make([]string, 0, len(portMACs))
+func leafSwitchClients(portMACs []macaddr.MAC, byMAC map[macaddr.MAC]int, devices []Device, routerMACs map[macaddr.MAC]bool) []macaddr.MAC {
+	kept := make([]macaddr.MAC, 0, len(portMACs))
 	for _, mac := range portMACs {
 		if routerMACs[mac] {
 			continue
@@ -135,8 +123,8 @@ func leafSwitchClients(portMACs []string, byMAC map[string]int, devices []Device
 // hypervisorHostMAC: MAC del host de un hipervisor claro en `kept` (MACs OUI
 // de hipervisor + exactamente un host normal, siendo ese host un Device del
 // router). Vacío+false si el puerto no es un hipervisor claro.
-func hypervisorHostMAC(kept []string, routerID string, byMAC map[string]int, devices []Device) (string, bool) {
-	var vmMACs, hostMACs []string
+func hypervisorHostMAC(kept []macaddr.MAC, routerID string, byMAC map[macaddr.MAC]int, devices []Device) (macaddr.MAC, bool) {
+	var vmMACs, hostMACs []macaddr.MAC
 	for _, mac := range kept {
 		if isHypervisorMAC(mac) {
 			vmMACs = append(vmMACs, mac)
@@ -149,12 +137,12 @@ func hypervisorHostMAC(kept []string, routerID string, byMAC map[string]int, dev
 			return hostMACs[0], true
 		}
 	}
-	return "", false
+	return macaddr.MAC{}, false
 }
 
 // attachKeptToDist: setPort para los clientes cableados del puerto y cuelga
 // del distnode a todos salvo al propio switch (SPEC-CANON D2: sin self-attach).
-func attachKeptToDist(devices []Device, byMAC map[string]int, routerID, distID, port, portLabel string, kept []string, switchMac string) {
+func attachKeptToDist(devices []Device, byMAC map[macaddr.MAC]int, routerID, distID, port, portLabel string, kept []macaddr.MAC, switchMac macaddr.MAC) {
 	for _, mac := range kept {
 		idx, ok := byMAC[mac]
 		if !ok || devices[idx].RouterID != routerID {
@@ -179,7 +167,7 @@ func attachKeptToDist(devices []Device, byMAC map[string]int, routerID, distID, 
 // nodo managed: es un enlace router↔router (uplink), su puerto queda resuelto.
 // Un puerto hipervisor claro se deja para el FDB (la evidencia de hipervisor
 // manda sobre la de LLDP).
-func inferLldpLinks(polled map[string]*routerPolled, devices []Device, byMAC map[string]int, routerMACs map[string]bool, routers []routerIdentity) ([]DistributionNode, map[string]map[string]bool) {
+func inferLldpLinks(polled map[string]*routerPolled, devices []Device, byMAC map[macaddr.MAC]int, routerMACs map[macaddr.MAC]bool, routers []routerIdentity) ([]DistributionNode, map[string]map[string]bool) {
 	handled := map[string]map[string]bool{}
 	markHandled := func(routerID, port string) {
 		if handled[routerID] == nil {
@@ -187,7 +175,7 @@ func inferLldpLinks(polled map[string]*routerPolled, devices []Device, byMAC map
 		}
 		handled[routerID][port] = true
 	}
-	distByMac := map[string]string{}
+	distByMac := map[macaddr.MAC]string{}
 
 	routerIDs := slices.Sorted(maps.Keys(polled))
 
@@ -226,13 +214,11 @@ func inferLldpLinks(polled map[string]*routerPolled, devices []Device, byMAC map
 				// B por un access port que spanning tree tiene en Discarding.
 				// Materializar el nodo ahi dibujaba el mismo switch dos veces,
 				// sobre una entrada FDB que oscila con cada trama LLDP.
-				if ri.BrMac != "" {
-					if learned, ok := fdbPortOf(p.fdb, ri.BrMac); ok && !strings.EqualFold(learned, nb.Port) {
-						markHandled(routerID, nb.Port)
-						continue
-					}
+				if learned, ok := p.fdb[ri.BrMac]; ok && !strings.EqualFold(learned, nb.Port) {
+					markHandled(routerID, nb.Port)
+					continue
 				}
-			} else if nb.ChassisMac == "" || !containsMAC(kept, nb.ChassisMac) {
+			} else if !nb.ChassisMac.IsValid() || !slices.Contains(kept, nb.ChassisMac) {
 				// Ni identidad de router ni chassis-MAC aprendida en el puerto:
 				// no hay evidencia de que sea el equipo que multiplexa.
 				continue
@@ -243,27 +229,30 @@ func inferLldpLinks(polled map[string]*routerPolled, devices []Device, byMAC map
 			if len(kept) == 1 {
 				continue // cableado directo, sin nodo de distribución
 			}
-			upper := strings.ToUpper(nb.ChassisMac)
-			if upper != "" {
-				if _, dup := distByMac[upper]; dup {
+			if nb.ChassisMac.IsValid() {
+				if _, dup := distByMac[nb.ChassisMac]; dup {
 					markHandled(routerID, nb.Port)
 					continue
 				}
 			}
 			id := fmt.Sprintf("dist-%s-%s", routerID, nb.Port)
-			parent := distByMac[strings.ToUpper(p.brMac)]
-			if upper != "" {
-				distByMac[upper] = id
+			parent := ""
+			if p.brMac.IsValid() {
+				parent = distByMac[p.brMac]
 			}
-			nbMac, _ := macaddr.ParseOrWarn(macWarn, "topology.lldp_chassis_mac", nb.ChassisMac)
+			if nb.ChassisMac.IsValid() {
+				distByMac[nb.ChassisMac] = id
+			}
 			dists = append(dists, DistributionNode{
 				ID: id, Kind: "managed", RouterID: routerID, Port: nb.Port,
 				PortLabel: portLabel(p, nb.Port), Parent: parent,
 				MacCount: len(kept), Name: nb.displayName(), Ip: nb.Mgmt,
-				Mac: nbMac, Lldp: nb.info(),
+				Mac: nb.ChassisMac, Lldp: nb.info(),
 			})
-			if idx, ok := byMAC[nb.ChassisMac]; ok {
-				devices[idx].Infra = "managed-switch"
+			if nb.ChassisMac.IsValid() {
+				if idx, ok := byMAC[nb.ChassisMac]; ok {
+					devices[idx].Infra = "managed-switch"
+				}
 			}
 			attachKeptToDist(devices, byMAC, routerID, id, nb.Port, portLabel(p, nb.Port), kept, nb.ChassisMac)
 			markHandled(routerID, nb.Port)
@@ -308,16 +297,16 @@ func claimSwitchFdbClients(polled map[string]*routerPolled, devices []Device, di
 		return
 	}
 	gw := polled[gatewayID]
-	if gw == nil || gw.brMac == "" {
+	if gw == nil || !gw.brMac.IsValid() {
 		return
 	}
-	gwMac := strings.ToUpper(gw.brMac)
-	routerMACs := map[string]bool{}
+	gwMac := gw.brMac
+	routerMACs := map[macaddr.MAC]bool{}
 	ids := make([]string, 0, len(polled))
 	for id, p := range polled {
 		ids = append(ids, id)
-		if p.brMac != "" {
-			routerMACs[strings.ToUpper(p.brMac)] = true
+		if p.brMac.IsValid() {
+			routerMACs[p.brMac] = true
 		}
 	}
 	sort.Strings(ids)
@@ -368,7 +357,7 @@ func claimSwitchFdbClients(polled map[string]*routerPolled, devices []Device, di
 		port     string
 		depth    int
 	}
-	best := map[string]swClaim{}
+	best := map[macaddr.MAC]swClaim{}
 	for _, sid := range ids {
 		if sid == gatewayID {
 			continue
@@ -382,7 +371,7 @@ func claimSwitchFdbClients(polled map[string]*routerPolled, devices []Device, di
 			continue // sin root port conocido: no se distingue arriba de abajo
 		}
 		for mac, port := range p.fdb {
-			if port == root || mac == "" {
+			if port == root {
 				continue
 			}
 			if routerMACs[mac] {
@@ -423,7 +412,7 @@ func claimSwitchFdbClients(polled map[string]*routerPolled, devices []Device, di
 		if d.AttachTo != "" && distRouter[d.AttachTo] != gatewayID {
 			continue // device-hub, distnode de otro router o id desconocido
 		}
-		c, ok := best[d.MAC.String()]
+		c, ok := best[d.MAC]
 		if !ok {
 			continue
 		}
@@ -433,27 +422,17 @@ func claimSwitchFdbClients(polled map[string]*routerPolled, devices []Device, di
 	}
 }
 
-// containsMAC: ¿está mac (case-sensitive, como el FDB) en la lista?
-func containsMAC(macs []string, mac string) bool {
-	for _, m := range macs {
-		if m == mac {
-			return true
-		}
-	}
-	return false
-}
-
 // inferTopology enriquece devices con Port/AttachTo e infiere los
 // DistributionNode del FDB sondeado. `polled` lleva fdb (MAC→puerto, ya
 // filtrado a lanN/wan por parseBridgeFdb) y brMac por router.
 func inferTopology(polled map[string]*routerPolled, devices []Device) ([]Device, []DistributionNode) {
-	byMAC := make(map[string]int, len(devices))
+	byMAC := make(map[macaddr.MAC]int, len(devices))
 	for i, d := range devices {
-		byMAC[d.MAC.String()] = i
+		byMAC[d.MAC] = i
 	}
-	routerMACs := map[string]bool{}
+	routerMACs := map[macaddr.MAC]bool{}
 	for _, p := range polled {
-		if p.brMac != "" {
+		if p.brMac.IsValid() {
 			routerMACs[p.brMac] = true
 		}
 	}
@@ -507,7 +486,7 @@ func inferTopology(polled map[string]*routerPolled, devices []Device) ([]Device,
 
 			// puerto multi-MAC
 			id := fmt.Sprintf("dist-%s-%s", routerID, port)
-			var vmMACs, hostMACs []string
+			var vmMACs, hostMACs []macaddr.MAC
 			for _, mac := range kept {
 				if isHypervisorMAC(mac) {
 					vmMACs = append(vmMACs, mac)
@@ -559,7 +538,7 @@ func inferTopology(polled map[string]*routerPolled, devices []Device) ([]Device,
 					if !rp.cfg.AgentOnly {
 						continue
 					}
-					swMacs := map[string]bool{}
+					swMacs := map[macaddr.MAC]bool{}
 					for mac := range rp.fdb {
 						swMacs[mac] = true
 					}
@@ -596,9 +575,9 @@ func inferTopology(polled map[string]*routerPolled, devices []Device) ([]Device,
 	// La fase FDB no los veía porque keptMacsForPort filtra por RouterID y
 	// los clientes de un switch se atribuyen al DHCP server (el gateway).
 	if gatewayID != "" {
-		gwMac := ""
+		var gwMac macaddr.MAC
 		if gw := polled[gatewayID]; gw != nil {
-			gwMac = strings.ToUpper(gw.brMac)
+			gwMac = gw.brMac
 		}
 		// #1791: se recorre la unidad gestionada aunque NINGUN distnode la case
 		// por MAC. Antes hacian falta dos cosas a la vez: un distnode "managed"
@@ -613,7 +592,7 @@ func inferTopology(polled map[string]*routerPolled, devices []Device) ([]Device,
 		var candidates []swCandidate
 		for _, id := range routerIDs {
 			p := polled[id]
-			if p == nil || p.brMac == "" || len(p.fdb) == 0 {
+			if p == nil || !p.brMac.IsValid() || len(p.fdb) == 0 {
 				continue
 			}
 			// Solo switches gestionados de verdad: un AP con agente (AgentOnly)
@@ -622,12 +601,10 @@ func inferTopology(polled map[string]*routerPolled, devices []Device) ([]Device,
 				continue
 			}
 			parent := ""
-			if pBr, err := macaddr.Parse(p.brMac); err == nil {
-				for _, dn := range dists {
-					if dn.Kind == "managed" && dn.Mac == pBr {
-						parent = dn.ID
-						break
-					}
+			for _, dn := range dists {
+				if dn.Kind == "managed" && dn.Mac == p.brMac {
+					parent = dn.ID
+					break
 				}
 			}
 			candidates = append(candidates, swCandidate{id: id, parent: parent})
@@ -635,10 +612,7 @@ func inferTopology(polled map[string]*routerPolled, devices []Device) ([]Device,
 		for _, cand := range candidates {
 			switchID := cand.id
 			p := polled[switchID]
-			rootPort := ""
-			if gwMac != "" {
-				rootPort = p.fdb[gwMac]
-			}
+			rootPort := p.fdb[gwMac]
 			byPort := fdbByPort(p.fdb)
 			ports := slices.Sorted(maps.Keys(byPort))
 			for _, port := range ports {
@@ -693,7 +667,7 @@ func inferTopology(polled map[string]*routerPolled, devices []Device) ([]Device,
 	for _, routerID := range routerIDs {
 		for i := range polled[routerID].lldp {
 			nb := &polled[routerID].lldp[i]
-			if nb.ChassisMac == "" {
+			if !nb.ChassisMac.IsValid() {
 				continue
 			}
 			if idx, ok := byMAC[nb.ChassisMac]; ok {
@@ -743,7 +717,7 @@ func portLabel(p *routerPolled, port string) string {
 // chassis-MAC dejaba links sin descubrir con lldpd instalado en todo (issue #252).
 type routerIdentity struct {
 	ID, Name, Host string
-	BrMac          string
+	BrMac          macaddr.MAC
 	// Type: tipo del router en la config ("glinet"|"openwrt"|"managed-switch"|…).
 	// Distingue un switch gestionado (managed-switch) de un router regular:
 	// un vecino LLDP que identifica a un router regular es un enlace
@@ -783,7 +757,7 @@ func neighborIsRouter(nb *LldpNeighbor, routers []routerIdentity, selfID string)
 		if r.ID == selfID {
 			continue
 		}
-		if nb.ChassisMac != "" && r.BrMac != "" && strings.EqualFold(nb.ChassisMac, r.BrMac) {
+		if nb.ChassisMac.IsValid() && r.BrMac == nb.ChassisMac {
 			return r
 		}
 	}

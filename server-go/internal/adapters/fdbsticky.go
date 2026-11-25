@@ -15,6 +15,8 @@ package adapters
 import (
 	"maps"
 	"time"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 // fdbStickyTTL: frescura de la memo. Los dispositivos AV despiertan y hablan
@@ -34,7 +36,7 @@ type fdbPortMemo struct {
 // detectados en el FDB de este tick. Los detectados se graban en el set
 // persistente para sobrevivir a ticks sin la brMac y a sondeos fallidos (#694).
 // Asume que l.mu está tomado.
-func (l *Live) uplinkPortsLocked(routerID string, fdb map[string]string, brMacs map[string]bool) map[string]bool {
+func (l *Live) uplinkPortsLocked(routerID string, fdb map[macaddr.MAC]string, brMacs map[macaddr.MAC]bool) map[string]bool {
 	if l.uplinkPorts == nil {
 		l.uplinkPorts = map[string]map[string]bool{}
 	}
@@ -57,7 +59,7 @@ func (l *Live) uplinkPortsLocked(routerID string, fdb map[string]string, brMacs 
 }
 
 // uplinkPortsFor es la variante de uplinkPortsLocked para callers sin l.mu.
-func (l *Live) uplinkPortsFor(routerID string, fdb map[string]string, brMacs map[string]bool) map[string]bool {
+func (l *Live) uplinkPortsFor(routerID string, fdb map[macaddr.MAC]string, brMacs map[macaddr.MAC]bool) map[string]bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.uplinkPortsLocked(routerID, fdb, brMacs)
@@ -77,24 +79,24 @@ func (l *Live) uplinkPortsFor(routerID string, fdb map[string]string, brMacs map
 // siendo uplink aunque la brMac del AP no esté en el FDB del gateway ese tick,
 // y el gateway deja de pisar la observación local del satélite (el ganador deja
 // de depender del orden aleatorio de iteración del mapa).
-func (l *Live) updateFdbMemo(polled map[string]*routerPolled, nowMs int64) map[string]fdbPortMemo {
+func (l *Live) updateFdbMemo(polled map[string]*routerPolled, nowMs int64) map[macaddr.MAC]fdbPortMemo {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.fdbMemo == nil {
-		l.fdbMemo = map[string]fdbPortMemo{}
+		l.fdbMemo = map[macaddr.MAC]fdbPortMemo{}
 	}
-	brMacs := map[string]bool{}
-	online := map[string]bool{}
+	brMacs := map[macaddr.MAC]bool{}
+	online := map[macaddr.MAC]bool{}
 	for _, p := range polled {
-		if p.brMac != "" {
+		if p.brMac.IsValid() {
 			brMacs[p.brMac] = true
 		}
 		for mac := range p.arp {
-			online[mac.String()] = true
+			online[mac] = true
 		}
 		for _, le := range p.leases {
 			if le.MAC.IsValid() {
-				online[le.MAC.String()] = true
+				online[le.MAC] = true
 			}
 		}
 	}
@@ -129,11 +131,11 @@ func (l *Live) updateFdbMemo(polled map[string]*routerPolled, nowMs int64) map[s
 // overlayStickyFdb devuelve una copia de `polled` donde cada router lleva, ADEMÁS
 // de su FDB real, las MACs recordadas (memo fresca) que ya no estén presentes.
 // Función pura: no toca polled ni memo. Solo la usa inferTopology.
-func overlayStickyFdb(polled map[string]*routerPolled, memo map[string]fdbPortMemo, nowMs int64) map[string]*routerPolled {
+func overlayStickyFdb(polled map[string]*routerPolled, memo map[macaddr.MAC]fdbPortMemo, nowMs int64) map[string]*routerPolled {
 	out := make(map[string]*routerPolled, len(polled))
 	for id, p := range polled {
 		np := *p // shallow copy: solo se sustituye fdb (map propio)
-		nf := make(map[string]string, len(p.fdb)+4)
+		nf := make(map[macaddr.MAC]string, len(p.fdb)+4)
 		for k, v := range p.fdb {
 			nf[k] = v
 		}
