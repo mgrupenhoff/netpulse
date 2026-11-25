@@ -925,10 +925,10 @@ func (l *Live) polledFromAgent(cfg RouterConfig, p *probe.Payload) *routerPolled
 		}
 	}
 	if dd := p.Data.DHCP; dd != nil {
-		out.leases = dd.Leases
+		out.leases = leasesFromProbe("agent.dhcp_lease", dd.Leases)
 		// gl-clients del agente (GL.iNet): enriquece IPs igual que en la
 		// ruta SSH (issue #5 bug 1).
-		out.glClients = dd.GlClients
+		out.glClients = leasesFromProbe("agent.gl_client", dd.GlClients)
 	}
 	if p.Data.Arp != nil {
 		out.arp = p.Data.Arp
@@ -988,7 +988,7 @@ func (l *Live) polledFromAgent(cfg RouterConfig, p *probe.Payload) *routerPolled
 		out.wifiNet = cached.wifiNet
 	}
 	if dh := p.Data.DHCP; dh != nil && len(dh.Reservations) > 0 {
-		out.reservations = dh.Reservations
+		out.reservations = reservationsFromProbe(dh.Reservations)
 	}
 	if fd := p.Data.FDB; fd != nil {
 		if fd.MACs != nil {
@@ -1082,7 +1082,7 @@ func (l *Live) polledFromAgent(cfg RouterConfig, p *probe.Payload) *routerPolled
 	out.clientBw = resolveClientBw()
 	// Discovery (#338): mDNS services + randomized MACs. Best-effort.
 	if p.Data.Discovery != nil {
-		out.discovery = p.Data.Discovery
+		out.discovery = discoveryFromProbe(p.Data.Discovery)
 	}
 	out.dawnDetected = p.Data.Dawn != nil
 

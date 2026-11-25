@@ -282,7 +282,7 @@ func TestParseDhcpLeasesFile(t *testing.T) {
 	if len(leases) != 2 {
 		t.Fatalf("leases: %d", len(leases))
 	}
-	if leases[0].MAC != "AA:BB:CC:DD:EE:FF" || leases[0].Hostname != "imac-de-marc" {
+	if leases[0].MAC != macaddr.MustParse("AA:BB:CC:DD:EE:FF") || leases[0].Hostname != "imac-de-marc" {
 		t.Fatalf("lease0: %+v", leases[0])
 	}
 	if leases[1].Hostname != "" {

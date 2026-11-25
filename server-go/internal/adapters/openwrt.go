@@ -114,18 +114,108 @@ type netIfSample struct {
 // LOCALMENTE con el mismo package (misma fuente de verdad) y empuja esos
 // shapes al endpoint de ingesta (SPEC-AGENTE-PILOTO §1-2).
 type (
-	SysInfo         = probe.SysInfo
-	BoardInfo       = probe.BoardInfo
-	DhcpLease       = probe.DhcpLease
-	WirelessClient  = probe.WirelessClient
-	PortState       = probe.PortState
-	PortLayout      = probe.PortLayout
-	VlanPort        = probe.VlanPort
-	MultiWanInfo    = probe.MultiWanInfo
-	WanUplink       = probe.WanUplink
-	VlanEntry       = probe.VlanEntry
-	DhcpReservation = probe.DhcpReservation
+	SysInfo        = probe.SysInfo
+	BoardInfo      = probe.BoardInfo
+	WirelessClient = probe.WirelessClient
+	PortState      = probe.PortState
+	PortLayout     = probe.PortLayout
+	VlanPort       = probe.VlanPort
+	MultiWanInfo   = probe.MultiWanInfo
+	WanUplink      = probe.WanUplink
+	VlanEntry      = probe.VlanEntry
 )
+
+// DhcpLease es un lease DHCP (o cliente GL.iNet) con la MAC ya validada y
+// parseada en la frontera de adapters.
+type DhcpLease struct {
+	MAC            macaddr.MAC `json:"mac"`
+	IP             string      `json:"ip"`
+	Hostname       string      `json:"hostname"`
+	VendorClass    string      `json:"vendorClass,omitempty"`
+	ClientID       string      `json:"clientId,omitempty"`
+	LeaseExpiresAt *int64      `json:"leaseExpiresAt,omitempty"`
+}
+
+// DhcpReservation es una entrada `config host` de /etc/config/dhcp con la MAC
+// ya parseada en la frontera de adapters.
+type DhcpReservation struct {
+	MAC  macaddr.MAC `json:"mac"`
+	Name string      `json:"name,omitempty"`
+	IP   string      `json:"ip,omitempty"`
+}
+
+// discoverySnapshot es la vista interna de probe.DiscoveryData con las MACs
+// aleatorias ya parseadas a macaddr.MAC en la frontera de adapters (#338).
+type discoverySnapshot struct {
+	Services      map[string][]string
+	HostByIP      map[string]string
+	Models        map[string]string
+	Manufacturers map[string]string
+	RandomMACs    []macaddr.MAC
+}
+
+func leasesFromProbe(src string, in []probe.DhcpLease) []DhcpLease {
+	if in == nil {
+		return nil
+	}
+	out := make([]DhcpLease, 0, len(in))
+	for _, le := range in {
+		m, ok := macaddr.ParseOrWarn(macWarn, src, le.MAC)
+		if !ok {
+			continue
+		}
+		out = append(out, DhcpLease{
+			MAC:            m,
+			IP:             le.IP,
+			Hostname:       le.Hostname,
+			VendorClass:    le.VendorClass,
+			ClientID:       le.ClientID,
+			LeaseExpiresAt: le.LeaseExpiresAt,
+		})
+	}
+	return out
+}
+
+func reservationsFromProbe(in []probe.DhcpReservation) []DhcpReservation {
+	if in == nil {
+		return nil
+	}
+	out := make([]DhcpReservation, 0, len(in))
+	for _, r := range in {
+		m, ok := macaddr.ParseOrWarn(macWarn, "dhcp.reservation", r.MAC)
+		if !ok {
+			continue
+		}
+		out = append(out, DhcpReservation{
+			MAC:  m,
+			Name: r.Name,
+			IP:   r.IP,
+		})
+	}
+	return out
+}
+
+func discoveryFromProbe(in *probe.DiscoveryData) *discoverySnapshot {
+	if in == nil {
+		return nil
+	}
+	var randomMACs []macaddr.MAC
+	if len(in.RandomMACs) > 0 {
+		randomMACs = make([]macaddr.MAC, 0, len(in.RandomMACs))
+		for _, raw := range in.RandomMACs {
+			if m, ok := macaddr.ParseOrWarn(macWarn, "discovery.random_mac", raw); ok {
+				randomMACs = append(randomMACs, m)
+			}
+		}
+	}
+	return &discoverySnapshot{
+		Services:      in.Services,
+		HostByIP:      in.HostByIP,
+		Models:        in.Models,
+		Manufacturers: in.Manufacturers,
+		RandomMACs:    randomMACs,
+	}
+}
 
 // NewOpenWrtClient crea el cliente de un router.
 func NewOpenWrtClient(cfg RouterConfig, pool poolRunner, user, password string) *OpenWrtClient {
@@ -431,7 +521,7 @@ func (c *OpenWrtClient) GetDhcpLeases() []DhcpLease {
 	raw, err := c.UbusCall("dhcp", "ipv4leases", nil)
 	if err == nil {
 		if leases, perr := probe.ParseDhcpUbus(raw); perr == nil {
-			return leases
+			return leasesFromProbe("openwrt.dhcp_ubus", leases)
 		}
 	}
 	out, serr := c.pool.Run(c.Host, probe.CmdDhcpFile, 0)
@@ -468,7 +558,7 @@ func (c *OpenWrtClient) GetDhcpReservations() []DhcpReservation {
 	if err != nil {
 		return nil
 	}
-	return probe.ParseDhcpReservations(out)
+	return reservationsFromProbe(probe.ParseDhcpReservations(out))
 }
 
 // GetGlClients: base de clientes del firmware GL.iNet (`ubus call gl-clients
@@ -486,13 +576,13 @@ func (c *OpenWrtClient) GetGlClients() []DhcpLease {
 	if perr != nil {
 		return []DhcpLease{}
 	}
-	return leases
+	return leasesFromProbe("openwrt.gl_client", leases)
 }
 
 // parseDhcpLeasesFile parsea /tmp/dhcp.leases:
 // <expiry> <mac> <ip> <hostname> <clientid>
 func parseDhcpLeasesFile(out string) []DhcpLease {
-	return probe.ParseDhcpLeasesFile(out)
+	return leasesFromProbe("openwrt.dhcp_file", probe.ParseDhcpLeasesFile(out))
 }
 
 // GetWirelessClients: clientes wifi asociados (MAC → señal/banda). Port del

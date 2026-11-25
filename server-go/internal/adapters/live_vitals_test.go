@@ -167,13 +167,13 @@ func TestRouterServingDHCP(t *testing.T) {
 	l.lastPolled = map[string]*routerPolled{
 		// El gateway tiene los leases de la LAN principal (otras MACs).
 		"gateway": {cfg: RouterConfig{ID: "gateway", Host: "192.168.1.1", IsGateway: true},
-			leases: []DhcpLease{{MAC: "AA:BB:CC:DD:EE:01", IP: "192.168.1.10"}, {MAC: "AA:BB:CC:DD:EE:02", IP: "192.168.1.11"}}},
+			leases: []DhcpLease{{MAC: macaddr.MustParse("AA:BB:CC:DD:EE:01"), IP: "192.168.1.10"}, {MAC: macaddr.MustParse("AA:BB:CC:DD:EE:02"), IP: "192.168.1.11"}}},
 		// El router "lab" (LAN 2.x, dnsmasq propio) reporta el lease de la MAC.
 		"lab": {cfg: RouterConfig{ID: "lab", Host: "192.168.2.1"},
-			leases: []DhcpLease{{MAC: devMACLease, IP: "192.168.2.50"}}},
+			leases: []DhcpLease{{MAC: macaddr.MustParse(devMACLease), IP: "192.168.2.50"}}},
 		// Agent-only: reporta leases pero no tiene SSH → nunca es el target.
 		"sw-ao": {cfg: RouterConfig{ID: "sw-ao", Host: "192.168.1.9", AgentOnly: true},
-			leases: []DhcpLease{{MAC: devMACLease, IP: "192.168.2.51"}}},
+			leases: []DhcpLease{{MAC: macaddr.MustParse(devMACLease), IP: "192.168.2.51"}}},
 	}
 
 	if got := l.RouterServingDHCP(macaddr.MustParse(devMACLease)); got != "lab" {

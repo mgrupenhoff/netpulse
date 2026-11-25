@@ -235,7 +235,7 @@ type routerPolled struct {
 	multiWan *MultiWanInfo
 	// discovery: mDNS services + randomized MACs (#338). nil = sin datos
 	// (umdns no instalado o sonda fallida).
-	discovery *probe.DiscoveryData
+	discovery *discoverySnapshot
 	// dawnDetected: el agente reportó una sección DAWN en el payload. Se
 	// usa para mostrar el aviso de deprecación (#426).
 	dawnDetected bool
@@ -3836,25 +3836,26 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 			arpByMac[mac] = ip
 		}
 		for _, le := range p.leases {
-			if le.MAC != "" {
-				leasesByMac[le.MAC] = le
-				leaseRouter[le.MAC] = rID
+			if le.MAC.IsValid() {
+				k := le.MAC.String()
+				leasesByMac[k] = le
+				leaseRouter[k] = rID
 			}
 		}
 		// Static reservations: the name and address pinned in
 		// /etc/config/dhcp, and the only ones a client with a fixed address
 		// of its own ever gets, since it never takes a lease.
 		for _, r := range p.reservations {
-			if r.MAC != "" {
-				resByMac[r.MAC] = r
+			if r.MAC.IsValid() {
+				resByMac[r.MAC.String()] = r
 			}
 		}
 		// gl-clients: fallback de IP para MACs sin lease (dnsmasq sin ese
 		// cliente). No crea dispositivos: solo enriquece los ya resueltos
 		// por wireless/FDB (issue #5 bug 1).
 		for _, le := range p.glClients {
-			if le.MAC != "" && le.IP != "" {
-				glByMac[le.MAC] = le
+			if le.MAC.IsValid() && le.IP != "" {
+				glByMac[le.MAC.String()] = le
 			}
 		}
 	}
@@ -3873,7 +3874,7 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 			mdnsHostByIP[ip] = host
 		}
 		for _, mac := range p.discovery.RandomMACs {
-			randomMACs[mac] = true
+			randomMACs[mac.String()] = true
 		}
 		for host, svcs := range p.discovery.Services {
 			mdnsSvcByHost[host] = svcs
@@ -5350,7 +5351,7 @@ func (l *Live) GetRouterDetail(ctx context.Context, id string) (*RouterDetail, e
 	}
 	l.fillSparklineFromPortsOne(&router)
 	// Mapa global MAC → lease + MAC de bridge → nombre de router
-	leaseMap := map[string]DhcpLease{}
+	leaseMap := map[macaddr.MAC]DhcpLease{}
 	routerByMac := map[string]string{}
 	// Clientes WiFi por MAC → AP que los sirve (#291): si la única MAC de
 	// una boca del switch es un cliente WiFi, el equipo ENCHUFADO es el AP,
@@ -5382,7 +5383,7 @@ func (l *Live) GetRouterDetail(ctx context.Context, id string) (*RouterDetail, e
 	}
 	for _, polled := range polledAll {
 		for _, le := range polled.leases {
-			if le.MAC != "" {
+			if le.MAC.IsValid() {
 				leaseMap[le.MAC] = le
 			}
 		}
@@ -5684,7 +5685,6 @@ func (l *Live) RouterServingDHCP(mac macaddr.MAC) string {
 	if !mac.IsValid() {
 		return ""
 	}
-	want := mac.String()
 	l.mu.Lock()
 	polled := cloneLastPolled(l.lastPolled)
 	l.mu.Unlock()
@@ -5693,7 +5693,7 @@ func (l *Live) RouterServingDHCP(mac macaddr.MAC) string {
 			continue // agent-only no tiene vía SSH para escribir la reserva
 		}
 		for _, le := range p.leases {
-			if strings.ToUpper(le.MAC) == want {
+			if le.MAC == mac {
 				return id
 			}
 		}
@@ -6649,8 +6649,8 @@ func isVirtualMAC(mac string) bool {
 }
 
 // virtualDetail: nombre legible de la VM/CT detrás del hypervisor.
-func virtualDetail(mac string, leases map[string]DhcpLease, aliases map[string]string) string {
-	if n := deviceDisplayName(mac, leases, aliases); n != mac {
+func virtualDetail(mac macaddr.MAC, leases map[macaddr.MAC]DhcpLease, aliases map[string]string) string {
+	if n := deviceDisplayName(mac, leases, aliases); n != mac.String() {
 		return n + " (VM/CT detrás)"
 	}
 	return "VM/CT detrás"
@@ -6671,7 +6671,7 @@ func isCuratedLabel(port EthPort) bool {
 
 // labelMatchesDevice: ¿la label curada nombra al propio dispositivo
 // aprendido (p. ej. "hikvision") y no a la infraestructura que hay delante?
-func labelMatchesDevice(label, mac string, leases map[string]DhcpLease, aliases map[string]string) bool {
+func labelMatchesDevice(label string, mac macaddr.MAC, leases map[macaddr.MAC]DhcpLease, aliases map[string]string) bool {
 	name := strings.ToLower(deviceDisplayName(mac, leases, aliases))
 	l := strings.ToLower(label)
 	if name == "" || l == "" {
@@ -6681,21 +6681,21 @@ func labelMatchesDevice(label, mac string, leases map[string]DhcpLease, aliases 
 }
 
 // deviceDisplayName: hostname de lease > alias > MAC.
-func deviceDisplayName(mac string, leases map[string]DhcpLease, aliases map[string]string) string {
+func deviceDisplayName(mac macaddr.MAC, leases map[macaddr.MAC]DhcpLease, aliases map[string]string) string {
 	if le, ok := leases[mac]; ok && le.Hostname != "" {
 		return le.Hostname
 	}
-	if a := aliases[mac]; a != "" {
+	if a := aliases[mac.String()]; a != "" {
 		return a
 	}
-	return mac
+	return mac.String()
 }
 
 // portEnrichDeps: mapas compartidos del enriquecimiento de bocas del
 // detalle (extraído de GetRouterDetail, #1150, para poder testearlo).
 type portEnrichDeps struct {
 	routerByMac map[string]string
-	leaseMap    map[string]DhcpLease
+	leaseMap    map[macaddr.MAC]DhcpLease
 	aliasByMac  map[string]string
 	wifiByMac   map[string]string
 	portMacs    map[string][]string
@@ -6851,7 +6851,12 @@ func enrichEthPort(port EthPort, netdev string, d portEnrichDeps) EthPort {
 	// 2) Un solo dispositivo final
 	if len(all) == 1 {
 		mac := all[0]
-		lease, ok := d.leaseMap[mac]
+		parsedMac, hasParsedMac := macaddr.ParseOrWarn(macWarn, "ethport.device_mac", mac)
+		var lease DhcpLease
+		var ok bool
+		if hasParsedMac {
+			lease, ok = d.leaseMap[parsedMac]
+		}
 		// #931: un vecino LLDP en esta boca es el propio equipo
 		// anunciándose; su sysName/mgmt-ip son mejor identificación que
 		// la MAC pelada cuando no hay hostname DHCP ni alias.
@@ -6865,10 +6870,10 @@ func enrichEthPort(port EthPort, netdev string, d portEnrichDeps) EthPort {
 		// NIC virtual de una VM/CT (#291).
 		if isVirtualMAC(mac) {
 			port.ConnectedTo = "Hypervisor"
-			if m, ok := macaddr.ParseOrWarn(macWarn, "ethport.device_mac", mac); ok {
-				port.DeviceMac = m
+			if hasParsedMac {
+				port.DeviceMac = parsedMac
 			}
-			port.Detail = virtualDetail(mac, d.leaseMap, d.aliasByMac)
+			port.Detail = virtualDetail(parsedMac, d.leaseMap, d.aliasByMac)
 			return port
 		}
 		// Label curada que no coincide con el dispositivo resuelto:
@@ -6878,12 +6883,12 @@ func enrichEthPort(port EthPort, netdev string, d portEnrichDeps) EthPort {
 		// - si el dispositivo no tiene nombre mejor que su MAC, la label
 		//   ES su nombre (bautizada a mano: "hikvision"), y la MAC queda
 		//   como detalle.
-		if isCuratedLabel(port) && !labelMatchesDevice(port.Label, mac, d.leaseMap, d.aliasByMac) {
-			name := deviceDisplayName(mac, d.leaseMap, d.aliasByMac)
-			if m, ok := macaddr.ParseOrWarn(macWarn, "ethport.device_mac", mac); ok {
-				port.DeviceMac = m
+		if isCuratedLabel(port) && !labelMatchesDevice(port.Label, parsedMac, d.leaseMap, d.aliasByMac) {
+			name := deviceDisplayName(parsedMac, d.leaseMap, d.aliasByMac)
+			if hasParsedMac {
+				port.DeviceMac = parsedMac
 			}
-			if name != mac {
+			if name != "" && name != parsedMac.String() {
 				// El cliente compone "nombre · detrás de <label>" con
 				// su i18n (#1039); aquí viaja el nombre a pelo.
 				port.ConnectedTo = name
@@ -6896,7 +6901,7 @@ func enrichEthPort(port EthPort, netdev string, d portEnrichDeps) EthPort {
 				port.ConnectedTo = port.Label
 				port.PeerKind = PeerKindMAC
 			}
-			if lease, ok := d.leaseMap[mac]; ok && lease.IP != "" {
+			if ok && lease.IP != "" {
 				port.Detail = lease.IP
 			} else if lldpMgmt != "" && lldpName != "" {
 				port.Detail = lldpMgmt + " · LLDP"
@@ -6920,8 +6925,8 @@ func enrichEthPort(port EthPort, netdev string, d portEnrichDeps) EthPort {
 		default:
 			port.ConnectedTo = mac
 		}
-		if m, ok := macaddr.ParseOrWarn(macWarn, "ethport.device_mac", mac); ok {
-			port.DeviceMac = m
+		if hasParsedMac {
+			port.DeviceMac = parsedMac
 		}
 		if ok && lease.IP != "" {
 			port.Detail = lease.IP + " · full duplex"
@@ -6950,36 +6955,36 @@ func enrichEthPort(port EthPort, netdev string, d portEnrichDeps) EthPort {
 			}
 			return port
 		}
-		infraMac := ""
+		var infraMac macaddr.MAC
 		for _, mac := range all {
-			if le, ok := d.leaseMap[mac]; ok && le.Hostname != "" {
-				infraMac = mac
-				break
-			}
-		}
-		if infraMac == "" {
-			// Sin hostname DHCP: primer alias manual como pista (#291).
-			for _, mac := range all {
-				if d.aliasByMac[mac] != "" {
-					infraMac = mac
+			if m, ok := macaddr.ParseOrWarn(macWarn, "ethport.device_mac", mac); ok {
+				if le, ok := d.leaseMap[m]; ok && le.Hostname != "" {
+					infraMac = m
 					break
 				}
 			}
 		}
-		if infraMac != "" {
+		if !infraMac.IsValid() {
+			// Sin hostname DHCP: primer alias manual como pista (#291).
+			for _, mac := range all {
+				if d.aliasByMac[mac] != "" {
+					if m, ok := macaddr.ParseOrWarn(macWarn, "ethport.device_mac", mac); ok {
+						infraMac = m
+						break
+					}
+				}
+			}
+		}
+		if infraMac.IsValid() {
 			if lease, ok := d.leaseMap[infraMac]; ok && lease.Hostname != "" {
 				port.ConnectedTo = lease.Hostname
-				if m, ok := macaddr.ParseOrWarn(macWarn, "ethport.device_mac", infraMac); ok {
-					port.DeviceMac = m
-				}
+				port.DeviceMac = infraMac
 				if lease.IP != "" {
 					port.Detail = lease.IP
 				}
-			} else if alias := d.aliasByMac[infraMac]; alias != "" {
+			} else if alias := d.aliasByMac[infraMac.String()]; alias != "" {
 				port.ConnectedTo = alias
-				if m, ok := macaddr.ParseOrWarn(macWarn, "ethport.device_mac", infraMac); ok {
-					port.DeviceMac = m
-				}
+				port.DeviceMac = infraMac
 			}
 		} else {
 			// Switch/bridge tonto inferido: sin lease ni alias que lo

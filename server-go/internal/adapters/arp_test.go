@@ -202,8 +202,8 @@ func TestBuildDevicesReattributesDeletedRouters(t *testing.T) {
 		"gateway": {
 			cfg: RouterConfig{ID: "gateway", Name: "Gateway", Host: "192.0.2.1", IsGateway: true},
 			leases: []DhcpLease{
-				{MAC: "02:00:00:00:00:01", IP: "192.0.2.51", Hostname: "one"},
-				{MAC: "02:00:00:00:00:02", IP: "192.0.2.52", Hostname: "two"},
+				{MAC: macaddr.MustParse("02:00:00:00:00:01"), IP: "192.0.2.51", Hostname: "one"},
+				{MAC: macaddr.MustParse("02:00:00:00:00:02"), IP: "192.0.2.52", Hostname: "two"},
 			},
 		},
 	}
@@ -268,9 +268,9 @@ func TestGetRoutersCountsClientsNotLeases(t *testing.T) {
 	l.lastPolled = map[string]*routerPolled{"gateway": {
 		cfg: cfg,
 		leases: []DhcpLease{
-			{MAC: "02:00:00:00:00:01", IP: "192.0.2.51", Hostname: "one"},
-			{MAC: "02:00:00:00:00:02", IP: "192.0.2.52", Hostname: "two"},
-			{MAC: "02:00:00:00:00:03", IP: "192.0.2.53", Hostname: "gone"},
+			{MAC: macaddr.MustParse("02:00:00:00:00:01"), IP: "192.0.2.51", Hostname: "one"},
+			{MAC: macaddr.MustParse("02:00:00:00:00:02"), IP: "192.0.2.52", Hostname: "two"},
+			{MAC: macaddr.MustParse("02:00:00:00:00:03"), IP: "192.0.2.53", Hostname: "gone"},
 		},
 		wireless: map[string]WirelessClient{
 			"02:00:00:00:00:01": {SignalDbm: -50, Band: "5 GHz"},

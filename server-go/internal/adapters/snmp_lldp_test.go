@@ -123,7 +123,7 @@ func TestGetRouterDetailLldpNoPisaHostnameDhcp(t *testing.T) {
 		},
 		fdb:      map[string]string{"78:55:36:02:58:BA": "Slot0/5"},
 		lldp:     []LldpNeighbor{{Port: "Slot0/5", Chassis: "ryzen-ai", Mgmt: "192.168.1.80"}},
-		leases:   []DhcpLease{{MAC: "78:55:36:02:58:BA", Hostname: "ryzen9AI", IP: "192.168.1.80"}},
+		leases:   []DhcpLease{{MAC: macaddr.MustParse("78:55:36:02:58:BA"), Hostname: "ryzen9AI", IP: "192.168.1.80"}},
 		polledAt: time.Now().UnixMilli(),
 	}
 
