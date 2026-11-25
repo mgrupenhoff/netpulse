@@ -67,7 +67,7 @@ func TestBuildDevicesSkipsBatadvBla(t *testing.T) {
 				"BA:BE:11:22:33:44": "lan1", // sonda del mesh
 				"AA:BB:CC:DD:EE:01": "lan1", // cliente real
 			},
-			arp: map[string]string{"AA:BB:CC:DD:EE:01": "192.168.1.50"},
+			arp: map[macaddr.MAC]string{macaddr.MustParse("AA:BB:CC:DD:EE:01"): "192.168.1.50"},
 		},
 	}
 	devs := l.buildDevices(polled, "")
@@ -123,9 +123,9 @@ func TestBuildDevicesPrefersPhysicalLANOverBatadvBackhaul(t *testing.T) {
 			"gw": {
 				cfg:   RouterConfig{ID: "gw", Name: "Gateway", Host: "192.168.1.1", IsGateway: true},
 				brMac: "AA:AA:AA:00:00:01",
-				arp: map[string]string{
-					hueMAC:  "192.168.40.10",
-					eufyMAC: "192.168.40.11",
+				arp: map[macaddr.MAC]string{
+					macaddr.MustParse(hueMAC):  "192.168.40.10",
+					macaddr.MustParse(eufyMAC): "192.168.40.11",
 				},
 			},
 			"mx1": {

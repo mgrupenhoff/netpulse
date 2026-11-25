@@ -10,6 +10,8 @@ package adapters
 import (
 	"testing"
 	"time"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 // TestUpdateFdbMemoGatewayUplinkWithoutApBrMac (#694): cuando la brMac del AP
@@ -56,7 +58,7 @@ func TestBuildDevicesKeepsApWhenApPollFails(t *testing.T) {
 	polled := map[string]*routerPolled{
 		"gateway": {cfg: RouterConfig{ID: "gateway", IsGateway: true}, brMac: "GG:GG:GG:GG:GG:GG",
 			fdb: map[string]string{"GG:GG:GG:GG:GG:GG": "lan1"},
-			arp: map[string]string{"44:44:44:44:44:44": "192.168.13.123"}},
+			arp: map[macaddr.MAC]string{macaddr.MustParse("44:44:44:44:44:44"): "192.168.13.123"}},
 	}
 	devs := l.buildDevices(polled, "")
 	if d := mustDevice(t, devs, "44:44:44:44:44:44"); d.RouterID != "ap" {
@@ -77,7 +79,7 @@ func TestUpdateFdbMemoRefreshesOnlineDevice(t *testing.T) {
 	polled := map[string]*routerPolled{
 		"gateway": {cfg: RouterConfig{ID: "gateway", IsGateway: true}, brMac: "GG:GG:GG:GG:GG:GG",
 			fdb: map[string]string{"GG:GG:GG:GG:GG:GG": "lan1"},
-			arp: map[string]string{"44:44:44:44:44:44": "192.168.13.123"}},
+			arp: map[macaddr.MAC]string{macaddr.MustParse("44:44:44:44:44:44"): "192.168.13.123"}},
 	}
 	memo := l.updateFdbMemo(polled, now)
 	m, ok := memo["44:44:44:44:44:44"]

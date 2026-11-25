@@ -37,13 +37,13 @@ func travelPolled(ov DiscoveryOverrides) *routerPolled {
 		wanInfo:    probe.WanInfo{Device: "phy1-sta0", Port: "phy1-sta0"},
 		uplinkDevs: []string{"phy1-sta0"},
 		netIfaces:  travelNetIfaces(),
-		arp: map[string]string{
-			"AA:BB:CC:00:00:01": "10.20.0.177",  // vecino en wwan (uplink)
-			"AA:BB:CC:00:00:02": "192.168.2.50", // vecino en lan
+		arp: map[macaddr.MAC]string{
+			macaddr.MustParse("AA:BB:CC:00:00:01"): "10.20.0.177",  // vecino en wwan (uplink)
+			macaddr.MustParse("AA:BB:CC:00:00:02"): "192.168.2.50", // vecino en lan
 		},
-		arpDevs: map[string]string{
-			"AA:BB:CC:00:00:01": "phy1-sta0",
-			"AA:BB:CC:00:00:02": "br-lan",
+		arpDevs: map[macaddr.MAC]string{
+			macaddr.MustParse("AA:BB:CC:00:00:01"): "phy1-sta0",
+			macaddr.MustParse("AA:BB:CC:00:00:02"): "br-lan",
 		},
 	}
 }
@@ -54,9 +54,9 @@ func travelPolled(ov DiscoveryOverrides) *routerPolled {
 // correcto.
 func TestClientDiscoveryTravelRouterNetworkRows(t *testing.T) {
 	p := travelPolled(DiscoveryOverrides{})
-	p.arp["AA:BB:CC:00:00:03"] = "10.20.0.178"
-	p.arpDevs["AA:BB:CC:00:00:03"] = "phy1-sta0"
-	p.arpStale = map[string]bool{"AA:BB:CC:00:00:03": true} // stale no suma
+	p.arp[macaddr.MustParse("AA:BB:CC:00:00:03")] = "10.20.0.178"
+	p.arpDevs[macaddr.MustParse("AA:BB:CC:00:00:03")] = "phy1-sta0"
+	p.arpStale = map[macaddr.MAC]bool{macaddr.MustParse("AA:BB:CC:00:00:03"): true} // stale no suma
 
 	got := buildDiscoveryIfaces(p)
 	want := []DiscoveryIface{
@@ -82,8 +82,8 @@ func TestClientDiscoveryTravelRouterNetworkRows(t *testing.T) {
 // aparece como fila device y cuenta como cliente en automático.
 func TestClientDiscoveryUnassignedDeviceRow(t *testing.T) {
 	p := travelPolled(DiscoveryOverrides{})
-	p.arp["AA:BB:CC:00:00:09"] = "192.168.9.10"
-	p.arpDevs["AA:BB:CC:00:00:09"] = "eth3"
+	p.arp[macaddr.MustParse("AA:BB:CC:00:00:09")] = "192.168.9.10"
+	p.arpDevs[macaddr.MustParse("AA:BB:CC:00:00:09")] = "eth3"
 
 	rows := buildDiscoveryIfaces(p)
 	if len(rows) != 6 {
@@ -142,8 +142,8 @@ func TestClientDiscoverySharedDeviceResolution(t *testing.T) {
 			},
 			wanInfo:   probe.WanInfo{Device: "eth0.2"},
 			netIfaces: travelNetIfaces(),
-			arp:       map[string]string{"AA:BB:CC:00:00:55": "198.51.100.1"},
-			arpDevs:   map[string]string{"AA:BB:CC:00:00:55": "eth0.2"},
+			arp:       map[macaddr.MAC]string{macaddr.MustParse("AA:BB:CC:00:00:55"): "198.51.100.1"},
+			arpDevs:   map[macaddr.MAC]string{macaddr.MustParse("AA:BB:CC:00:00:55"): "eth0.2"},
 		}
 	}
 
@@ -212,8 +212,8 @@ func TestClientDiscoveryGatewayWanPortNetworkOverride(t *testing.T) {
 				cfg:       cfg,
 				wanInfo:   probe.WanInfo{Device: "eth0.2", Port: "eth0.2"},
 				netIfaces: ifaces,
-				arp:       map[string]string{"AA:BB:CC:00:00:99": "192.168.100.1"},
-				arpDevs:   map[string]string{"AA:BB:CC:00:00:99": "eth0.2"},
+				arp:       map[macaddr.MAC]string{macaddr.MustParse("AA:BB:CC:00:00:99"): "192.168.100.1"},
+				arpDevs:   map[macaddr.MAC]string{macaddr.MustParse("AA:BB:CC:00:00:99"): "eth0.2"},
 			},
 		}
 	}
@@ -248,9 +248,9 @@ func TestClientDiscoveryGatewayWanPortNetworkOverride(t *testing.T) {
 // (wanIgnored, #2188). Con Networks["wan"]="on", el vecino confirmado pasa a
 // ser un cliente normal (WanSide=false), pero el peer sigue absorbido por #1791.
 func TestClientDiscoveryGatewayWanPortWithGatewayIP(t *testing.T) {
-	const (
-		peer      = "0C:EF:15:00:00:01"
-		neighbour = "0C:EF:15:00:00:02"
+	var (
+		peer      = macaddr.MustParse("0C:EF:15:00:00:01")
+		neighbour = macaddr.MustParse("0C:EF:15:00:00:02")
 	)
 	gwCfg := RouterConfig{ID: "gw", Name: "gw", Host: "192.168.1.1", IsGateway: true}
 	l := NewLive(nil, nil, []RouterConfig{gwCfg}, nil)
@@ -266,11 +266,11 @@ func TestClientDiscoveryGatewayWanPortWithGatewayIP(t *testing.T) {
 				cfg:       cfg,
 				wanInfo:   probe.WanInfo{Device: "eth0.2", Port: "eth0.2", Gateway: "203.0.113.1"},
 				netIfaces: ifaces,
-				arp: map[string]string{
+				arp: map[macaddr.MAC]string{
 					peer:      "203.0.113.1",
 					neighbour: "203.0.113.248",
 				},
-				arpDevs: map[string]string{
+				arpDevs: map[macaddr.MAC]string{
 					peer:      "eth0.2",
 					neighbour: "eth0.2",
 				},
@@ -289,7 +289,7 @@ func TestClientDiscoveryGatewayWanPortWithGatewayIP(t *testing.T) {
 	gwOn.DiscoveryOverrides = DiscoveryOverrides{Networks: map[string]DiscoveryMode{"wan": "on"}}
 	l.SetRouters([]RouterConfig{gwOn})
 	devs := l.buildDevices(makeGW(gwOn), "eth0.2")
-	if len(devs) != 1 || devs[0].MAC != macaddr.MustParse(neighbour) || devs[0].WanSide {
+	if len(devs) != 1 || devs[0].MAC != neighbour || devs[0].WanSide {
 		t.Fatalf("con Networks['wan']='on' solo debe entrar el vecino (%s) como cliente normal (WanSide=false): %+v", neighbour, devs)
 	}
 }
@@ -302,8 +302,8 @@ func TestClientDiscoveryIPv6OnlyOnWanSkippedInAuto(t *testing.T) {
 		"travel": {
 			cfg:        RouterConfig{ID: "travel", Name: "travel", Host: "192.168.2.1"},
 			uplinkDevs: []string{"phy1-sta0"},
-			arp:        map[string]string{"BB:BB:BB:00:00:77": "fe80::1"},
-			arpDevs:    map[string]string{"BB:BB:BB:00:00:77": "phy1-sta0"},
+			arp:        map[macaddr.MAC]string{macaddr.MustParse("BB:BB:BB:00:00:77"): "fe80::1"},
+			arpDevs:    map[macaddr.MAC]string{macaddr.MustParse("BB:BB:BB:00:00:77"): "phy1-sta0"},
 		},
 	}
 	if devs := l.buildDevices(polled, ""); len(devs) != 0 {
@@ -344,20 +344,20 @@ func TestRouterDetailDiscoveryRowsOldAgent(t *testing.T) {
 	l.lastPolled["travel"] = &routerPolled{
 		cfg:        cfg,
 		uplinkDevs: []string{"phy1-sta0", "wan0"},
-		arp: map[string]string{
-			"AA:BB:CC:00:00:01": "192.168.2.10", // confirmada en br-lan
-			"AA:BB:CC:00:00:02": "192.168.2.11", // confirmada en br-lan
-			"AA:BB:CC:00:00:03": "192.168.2.12", // stale en br-lan (no cuenta)
-			"AA:BB:CC:00:00:04": "10.20.0.1",    // confirmada en phy1-sta0
+		arp: map[macaddr.MAC]string{
+			macaddr.MustParse("AA:BB:CC:00:00:01"): "192.168.2.10", // confirmada en br-lan
+			macaddr.MustParse("AA:BB:CC:00:00:02"): "192.168.2.11", // confirmada en br-lan
+			macaddr.MustParse("AA:BB:CC:00:00:03"): "192.168.2.12", // stale en br-lan (no cuenta)
+			macaddr.MustParse("AA:BB:CC:00:00:04"): "10.20.0.1",    // confirmada en phy1-sta0
 		},
-		arpStale: map[string]bool{
-			"AA:BB:CC:00:00:03": true,
+		arpStale: map[macaddr.MAC]bool{
+			macaddr.MustParse("AA:BB:CC:00:00:03"): true,
 		},
-		arpDevs: map[string]string{
-			"AA:BB:CC:00:00:01": "br-lan",
-			"AA:BB:CC:00:00:02": "br-lan",
-			"AA:BB:CC:00:00:03": "br-lan",
-			"AA:BB:CC:00:00:04": "phy1-sta0",
+		arpDevs: map[macaddr.MAC]string{
+			macaddr.MustParse("AA:BB:CC:00:00:01"): "br-lan",
+			macaddr.MustParse("AA:BB:CC:00:00:02"): "br-lan",
+			macaddr.MustParse("AA:BB:CC:00:00:03"): "br-lan",
+			macaddr.MustParse("AA:BB:CC:00:00:04"): "phy1-sta0",
 		},
 	}
 	l.mu.Unlock()
@@ -410,13 +410,13 @@ func TestBuildDevicesSkipsArpOnUplinkDevs(t *testing.T) {
 		"travel": {
 			cfg:        RouterConfig{ID: "travel", Name: "travel", Host: "192.168.2.1"},
 			uplinkDevs: []string{"phy1-sta0", "phy1-sta0"},
-			arp: map[string]string{
-				"AA:BB:CC:00:00:01": "10.20.0.177",
-				"AA:BB:CC:00:00:02": "192.168.2.50",
+			arp: map[macaddr.MAC]string{
+				macaddr.MustParse("AA:BB:CC:00:00:01"): "10.20.0.177",
+				macaddr.MustParse("AA:BB:CC:00:00:02"): "192.168.2.50",
 			},
-			arpDevs: map[string]string{
-				"AA:BB:CC:00:00:01": "phy1-sta0",
-				"AA:BB:CC:00:00:02": "br-lan",
+			arpDevs: map[macaddr.MAC]string{
+				macaddr.MustParse("AA:BB:CC:00:00:01"): "phy1-sta0",
+				macaddr.MustParse("AA:BB:CC:00:00:02"): "br-lan",
 			},
 		},
 	}

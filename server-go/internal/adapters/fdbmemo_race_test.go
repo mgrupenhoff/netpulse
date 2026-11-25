@@ -4,6 +4,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 // TestFdbMemoConcurrentReaders actualiza y poda la memo sticky del FDB desde una
@@ -23,7 +25,7 @@ func TestFdbMemoConcurrentReaders(t *testing.T) {
 			cfg:   RouterConfig{ID: "gateway", Name: "GW", IsGateway: true},
 			brMac: "GG:GG:GG:GG:GG:GG",
 			fdb:   map[string]string{"GG:GG:GG:GG:GG:GG": "lan1", "AA:AA:AA:AA:AA:AA": "lan4"},
-			arp:   map[string]string{"44:44:44:44:44:44": "192.168.13.123"},
+			arp:   map[macaddr.MAC]string{macaddr.MustParse("44:44:44:44:44:44"): "192.168.13.123"},
 		},
 		"ap": {
 			cfg:   RouterConfig{ID: "ap", Name: "AP"},
@@ -43,7 +45,7 @@ func TestFdbMemoConcurrentReaders(t *testing.T) {
 			cfg:   RouterConfig{ID: "gateway", Name: "GW", IsGateway: true},
 			brMac: "GG:GG:GG:GG:GG:GG",
 			fdb:   map[string]string{"GG:GG:GG:GG:GG:GG": "lan1", "AA:AA:AA:AA:AA:AA": "lan4"},
-			arp:   map[string]string{"44:44:44:44:44:44": "192.168.13.123"},
+			arp:   map[macaddr.MAC]string{macaddr.MustParse("44:44:44:44:44:44"): "192.168.13.123"},
 		},
 		"ap": {
 			cfg:   RouterConfig{ID: "ap", Name: "AP"},

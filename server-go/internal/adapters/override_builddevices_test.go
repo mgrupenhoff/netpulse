@@ -25,7 +25,7 @@ func TestBuildDevicesNameTypeIconOverride(t *testing.T) {
 	polled := map[string]*routerPolled{
 		"patio": {
 			cfg:      RouterConfig{ID: "patio", Name: "Patio", Host: "192.168.1.2"},
-			wireless: map[string]WirelessClient{mac: {SignalDbm: -55, Band: "5 GHz"}},
+			wireless: map[macaddr.MAC]WirelessClient{macaddr.MustParse(mac): {SignalDbm: -55, Band: "5 GHz"}},
 		},
 	}
 	devs := l.buildDevices(polled, "")

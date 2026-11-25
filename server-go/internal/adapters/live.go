@@ -159,10 +159,10 @@ type routerPolled struct {
 	glClients []DhcpLease
 	// arp: MAC→IP de /proc/net/arp (#377). Último recurso de resolución de
 	// IP cuando ni el lease ni gl-clients la tienen (DHCP en otro equipo).
-	arp map[string]string
+	arp map[macaddr.MAC]string
 	// arpDevs: MAC→interfaz de la tabla ARP (#1485). Permite distinguir el
 	// ARP aprendido en el puerto WAN (primer salto del enlace) del de la LAN.
-	arpDevs map[string]string
+	arpDevs map[macaddr.MAC]string
 	// uplinkDevs: interfaces del uplink de la unidad (L3 y boca), aunque no
 	// sea el gateway. A diferencia de wanInfo (solo gateway, #1383) sirven
 	// solo para no tomar por clientes a los vecinos del uplink, y son
@@ -176,8 +176,8 @@ type routerPolled struct {
 	// confirmed (STALE/FAILED/INCOMPLETE). Good enough to resolve an IP,
 	// never enough to claim the host is connected -- an entry outlives the
 	// device by minutes. Empty when the source could not report states.
-	arpStale map[string]bool
-	wireless map[string]WirelessClient
+	arpStale map[macaddr.MAC]bool
+	wireless map[macaddr.MAC]WirelessClient
 	ports    []EthPort
 	radios   []Radio
 	fdb      map[string]string
@@ -200,7 +200,7 @@ type routerPolled struct {
 	// lista (MACs rotadas que siguen emitiendo, backhaul 4-address). El
 	// agente las etiqueta con la banda de la radio; aquí mandan sobre el
 	// fallback del FDB del gateway, que si no las dibuja como cableadas.
-	wirelessSide map[string]string
+	wirelessSide map[macaddr.MAC]string
 	brMac        string
 	latencyMs    *float64
 	lossPct      *float64
@@ -260,7 +260,7 @@ type routerPolled struct {
 type extrasSnapshot struct {
 	ports    []EthPort
 	radios   []Radio
-	wireless map[string]WirelessClient
+	wireless map[macaddr.MAC]WirelessClient
 	fdb      map[string]string
 	// fdbVlans: MAC → VLAN del FDB (#1757). Mismo anti-parpadeo que fdb: solo
 	// nace del payload del agente y una sonda SSH exitosa lo limpia.
@@ -273,7 +273,7 @@ type extrasSnapshot struct {
 	wifiNet map[string]string
 	// wirelessSide: último hint bueno de MACs detrás de radios propias
 	// (ver routerPolled.wirelessSide). Mismo anti-parpadeo que fdb.
-	wirelessSide map[string]string
+	wirelessSide map[macaddr.MAC]string
 	luci         *probe.LuCILabels
 	vlans        []VlanPort
 	// multiWan: last good multi-WAN section. The event-driven pushes carry
@@ -362,7 +362,7 @@ type Live struct {
 	// lastClientBw (#551): contadores absolutos por (router, mac) de la
 	// última muestra observada, para calcular el delta por cliente entre
 	// polls. Mapa: routerID → mac → estado. Protegido por mu.
-	lastClientBw map[string]map[string]*clientBwCounter
+	lastClientBw map[string]map[macaddr.MAC]*clientBwCounter
 	// lastObsTs: ts del último payload del agente que alimentó las series
 	// por puerto y el PortMonitor (issue #365). Protegido por mu.
 	lastObsTs map[string]int64
@@ -609,7 +609,7 @@ func NewLive(cfg *config.Config, d *db.DB, initial []RouterConfig, pool *SSHPool
 		layoutCache:          map[string][]PortLayout{},
 		extrasCache:          map[string]*extrasSnapshot{},
 		lastAgentIf:          map[string]*agentIfSample{},
-		lastClientBw:         map[string]map[string]*clientBwCounter{},
+		lastClientBw:         map[string]map[macaddr.MAC]*clientBwCounter{},
 		lastObsTs:            map[string]int64{},
 		snmpPorts:            map[string]map[string]snmpPortSample{},
 		snmpLastPoll:         map[string]time.Time{},
@@ -1506,7 +1506,7 @@ func (l *Live) pollRouter(ctx context.Context, cfg RouterConfig) (*routerPolled,
 	// (null = sonda fallida; colección vacía = resultado real).
 	if cached == nil {
 		cached = &extrasSnapshot{ports: []EthPort{}, radios: []Radio{},
-			wireless: map[string]WirelessClient{}, fdb: map[string]string{}}
+			wireless: map[macaddr.MAC]WirelessClient{}, fdb: map[string]string{}}
 	}
 	portsGood := cached.ports
 	if len(ports) > 0 {
@@ -1604,7 +1604,7 @@ func (l *Live) pollRouter(ctx context.Context, cfg RouterConfig) (*routerPolled,
 	// solo con la sonda wireless de ESTE poll (wireless != nil); si falló y
 	// se recicla la cache, los contadores repetidos darían deltas 0.
 	if wireless != nil {
-		if samples, source, ok := resolveClientBwSources(wireless, nil); ok {
+		if samples, source, ok := resolveClientBwSources(cfg.ID, wireless, nil); ok {
 			l.recordClientBwSamples(cfg.ID, time.Now(), samples, source)
 		}
 	}
@@ -3825,21 +3825,20 @@ func (l *Live) buildDevices(polled map[string]*routerPolled, wanPort string) []D
 // gwID y wanPort los fija quien llama, a partir de la misma lectura del
 // gateway: si se leyera aquí otra vez, un SetRouters entre medias aplicaría
 // la boca WAN de un gateway al ARP de otro.
-func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort string) ([]Device, map[string]bool) {
-	leasesByMac := map[string]DhcpLease{}
-	leaseRouter := map[string]string{}
-	arpByMac := map[string]string{}
-	glByMac := map[string]DhcpLease{}
-	resByMac := map[string]DhcpReservation{}
+func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort string) ([]Device, map[macaddr.MAC]bool) {
+	leasesByMac := map[macaddr.MAC]DhcpLease{}
+	leaseRouter := map[macaddr.MAC]string{}
+	arpByMac := map[macaddr.MAC]string{}
+	glByMac := map[macaddr.MAC]DhcpLease{}
+	resByMac := map[macaddr.MAC]DhcpReservation{}
 	for rID, p := range polled {
 		for mac, ip := range p.arp {
 			arpByMac[mac] = ip
 		}
 		for _, le := range p.leases {
 			if le.MAC.IsValid() {
-				k := le.MAC.String()
-				leasesByMac[k] = le
-				leaseRouter[k] = rID
+				leasesByMac[le.MAC] = le
+				leaseRouter[le.MAC] = rID
 			}
 		}
 		// Static reservations: the name and address pinned in
@@ -3847,7 +3846,7 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 		// of its own ever gets, since it never takes a lease.
 		for _, r := range p.reservations {
 			if r.MAC.IsValid() {
-				resByMac[r.MAC.String()] = r
+				resByMac[r.MAC] = r
 			}
 		}
 		// gl-clients: fallback de IP para MACs sin lease (dnsmasq sin ese
@@ -3855,14 +3854,14 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 		// por wireless/FDB (issue #5 bug 1).
 		for _, le := range p.glClients {
 			if le.MAC.IsValid() && le.IP != "" {
-				glByMac[le.MAC.String()] = le
+				glByMac[le.MAC] = le
 			}
 		}
 	}
 	// Discovery (#338): aggregate mDNS host-by-IP and random MAC sets from
 	// all polled routers. Used to enrich devices below.
 	mdnsHostByIP := map[string]string{}
-	randomMACs := map[string]bool{}
+	randomMACs := map[macaddr.MAC]bool{}
 	mdnsSvcByHost := map[string][]string{}
 	mdnsModelByHost := map[string]string{}
 	mdnsManufacturerByHost := map[string]string{}
@@ -3874,7 +3873,7 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 			mdnsHostByIP[ip] = host
 		}
 		for _, mac := range p.discovery.RandomMACs {
-			randomMACs[mac.String()] = true
+			randomMACs[mac] = true
 		}
 		for host, svcs := range p.discovery.Services {
 			mdnsSvcByHost[host] = svcs
@@ -3891,15 +3890,16 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 		band     string
 		signal   *int
 	}
-	known := map[string]knownInfo{}
+	known := map[macaddr.MAC]knownInfo{}
 	if l.db != nil {
 		rows, err := l.db.Query("SELECT mac, router_id, band, signal_dbm FROM device_attrib")
 		if err == nil {
 			defer rows.Close()
 			for rows.Next() {
-				var mac, routerID, band string
+				var mac macaddr.MAC
+				var routerID, band string
 				var signal sql.NullInt64
-				if rows.Scan(&mac, &routerID, &band, &signal) == nil {
+				if rows.Scan(&mac, &routerID, &band, &signal) == nil && mac.IsValid() {
 					k := knownInfo{routerID: routerID, band: band}
 					if signal.Valid {
 						v := int(signal.Int64)
@@ -3919,11 +3919,11 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 		ssid      string
 		signal    *int
 	}
-	seen := map[string]seenInfo{}
+	seen := map[macaddr.MAC]seenInfo{}
 	// assocSeen (#1740): en qué routers vio ESTE ciclo a cada MAC. Solo se usa
 	// para derivar roams. Si aparece en más de uno el dato es ambiguo (el orden
 	// de iteración del mapa decide la atribución), así que no se emite nada.
-	assocSeen := map[string][]seenInfo{}
+	assocSeen := map[macaddr.MAC][]seenInfo{}
 	// (1) wireless de cualquier router: la ÚNICA que se persiste
 	for routerID, p := range polled {
 		for mac, w := range p.wireless {
@@ -3964,19 +3964,17 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 			default:
 				continue
 			}
-			if parsed, ok := macaddr.ParseOrWarn(macWarn, "roamevents.insert", mac); ok {
-				if l.roamIsEcho(parsed, prev.routerID, cur.routerID) {
-					continue
-				}
-				if err := roamevents.InsertEvent(l.db.DB, roamevents.Event{
-					TsMs:     now,
-					RouterID: cur.routerID,
-					Type:     roamevents.TypeConnected,
-					MAC:      parsed,
-					Detail:   detail,
-				}); err == nil {
-					l.markRoam(parsed, prev.routerID, cur.routerID, time.UnixMilli(now))
-				}
+			if l.roamIsEcho(mac, prev.routerID, cur.routerID) {
+				continue
+			}
+			if err := roamevents.InsertEvent(l.db.DB, roamevents.Event{
+				TsMs:     now,
+				RouterID: cur.routerID,
+				Type:     roamevents.TypeConnected,
+				MAC:      mac,
+				Detail:   detail,
+			}); err == nil {
+				l.markRoam(mac, prev.routerID, cur.routerID, time.UnixMilli(now))
 			}
 		}
 	}
@@ -4074,22 +4072,26 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 			continue
 		}
 		infraPorts := l.uplinkPortsFor(routerID, p.fdb, brMacByRouter)
-		for mac, port := range p.fdb {
+		for rawMac, port := range p.fdb {
 			if infraPorts[port] {
 				continue // uplink: MACs en tránsito, no clientes de este equipo
 			}
-			if _, ok := seen[mac]; !ok {
-				seen[mac] = seenInfo{routerID: routerID, band: "cable"}
+			if mac, ok := macaddr.ParseOrWarn(macWarn, "build_devices.fdb", rawMac); ok {
+				if _, ok := seen[mac]; !ok {
+					seen[mac] = seenInfo{routerID: routerID, band: "cable"}
+				}
 			}
 		}
 	}
 	// (3) FDB del gateway: solo si no hay memoria (mala pista; no se guarda)
 	if gwID != "" {
 		if gwPolled := polled[gwID]; gwPolled != nil {
-			for mac := range gwPolled.fdb {
-				if _, ok := seen[mac]; !ok {
-					if _, ok := known[mac]; !ok {
-						seen[mac] = seenInfo{routerID: gwID, band: "cable"}
+			for rawMac := range gwPolled.fdb {
+				if mac, ok := macaddr.ParseOrWarn(macWarn, "build_devices.gw_fdb", rawMac); ok {
+					if _, ok := seen[mac]; !ok {
+						if _, ok := known[mac]; !ok {
+							seen[mac] = seenInfo{routerID: gwID, band: "cable"}
+						}
 					}
 				}
 			}
@@ -4120,13 +4122,13 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 	// marca WanSide y lo dibuja el mapa como peer WAN bajo Internet. Solo si
 	// no tiene ya evidencia LAN (la LAN manda) y solo en la boca WAN del
 	// gateway, nunca en sus bocas LAN.
-	wanSide := map[string]bool{}
+	wanSide := map[macaddr.MAC]bool{}
 	// wanIgnored (#2183): ARP del puerto WAN que no es el peer de la ruta
 	// por defecto. Se absorben en `seen` (no se atribuyen a una boca LAN)
 	// pero no se materializan como dispositivo: en una WAN con subred
 	// pública compartida son decenas de equipos ajenos.
-	wanIgnored := map[string]bool{}
-	wanSegment := map[string]bool{}
+	wanIgnored := map[macaddr.MAC]bool{}
+	wanSegment := map[macaddr.MAC]bool{}
 	if gwID != "" && wanPort != "" {
 		if gwP := polled[gwID]; gwP != nil && !discoveryExplicitOn(gwP, wanPort) {
 			peerIP := strings.TrimSpace(gwP.wanInfo.Gateway)
@@ -4150,7 +4152,7 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 			}
 		}
 	}
-	arpConfirmed := map[string]bool{}
+	arpConfirmed := map[macaddr.MAC]bool{}
 	for _, p := range polled {
 		for mac := range p.arp {
 			if !p.arpStale[mac] {
@@ -4209,14 +4211,15 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 			if s.band != "cable" || s.routerID != gwID {
 				continue
 			}
-			m, ok := memo[mac]
+			macKey := mac.String()
+			m, ok := memo[macKey]
 			if !ok || nowMs-m.ts > ttlMs || m.routerID == "" || m.routerID == gwID {
 				continue
 			}
 			// El gateway solo lo ve por el uplink (o no lo ve en su FDB): el
 			// cable está en el satélite según la última observación local.
 			if gwPolled != nil {
-				if port, inFdb := gwPolled.fdb[mac]; inFdb && !gwInfraPorts[port] {
+				if port, inFdb := gwPolled.fdb[macKey]; inFdb && !gwInfraPorts[port] {
 					continue // boca local del gateway: evidencia fresca, no tocar
 				}
 			}
@@ -4224,7 +4227,7 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 		}
 	}
 
-	allMacs := map[string]bool{}
+	allMacs := map[macaddr.MAC]bool{}
 	for mac := range leasesByMac {
 		allMacs[mac] = true
 	}
@@ -4234,15 +4237,15 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 	for mac := range known {
 		allMacs[mac] = true
 	}
-	routerMacs := map[string]bool{}
+	routerMacs := map[macaddr.MAC]bool{}
 	// issue #196: MACs de bridge de los routers REGISTRADOS (persistidas),
 	// no solo las de los routers que sondeó bien en este tick. Un router que
 	// falló el sondeo sigue sin ser "cliente desconocido".
 	if l.db != nil {
 		if rows, err := l.db.Query("SELECT mac FROM routers WHERE mac IS NOT NULL AND mac != ''"); err == nil {
 			for rows.Next() {
-				var mac string
-				if rows.Scan(&mac) == nil {
+				var mac macaddr.MAC
+				if rows.Scan(&mac) == nil && mac.IsValid() {
 					routerMacs[mac] = true
 				}
 			}
@@ -4254,17 +4257,19 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 	// tabla de clientes al dejar de filtrarse por la retención de #1145.
 	if l.agents != nil {
 		for _, b := range l.agents.LocalBssids() {
-			routerMacs[b.String()] = true
+			routerMacs[b] = true
 		}
 	}
 	for _, p := range polled {
-		if p.brMac != "" {
-			routerMacs[p.brMac] = true
+		if m, ok := macaddr.ParseOrWarn(macWarn, "build_devices.br_mac", p.brMac); ok {
+			routerMacs[m] = true
 		}
 		// #1489: identidades del propio switch (MACs de su puerto interno/CPU).
 		// Un vecino las aprende al gestionarlo y sin esto salen como clientes.
-		for _, mac := range p.selfMacs {
-			routerMacs[strings.ToUpper(mac)] = true
+		for _, raw := range p.selfMacs {
+			if m, ok := macaddr.ParseOrWarn(macWarn, "build_devices.self_mac", raw); ok {
+				routerMacs[m] = true
+			}
 		}
 	}
 	// #1489: la MAC que responde por la IP de gestion de una unidad de flota es
@@ -4289,7 +4294,7 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 		for _, p := range polled {
 			for mac, ip := range p.arp {
 				if mgmtHosts[ip] {
-					routerMacs[strings.ToUpper(mac)] = true
+					routerMacs[mac] = true
 				}
 			}
 		}
@@ -4299,7 +4304,7 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 	// en la tabla ARP y ninguna otra evidencia lo reclamaba. Se absorbe por la
 	// IP de la puerta de enlace WAN, no por un prefijo de MAC ni por un puerto,
 	// que en PPPoE no existe.
-	defaultRouteMacs := map[string]bool{}
+	defaultRouteMacs := map[macaddr.MAC]bool{}
 	for routerID, p := range polled {
 		gwIP := strings.TrimSpace(p.wanInfo.Gateway)
 		if gwIP == "" {
@@ -4307,7 +4312,7 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 		}
 		for mac, ip := range p.arp {
 			if strings.EqualFold(strings.TrimSpace(ip), gwIP) {
-				defaultRouteMacs[strings.ToUpper(mac)] = true
+				defaultRouteMacs[mac] = true
 				// #2183: el peer del gateway tampoco es un cliente y se
 				// purga del registro, esté o no en wanPort.
 				if gwID != "" && routerID == gwID {
@@ -4333,30 +4338,28 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 	// issue #437/#797: overrides manuales de dispositivo (icono, nombre
 	// visible y tipo) sobre el dispositivo auto-descubierto.
 	deviceOverrides := l.loadDeviceOverrides()
-	lldpCapsByMac := map[string]string{}
+	lldpCapsByMac := map[macaddr.MAC]string{}
 	for _, p := range polled {
 		for _, nb := range p.lldp {
 			if nb.ChassisMac != "" && len(nb.Caps) > 0 {
-				lldpCapsByMac[nb.ChassisMac] = strings.Join(nb.Caps, ",")
+				if m, ok := macaddr.ParseOrWarn(macWarn, "build_devices.lldp_chassis", nb.ChassisMac); ok {
+					lldpCapsByMac[m] = strings.Join(nb.Caps, ",")
+				}
 			}
 		}
 	}
 	devices := []Device{}
 	for mac := range allMacs {
-		if routerMacs[mac] || defaultRouteMacs[strings.ToUpper(mac)] {
+		if routerMacs[mac] || defaultRouteMacs[mac] {
 			continue // los routers y la ruta por defecto no son clientes
 		}
 		if wanIgnored[mac] {
 			continue // #2183: vecino del segmento WAN, no es de esta red
 		}
-		if isBatadvBlaMAC(mac) {
+		macStr := mac.String()
+		if isBatadvBlaMAC(macStr) {
 			continue // #1818: sonda LOOP DETECT del mesh, no es un host
 		}
-		parsed, ok := macaddr.ParseOrWarn(macWarn, "build_devices.mac", mac)
-		if !ok {
-			continue
-		}
-		macStr := parsed.String()
 		lease, hasLease := leasesByMac[mac]
 		s, isSeen := seen[mac]
 		// Fabricante desconocido = campo VACÍO, no un literal. El server no
@@ -4370,8 +4373,8 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 			}
 		}
 		d := Device{
-			ID:  parsed.DeviceID(),
-			MAC: parsed, Manufacturer: manufacturer,
+			ID:  mac.DeviceID(),
+			MAC: mac, Manufacturer: manufacturer,
 			TrafficMbps: 0, Sparkline: []float64{},
 			RouterID: defaultRouterID, Band: "—",
 			Online: isSeen, WanSide: wanSide[mac],
@@ -4430,7 +4433,7 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 		}
 		// issue #196: la allowlist manda sobre el nombre por defecto. Con
 		// alias (Name != MAC) el dispositivo deja de ser "desconocido".
-		if alias, ok := knownMacs[parsed]; ok && alias != "" {
+		if alias, ok := knownMacs[mac]; ok && alias != "" {
 			d.Name = alias
 			d.NameSource = "known_mac"
 			d.namePinned = true
@@ -4438,7 +4441,7 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 		// issue #437/#797: overrides manuales (icono, nombre) se aplican sobre
 		// el dispositivo auto-descubierto; el nombre manual manda incluso
 		// sobre el alias de la allowlist.
-		if ov, ok := deviceOverrides[parsed]; ok {
+		if ov, ok := deviceOverrides[mac]; ok {
 			if ov.Icon != "" {
 				d.IconOverride = ov.Icon
 			}
@@ -4495,7 +4498,7 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 		// agente es una foto del escaneo de discovery, así que una MAC
 		// efímera (el NMRP de Netgear al reiniciar para actualizar firmware)
 		// vive en el FDB unos segundos y nunca entra en ella.
-		if randomMACs[mac] || parsed.IsLocallyAdministered() {
+		if randomMACs[mac] || mac.IsLocallyAdministered() {
 			d.RandomMAC = true
 		}
 		// mDNS-based type refinement (#338): if the hostname/DHCP classification
@@ -4510,12 +4513,12 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 		}
 		// issue #797: el tipo manual manda sobre la clasificación (reglas,
 		// huella DHCP y refinación mDNS).
-		if ov, ok := deviceOverrides[parsed]; ok && ov.DeviceType != "" {
+		if ov, ok := deviceOverrides[mac]; ok && ov.DeviceType != "" {
 			d.Type = ov.DeviceType
 			d.TypeOverride = ov.DeviceType
 		}
 		// #1354: flag opt-in de alerta por desconexión (override persistido).
-		if ov, ok := deviceOverrides[parsed]; ok {
+		if ov, ok := deviceOverrides[mac]; ok {
 			d.NotifyOffline = ov.NotifyOffline
 		}
 		if isSeen {
@@ -4535,7 +4538,7 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 		// hostapd) sin consultar la store en cada rebuild. Solo online; los
 		// offline no tienen rate (la UI pinta "—").
 		if isSeen {
-			if rxBps, txBps := l.clientBwRateFor(parsed.String()); rxBps+txBps > 0 {
+			if rxBps, txBps := l.clientBwRateFor(mac); rxBps+txBps > 0 {
 				d.TrafficMbps = (rxBps + txBps) / 1e6
 			}
 		}
@@ -5363,7 +5366,7 @@ func (l *Live) GetRouterDetail(ctx context.Context, id string) (*RouterDetail, e
 			apName = polled.cfg.Host
 		}
 		for mac := range polled.wireless {
-			wifiByMac[mac] = apName
+			wifiByMac[mac.String()] = apName
 		}
 	}
 	// Alias manuales (Settings > known_macs): fallback de nombre para MACs

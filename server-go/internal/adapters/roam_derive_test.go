@@ -4,6 +4,7 @@ package adapters
 import (
 	"testing"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/db"
 )
 
@@ -20,7 +21,7 @@ func polledWithWireless(routerID, mac, band string) map[string]*routerPolled {
 	return map[string]*routerPolled{
 		routerID: {
 			cfg:      RouterConfig{ID: routerID, Name: routerID, Host: "192.168.1.2"},
-			wireless: map[string]WirelessClient{mac: {SignalDbm: -55, Band: band}},
+			wireless: map[macaddr.MAC]WirelessClient{macaddr.MustParse(mac): {SignalDbm: -55, Band: band}},
 		},
 	}
 }
@@ -90,11 +91,11 @@ func TestBuildDevicesRoamAmbiguousAcrossRouters(t *testing.T) {
 	l.buildDevices(map[string]*routerPolled{
 		"patio": {
 			cfg:      RouterConfig{ID: "patio", Name: "patio"},
-			wireless: map[string]WirelessClient{mac: {SignalDbm: -60, Band: "5 GHz"}},
+			wireless: map[macaddr.MAC]WirelessClient{macaddr.MustParse(mac): {SignalDbm: -60, Band: "5 GHz"}},
 		},
 		"salon": {
 			cfg:      RouterConfig{ID: "salon", Name: "salon"},
-			wireless: map[string]WirelessClient{mac: {SignalDbm: -55, Band: "5 GHz"}},
+			wireless: map[macaddr.MAC]WirelessClient{macaddr.MustParse(mac): {SignalDbm: -55, Band: "5 GHz"}},
 		},
 	}, "")
 	if n := countRoamEvents(t, d); n != 0 {

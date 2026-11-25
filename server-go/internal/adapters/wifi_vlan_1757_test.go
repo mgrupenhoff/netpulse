@@ -1,6 +1,10 @@
 package adapters
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
+)
 
 // #1757: la interfaz AP y el SSID de una estacion viajan hasta el Device. La
 // topologia los cruza con el bridge VLAN filtering del router para etiquetar
@@ -11,11 +15,11 @@ func TestBuildDevicesCarriesWifiIfaceAndSSID(t *testing.T) {
 	polled := map[string]*routerPolled{
 		"gw": {
 			cfg: RouterConfig{ID: "gw", IsGateway: true},
-			wireless: map[string]WirelessClient{
-				"AA:BB:CC:DD:EE:01": {SignalDbm: -55, Band: "5 GHz", Iface: "wlan0", SSID: "IoT"},
+			wireless: map[macaddr.MAC]WirelessClient{
+				macaddr.MustParse("AA:BB:CC:DD:EE:01"): {SignalDbm: -55, Band: "5 GHz", Iface: "wlan0", SSID: "IoT"},
 			},
-			arp:      map[string]string{},
-			arpStale: map[string]bool{},
+			arp:      map[macaddr.MAC]string{},
+			arpStale: map[macaddr.MAC]bool{},
 		},
 	}
 	devs := l.buildDevices(polled, "")

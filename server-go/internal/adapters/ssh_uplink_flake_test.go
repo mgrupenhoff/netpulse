@@ -25,13 +25,13 @@ func TestSSHUplinkDevsKeepsLastGoodOnUbusFailure(t *testing.T) {
 	p := &routerPolled{
 		cfg:        RouterConfig{ID: "travel", Name: "travel"},
 		uplinkDevs: sshUplinkDevs(probe.WanInfo{}, cached),
-		arp: map[string]string{
-			"AA:BB:CC:00:00:01": "10.20.0.1",
-			"AA:BB:CC:00:00:02": "192.168.2.50",
+		arp: map[macaddr.MAC]string{
+			macaddr.MustParse("AA:BB:CC:00:00:01"): "10.20.0.1",
+			macaddr.MustParse("AA:BB:CC:00:00:02"): "192.168.2.50",
 		},
-		arpDevs: map[string]string{
-			"AA:BB:CC:00:00:01": "phy1-sta0",
-			"AA:BB:CC:00:00:02": "br-lan",
+		arpDevs: map[macaddr.MAC]string{
+			macaddr.MustParse("AA:BB:CC:00:00:01"): "phy1-sta0",
+			macaddr.MustParse("AA:BB:CC:00:00:02"): "br-lan",
 		},
 	}
 	l := NewLive(nil, nil, nil, nil)

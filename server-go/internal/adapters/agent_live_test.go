@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 	"github.com/gnacho/netpulse/server-go/internal/alerts"
 	"github.com/gnacho/netpulse/server-go/internal/sshkey"
@@ -142,7 +143,7 @@ func TestLiveAgentFreshSkipsSSH(t *testing.T) {
 	if len(p.glClients) != 1 || p.glClients[0].IP != "192.168.8.99" {
 		t.Fatalf("glClients vía agente: %+v", p.glClients)
 	}
-	if p.wireless["EC:71:DB:44:12:8A"].SignalDbm != -55 {
+	if p.wireless[macaddr.MustParse("EC:71:DB:44:12:8A")].SignalDbm != -55 {
 		t.Fatalf("wireless: %+v", p.wireless)
 	}
 	if p.fdb["EC:71:DB:44:12:8A"] != "lan1" || len(p.ports) != 1 || p.ports[0].Speed != "1 Gbps" {

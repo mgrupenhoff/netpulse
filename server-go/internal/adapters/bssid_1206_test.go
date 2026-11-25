@@ -27,9 +27,9 @@ func TestBuildDevicesExcludesOwnBssids(t *testing.T) {
 	polled := map[string]*routerPolled{
 		"patio": {
 			cfg: RouterConfig{ID: "patio", Name: "Patio", Host: "192.168.1.2"},
-			wireless: map[string]WirelessClient{
-				"AA:BB:CC:00:00:01": {SignalDbm: -40, Band: "5 GHz"}, // el BSSID propio del AP
-				"AA:BB:CC:DD:EE:FF": {SignalDbm: -55, Band: "5 GHz"}, // cliente real
+			wireless: map[macaddr.MAC]WirelessClient{
+				macaddr.MustParse("AA:BB:CC:00:00:01"): {SignalDbm: -40, Band: "5 GHz"}, // el BSSID propio del AP
+				macaddr.MustParse("AA:BB:CC:DD:EE:FF"): {SignalDbm: -55, Band: "5 GHz"}, // cliente real
 			},
 		},
 	}

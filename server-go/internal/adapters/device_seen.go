@@ -179,7 +179,7 @@ func (l *Live) purgeFleetSeen() {
 // este ciclo: un vecino que ya no aparece conserva su fila. El barrido de
 // presencia (#2110) solo ayuda en parte: toca las primeras 254 direcciones
 // de cada subred, y solo si la unidad enruta.
-func (l *Live) purgeWanSideSeen(devices []Device, wanSegment map[string]bool) {
+func (l *Live) purgeWanSideSeen(devices []Device, wanSegment map[macaddr.MAC]bool) {
 	if l.db == nil {
 		return
 	}
@@ -189,9 +189,9 @@ func (l *Live) purgeWanSideSeen(devices []Device, wanSegment map[string]bool) {
 			macs[d.MAC] = true
 		}
 	}
-	for raw := range wanSegment {
-		if m, ok := macaddr.ParseOrWarn(macWarn, "device_seen.wan_segment", raw); ok {
-			macs[m] = true
+	for mac := range wanSegment {
+		if mac.IsValid() {
+			macs[mac] = true
 		}
 	}
 	if len(macs) == 0 {

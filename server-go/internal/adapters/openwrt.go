@@ -585,18 +585,33 @@ func parseDhcpLeasesFile(out string) []DhcpLease {
 	return leasesFromProbe("openwrt.dhcp_file", probe.ParseDhcpLeasesFile(out))
 }
 
+// parseMACMap convierte un mapa de wire (clave string) a map[macaddr.MAC]V,
+// preservando nil frente a {} (nil = sonda fallida, {} = tabla vacía).
+func parseMACMap[V any](src string, in map[string]V) map[macaddr.MAC]V {
+	if in == nil {
+		return nil
+	}
+	out := make(map[macaddr.MAC]V, len(in))
+	for raw, v := range in {
+		if m, ok := macaddr.ParseOrWarn(macWarn, src, raw); ok {
+			out[m] = v
+		}
+	}
+	return out
+}
+
 // GetWirelessClients: clientes wifi asociados (MAC → señal/banda). Port del
 // fix #373 (#368) al sondeo SSH: ubus hostapd get_clients primero (una
 // llamada ubus barata por AP, sin ucode/iwinfo), fallback de iwinfo combinado
 // en UNA pasada por interfaz, y como último recurso el par legacy. Vacío si
 // el router no expone ninguna fuente wireless.
-func (c *OpenWrtClient) GetWirelessClients() map[string]WirelessClient {
+func (c *OpenWrtClient) GetWirelessClients() map[macaddr.MAC]WirelessClient {
 	// 1. ubus hostapd get_clients (barato; APs con hostapd ubus moderno).
 	// Autoritativo cuando hay objetos hostapd.* (incluso con 0 clientes: un
 	// AP vacío no debe caer al fallback iwinfo en cada poll de 5 s del
 	// server). Solo si ubus no expone objetos se baja al fallback.
 	if out, err := c.pool.Run(c.Host, probe.CmdHostapdClients, iwinfoTimeout); err == nil && strings.Contains(out, "==AP==") {
-		return probe.ParseHostapdClients(out)
+		return parseMACMap("openwrt.wireless", probe.ParseHostapdClients(out))
 	}
 	// 2. iwinfo combinado en UNA pasada (info + assoclist juntos por interfaz;
 	// emite clientes y radios). Mitad de spawns que el par legacy de abajo.
@@ -607,15 +622,15 @@ func (c *OpenWrtClient) GetWirelessClients() map[string]WirelessClient {
 			c.setRadiosCache(radiosToAdapter(radios))
 		}
 		if len(clients) > 0 {
-			return clients
+			return parseMACMap("openwrt.wireless", clients)
 		}
 	}
 	// 3. Último recurso: par legacy (equipos donde el combinado no aplica).
 	out, err := c.pool.Run(c.Host, probe.CmdIwinfoAssoc, iwinfoTimeout)
 	if err != nil {
-		return map[string]WirelessClient{}
+		return map[macaddr.MAC]WirelessClient{}
 	}
-	return parseWirelessClients(out)
+	return parseMACMap("openwrt.wireless", parseWirelessClients(out))
 }
 
 // parseWirelessClients parsea líneas "<mac> <sig> <freq>" del bucle iwinfo.
@@ -860,7 +875,7 @@ func radiosToAdapter(in []probe.Radio) []Radio {
 // back to /proc/net/arp, where no state is available and nothing is stale.
 // GetArp devuelve además MAC -> interfaz (#1485): con esa columna el poller
 // distingue el ARP del puerto WAN (primer salto del enlace) del de la LAN.
-func (c *OpenWrtClient) GetArp() (arp map[string]string, stale map[string]bool, devs map[string]string) {
+func (c *OpenWrtClient) GetArp() (arp map[macaddr.MAC]string, stale map[macaddr.MAC]bool, devs map[macaddr.MAC]string) {
 	// #2110: despertar las subredes que la unidad enruta antes de leer la
 	// tabla, para que la misma lectura vea lo que el barrido confirmó.
 	c.scanPresence()
@@ -877,16 +892,16 @@ func (c *OpenWrtClient) GetArp() (arp map[string]string, stale map[string]bool, 
 			}
 			// #2109: el mismo recheck sobre NDP. Un host solo-IPv6 no tiene
 			// entrada en `ip -4 neigh`, así que solo esta pasada lo confirma.
-			devs = probe.ParseIPNeighDevs(freshSrc)
-			probe.MergeConfirmedNeighbours(m, st, devs, c.recheckStaleNeighbours6(due))
-			return m, st, devs
+			rawDevs := probe.ParseIPNeighDevs(freshSrc)
+			probe.MergeConfirmedNeighbours(m, st, rawDevs, c.recheckStaleNeighbours6(due))
+			return parseMACMap("openwrt.arp", m), parseMACMap("openwrt.arp_stale", st), parseMACMap("openwrt.arp_devs", rawDevs)
 		}
 	}
 	out, err := c.pool.Run(c.Host, probe.CmdProcArp, 0)
 	if err != nil {
 		return nil, nil, nil
 	}
-	return probe.ParseArp(out), nil, probe.ParseArpDevs(out)
+	return parseMACMap("openwrt.arp", probe.ParseArp(out)), nil, parseMACMap("openwrt.arp_devs", probe.ParseArpDevs(out))
 }
 
 // recheckStaleNeighbours (#2073): un ping corto por cada vecino STALE, en

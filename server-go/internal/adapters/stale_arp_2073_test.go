@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 )
 
@@ -76,13 +77,13 @@ func TestGetArpRechecksStaleFromTheUnit(t *testing.T) {
 
 	arp, stale, _ := c.GetArp()
 
-	if stale["AA:AA:AA:AA:AA:01"] {
+	if stale[macaddr.MustParse("AA:AA:AA:AA:AA:01")] {
 		t.Fatalf("el vecino que respondio sigue stale: %v", stale)
 	}
-	if !stale["AA:AA:AA:AA:AA:02"] {
+	if !stale[macaddr.MustParse("AA:AA:AA:AA:AA:02")] {
 		t.Fatalf("el vecino que no respondio debe seguir stale: %v", stale)
 	}
-	if arp["AA:AA:AA:AA:AA:01"] != "192.168.2.10" {
+	if arp[macaddr.MustParse("AA:AA:AA:AA:AA:01")] != "192.168.2.10" {
 		t.Fatalf("la IP confirmada se conserva: %v", arp)
 	}
 	pings := pool.pingCalls()

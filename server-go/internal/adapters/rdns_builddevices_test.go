@@ -26,8 +26,8 @@ func TestBuildDevicesNamesFromReverseDNS(t *testing.T) {
 	polled := map[string]*routerPolled{
 		"gw": {
 			cfg: RouterConfig{ID: "gw", Name: "Gateway", Host: "172.16.16.1", IsGateway: true},
-			arp: map[string]string{
-				"5C:E2:8C:00:00:04": "172.16.16.4",
+			arp: map[macaddr.MAC]string{
+				macaddr.MustParse("5C:E2:8C:00:00:04"): "172.16.16.4",
 			},
 			leases: []DhcpLease{
 				{MAC: macaddr.MustParse("AA:BB:CC:00:00:70"), IP: "172.16.16.70", Hostname: "laptop"},

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 )
 
@@ -77,10 +78,10 @@ func TestGetArpConfirmsStaleIPv6FromTheUnit(t *testing.T) {
 	c := &OpenWrtClient{Host: "192.168.2.11", pool: pool}
 
 	arp, stale, _ := c.GetArp()
-	if arp["CC:CC:CC:00:00:77"] != "fe80::1" {
+	if arp[macaddr.MustParse("CC:CC:CC:00:00:77")] != "fe80::1" {
 		t.Fatalf("pareja IPv6 no confirmada: %+v", arp)
 	}
-	if stale["CC:CC:CC:00:00:77"] {
+	if stale[macaddr.MustParse("CC:CC:CC:00:00:77")] {
 		t.Fatalf("una entrada confirmada no puede quedar stale: %v", stale)
 	}
 	pings := pool.ping6Calls()
@@ -120,10 +121,10 @@ func TestGetArpReportsIPv6ConfirmedDev(t *testing.T) {
 	c := &OpenWrtClient{Host: "192.168.2.11", pool: pool}
 
 	_, _, devs := c.GetArp()
-	if got := devs["CC:CC:CC:00:00:77"]; got != "phy1-sta0" {
+	if got := devs[macaddr.MustParse("CC:CC:CC:00:00:77")]; got != "phy1-sta0" {
 		t.Fatalf("interfaz de vecino solo-IPv6: %q, esperaba phy1-sta0 (devs=%+v)", got, devs)
 	}
-	if got := devs["AA:AA:AA:AA:AA:03"]; got != "br-lan" {
+	if got := devs[macaddr.MustParse("AA:AA:AA:AA:AA:03")]; got != "br-lan" {
 		t.Fatalf("la interfaz IPv4 debe ganar sobre la IPv6: %q, esperaba br-lan (devs=%+v)", got, devs)
 	}
 }

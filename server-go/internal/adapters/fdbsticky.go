@@ -90,7 +90,7 @@ func (l *Live) updateFdbMemo(polled map[string]*routerPolled, nowMs int64) map[s
 			brMacs[p.brMac] = true
 		}
 		for mac := range p.arp {
-			online[mac] = true
+			online[mac.String()] = true
 		}
 		for _, le := range p.leases {
 			if le.MAC.IsValid() {

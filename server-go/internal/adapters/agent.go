@@ -918,7 +918,7 @@ func (l *Live) polledFromAgent(cfg RouterConfig, p *probe.Payload) *routerPolled
 	// Secciones con anti-parpadeo (nil en el payload = sonda fallida).
 	if wd := p.Data.Wireless; wd != nil {
 		if wd.Clients != nil {
-			out.wireless = wd.Clients
+			out.wireless = parseMACMap("agent.wireless", wd.Clients)
 		}
 		if len(wd.Radios) > 0 {
 			out.radios = radiosToAdapter(wd.Radios)
@@ -931,13 +931,15 @@ func (l *Live) polledFromAgent(cfg RouterConfig, p *probe.Payload) *routerPolled
 		out.glClients = leasesFromProbe("agent.gl_client", dd.GlClients)
 	}
 	if p.Data.Arp != nil {
-		out.arp = p.Data.Arp
-		out.arpDevs = p.Data.ArpDevs
+		out.arp = parseMACMap("agent.arp", p.Data.Arp)
+		out.arpDevs = parseMACMap("agent.arp_devs", p.Data.ArpDevs)
 		// An agent old enough not to send arpStale leaves this empty, and
 		// the whole table counts as presence, exactly as it used to.
-		out.arpStale = make(map[string]bool, len(p.Data.ArpStale))
-		for _, mac := range p.Data.ArpStale {
-			out.arpStale[strings.ToUpper(mac)] = true
+		out.arpStale = make(map[macaddr.MAC]bool, len(p.Data.ArpStale))
+		for _, raw := range p.Data.ArpStale {
+			if m, ok := macaddr.ParseOrWarn(macWarn, "agent.arp_stale", raw); ok {
+				out.arpStale[m] = true
+			}
 		}
 	}
 	// Wan (#276): el agente lo trae en el payload desde 2.28.24+. Antes solo
@@ -998,7 +1000,7 @@ func (l *Live) polledFromAgent(cfg RouterConfig, p *probe.Payload) *routerPolled
 		// vacío (nadie lo refresca ya: agente caído o pasado a SSH). Solo un
 		// push SIN sección FDB (event-driven) recicla el cache, mismo contrato
 		// anti-parpadeo que fdb.
-		out.wirelessSide = fd.WirelessSide
+		out.wirelessSide = parseMACMap("agent.wireless_side", fd.WirelessSide)
 		// #1757: VLAN real de cada cliente cableado, tal como el bridge la
 		// aprendió. Se pisa tal cual (incluso vacío) por la misma razón que el
 		// hint wireless-side: una sección fresca es la verdad del equipo.
@@ -1088,7 +1090,7 @@ func (l *Live) polledFromAgent(cfg RouterConfig, p *probe.Payload) *routerPolled
 
 	if cached == nil {
 		cached = &extrasSnapshot{ports: []EthPort{}, radios: []Radio{},
-			wireless: map[string]WirelessClient{}, fdb: map[string]string{}}
+			wireless: map[macaddr.MAC]WirelessClient{}, fdb: map[string]string{}}
 	}
 	if out.ports == nil {
 		// Copia: cached.ports es el slice de un routerPolled ya publicado en
@@ -1184,7 +1186,7 @@ func (l *Live) polledFromAgent(cfg RouterConfig, p *probe.Payload) *routerPolled
 		// #551: tráfico por cliente (nlbwmon preferente, hostapd fallback).
 		// now = ts del payload (no el reloj del server) para que el dt del
 		// delta sea el intervalo real entre pushes del agente.
-		if samples, source, ok := resolveClientBwSources(out.wireless, out.clientBw); ok {
+		if samples, source, ok := resolveClientBwSources(cfg.ID, out.wireless, out.clientBw); ok {
 			l.recordClientBwSamples(cfg.ID, time.Unix(p.Ts, 0), samples, source)
 		}
 		l.portMon.Observe(cfg.ID, linkPorts(out.ports), l.engine)

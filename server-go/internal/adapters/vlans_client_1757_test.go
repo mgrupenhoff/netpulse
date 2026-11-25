@@ -4,7 +4,11 @@
 // bridge aprendió su MAC.
 package adapters
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
+)
 
 func TestBuildDevicesVlanDesdeFdb(t *testing.T) {
 	l := NewLive(nil, nil, nil, nil)
@@ -70,7 +74,7 @@ func TestBuildDevicesVlanNoCruzaRouters(t *testing.T) {
 		"rutto": {
 			cfg: RouterConfig{ID: "rutto", Name: "RUTTO"},
 			fdb: map[string]string{"AA:BB:CC:DD:EE:04": "eth0"},
-			arp: map[string]string{"AA:BB:CC:DD:EE:04": "192.168.1.40"},
+			arp: map[macaddr.MAC]string{macaddr.MustParse("AA:BB:CC:DD:EE:04"): "192.168.1.40"},
 		},
 		"ap": {
 			cfg:      RouterConfig{ID: "ap", Name: "AP"},

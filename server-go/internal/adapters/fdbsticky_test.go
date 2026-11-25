@@ -148,7 +148,7 @@ func TestBuildDevicesStickySatelliteAttribution(t *testing.T) {
 	polled := map[string]*routerPolled{
 		"gateway": {cfg: RouterConfig{ID: "gateway", IsGateway: true}, brMac: "GG:GG:GG:GG:GG:GG",
 			fdb: map[string]string{"GG:GG:GG:GG:GG:GG": "lan1", "AA:AA:AA:AA:AA:AA": "lan1"},
-			arp: map[string]string{"44:44:44:44:44:44": "192.168.13.123"}},
+			arp: map[macaddr.MAC]string{macaddr.MustParse("44:44:44:44:44:44"): "192.168.13.123"}},
 		"ap": {cfg: RouterConfig{ID: "ap", Name: "Luizjana2"}, brMac: "AA:AA:AA:AA:AA:AA",
 			fdb: map[string]string{"AA:AA:AA:AA:AA:AA": "lan1"}},
 	}

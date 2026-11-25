@@ -3,12 +3,17 @@
 // flota real del reporter.
 package adapters
 
-import "testing"
+import (
+	"fmt"
+	"testing"
 
-func wirelessClients(n int) map[string]WirelessClient {
-	m := make(map[string]WirelessClient, n)
+	"github.com/gnacho/netpulse/agent/macaddr"
+)
+
+func wirelessClients(n int) map[macaddr.MAC]WirelessClient {
+	m := make(map[macaddr.MAC]WirelessClient, n)
 	for i := 0; i < n; i++ {
-		m[string(rune('a'+i))] = WirelessClient{SignalDbm: -60, Band: "5 GHz"}
+		m[macaddr.MustParse(fmt.Sprintf("02:00:00:00:00:%02X", i+1))] = WirelessClient{SignalDbm: -60, Band: "5 GHz"}
 	}
 	return m
 }

@@ -15,11 +15,11 @@ func TestBuildDevicesArpFallback(t *testing.T) {
 	polled := map[string]*routerPolled{
 		"patio": {
 			cfg: RouterConfig{ID: "patio", Name: "Patio", Host: "192.168.1.2"},
-			wireless: map[string]WirelessClient{
-				"AA:BB:CC:DD:EE:FF": {SignalDbm: -55, Band: "5 GHz"},
+			wireless: map[macaddr.MAC]WirelessClient{
+				macaddr.MustParse("AA:BB:CC:DD:EE:FF"): {SignalDbm: -55, Band: "5 GHz"},
 			},
-			arp: map[string]string{
-				"AA:BB:CC:DD:EE:FF": "192.168.1.50",
+			arp: map[macaddr.MAC]string{
+				macaddr.MustParse("AA:BB:CC:DD:EE:FF"): "192.168.1.50",
 			},
 		},
 	}
@@ -41,8 +41,8 @@ func TestBuildDevicesArpDiscovery(t *testing.T) {
 	polled := map[string]*routerPolled{
 		"patio": {
 			cfg: RouterConfig{ID: "patio", Name: "Patio", Host: "192.168.1.2"},
-			arp: map[string]string{
-				"AA:BB:CC:DD:EE:FF": "192.168.1.60",
+			arp: map[macaddr.MAC]string{
+				macaddr.MustParse("AA:BB:CC:DD:EE:FF"): "192.168.1.60",
 			},
 		},
 	}
@@ -76,8 +76,8 @@ func TestBuildDevicesArpRouterExcluded(t *testing.T) {
 		"patio": {
 			cfg:   RouterConfig{ID: "patio", Name: "Patio", Host: "192.168.1.2"},
 			brMac: "AA:BB:CC:DD:EE:FF",
-			arp: map[string]string{
-				"AA:BB:CC:DD:EE:FF": "192.168.1.60",
+			arp: map[macaddr.MAC]string{
+				macaddr.MustParse("AA:BB:CC:DD:EE:FF"): "192.168.1.60",
 			},
 		},
 	}
@@ -96,7 +96,7 @@ func TestPolledFromAgentArp(t *testing.T) {
 	if p == nil {
 		t.Fatal("polledFromAgent devolvió nil")
 	}
-	if p.arp["AA:BB:CC:DD:EE:FF"] != "192.168.1.50" {
+	if p.arp[macaddr.MustParse("AA:BB:CC:DD:EE:FF")] != "192.168.1.50" {
 		t.Fatalf("arp no propagada: %+v", p.arp)
 	}
 }
@@ -109,11 +109,11 @@ func TestBuildDevicesIgnoresStaleArpOnlyHosts(t *testing.T) {
 	polled := map[string]*routerPolled{
 		"patio": {
 			cfg: RouterConfig{ID: "patio", Name: "Patio", Host: "192.0.2.2"},
-			arp: map[string]string{
-				"02:00:00:00:00:10": "192.0.2.60", // confirmed
-				"02:00:00:00:00:11": "192.0.2.61", // only remembered
+			arp: map[macaddr.MAC]string{
+				macaddr.MustParse("02:00:00:00:00:10"): "192.0.2.60", // confirmed
+				macaddr.MustParse("02:00:00:00:00:11"): "192.0.2.61", // only remembered
 			},
-			arpStale: map[string]bool{"02:00:00:00:00:11": true},
+			arpStale: map[macaddr.MAC]bool{macaddr.MustParse("02:00:00:00:00:11"): true},
 		},
 	}
 	devs := l.buildDevices(polled, "")
@@ -129,9 +129,9 @@ func TestBuildDevicesStaleArpStillResolvesIPs(t *testing.T) {
 	polled := map[string]*routerPolled{
 		"patio": {
 			cfg:      RouterConfig{ID: "patio", Name: "Patio", Host: "192.0.2.2"},
-			wireless: map[string]WirelessClient{"02:00:00:00:00:11": {SignalDbm: -55, Band: "5 GHz"}},
-			arp:      map[string]string{"02:00:00:00:00:11": "192.0.2.61"},
-			arpStale: map[string]bool{"02:00:00:00:00:11": true},
+			wireless: map[macaddr.MAC]WirelessClient{macaddr.MustParse("02:00:00:00:00:11"): {SignalDbm: -55, Band: "5 GHz"}},
+			arp:      map[macaddr.MAC]string{macaddr.MustParse("02:00:00:00:00:11"): "192.0.2.61"},
+			arpStale: map[macaddr.MAC]bool{macaddr.MustParse("02:00:00:00:00:11"): true},
 		},
 	}
 	devs := l.buildDevices(polled, "")
@@ -146,12 +146,12 @@ func TestBuildDevicesStaleOnOneRouterOnly(t *testing.T) {
 	polled := map[string]*routerPolled{
 		"patio": {
 			cfg:      RouterConfig{ID: "patio", Name: "Patio", Host: "192.0.2.2"},
-			arp:      map[string]string{"02:00:00:00:00:10": "192.0.2.60"},
-			arpStale: map[string]bool{"02:00:00:00:00:10": true},
+			arp:      map[macaddr.MAC]string{macaddr.MustParse("02:00:00:00:00:10"): "192.0.2.60"},
+			arpStale: map[macaddr.MAC]bool{macaddr.MustParse("02:00:00:00:00:10"): true},
 		},
 		"salon": {
 			cfg: RouterConfig{ID: "salon", Name: "Salon", Host: "192.0.2.3"},
-			arp: map[string]string{"02:00:00:00:00:10": "192.0.2.60"},
+			arp: map[macaddr.MAC]string{macaddr.MustParse("02:00:00:00:00:10"): "192.0.2.60"},
 		},
 	}
 	if devs := l.buildDevices(polled, ""); len(devs) != 1 {
@@ -172,7 +172,7 @@ func TestPolledFromAgentArpStale(t *testing.T) {
 
 	pl.Data.ArpStale = []string{"02:00:00:00:00:10"}
 	p := l.polledFromAgent(RouterConfig{ID: "patio"}, pl)
-	if !p.arpStale["02:00:00:00:00:10"] {
+	if !p.arpStale[macaddr.MustParse("02:00:00:00:00:10")] {
 		t.Fatalf("arpStale not propagated: %+v", p.arpStale)
 	}
 }
@@ -272,9 +272,9 @@ func TestGetRoutersCountsClientsNotLeases(t *testing.T) {
 			{MAC: macaddr.MustParse("02:00:00:00:00:02"), IP: "192.0.2.52", Hostname: "two"},
 			{MAC: macaddr.MustParse("02:00:00:00:00:03"), IP: "192.0.2.53", Hostname: "gone"},
 		},
-		wireless: map[string]WirelessClient{
-			"02:00:00:00:00:01": {SignalDbm: -50, Band: "5 GHz"},
-			"02:00:00:00:00:02": {SignalDbm: -60, Band: "2.4 GHz"},
+		wireless: map[macaddr.MAC]WirelessClient{
+			macaddr.MustParse("02:00:00:00:00:01"): {SignalDbm: -50, Band: "5 GHz"},
+			macaddr.MustParse("02:00:00:00:00:02"): {SignalDbm: -60, Band: "2.4 GHz"},
 		},
 	}}
 	l.mu.Unlock()
@@ -307,13 +307,13 @@ func TestBuildDevicesWanSideArp(t *testing.T) {
 	polled := map[string]*routerPolled{
 		"gw": {
 			cfg: RouterConfig{ID: "gw", Name: "Gateway", IsGateway: true},
-			arp: map[string]string{
-				"C0:49:43:A3:D1:34": "192.168.1.1",  // ONT en el puerto WAN
-				"AA:BB:CC:00:00:01": "192.168.1.60", // cliente visto por LAN
+			arp: map[macaddr.MAC]string{
+				macaddr.MustParse("C0:49:43:A3:D1:34"): "192.168.1.1",  // ONT en el puerto WAN
+				macaddr.MustParse("AA:BB:CC:00:00:01"): "192.168.1.60", // cliente visto por LAN
 			},
-			arpDevs: map[string]string{
-				"C0:49:43:A3:D1:34": "eth2",
-				"AA:BB:CC:00:00:01": "br-lan",
+			arpDevs: map[macaddr.MAC]string{
+				macaddr.MustParse("C0:49:43:A3:D1:34"): "eth2",
+				macaddr.MustParse("AA:BB:CC:00:00:01"): "br-lan",
 			},
 		},
 	}
@@ -356,9 +356,9 @@ func TestBuildDevicesAbsorbsSwitchMgmtMac(t *testing.T) {
 	polled := map[string]*routerPolled{
 		"gw": {
 			cfg: RouterConfig{ID: "gw", Host: "192.168.1.1", IsGateway: true},
-			arp: map[string]string{
-				"08:BD:43:75:50:CD": "192.168.2.6", // el propio switch
-				"AA:BB:CC:00:00:09": "192.168.2.9", // cliente normal
+			arp: map[macaddr.MAC]string{
+				macaddr.MustParse("08:BD:43:75:50:CD"): "192.168.2.6", // el propio switch
+				macaddr.MustParse("AA:BB:CC:00:00:09"): "192.168.2.9", // cliente normal
 			},
 		},
 	}
@@ -384,15 +384,15 @@ func TestBuildDevicesWanSideOnlyDefaultRoutePeer(t *testing.T) {
 		"gw": {
 			cfg:     RouterConfig{ID: "gw", Name: "Gateway", IsGateway: true},
 			wanInfo: probe.WanInfo{Gateway: "203.0.113.1"},
-			arp: map[string]string{
-				"0C:EF:15:00:00:01": "203.0.113.1",   // peer de la ruta por defecto
-				"0C:EF:15:00:00:02": "203.0.113.248", // vecino del ISP
-				"AA:BB:CC:00:00:01": "192.168.1.60",  // cliente de la LAN
+			arp: map[macaddr.MAC]string{
+				macaddr.MustParse("0C:EF:15:00:00:01"): "203.0.113.1",   // peer de la ruta por defecto
+				macaddr.MustParse("0C:EF:15:00:00:02"): "203.0.113.248", // vecino del ISP
+				macaddr.MustParse("AA:BB:CC:00:00:01"): "192.168.1.60",  // cliente de la LAN
 			},
-			arpDevs: map[string]string{
-				"0C:EF:15:00:00:01": "eth1",
-				"0C:EF:15:00:00:02": "eth1",
-				"AA:BB:CC:00:00:01": "br-lan",
+			arpDevs: map[macaddr.MAC]string{
+				macaddr.MustParse("0C:EF:15:00:00:01"): "eth1",
+				macaddr.MustParse("0C:EF:15:00:00:02"): "eth1",
+				macaddr.MustParse("AA:BB:CC:00:00:01"): "br-lan",
 			},
 		},
 	}
@@ -410,7 +410,7 @@ func TestBuildDevicesWanSideOnlyDefaultRoutePeer(t *testing.T) {
 	}
 	// Gate negativo: sin la IP de la puerta de enlace WAN no hay forma de
 	// distinguir el peer, así que se conserva el comportamiento anterior.
-	delete(polled["gw"].arp, "AA:BB:CC:00:00:01")
+	delete(polled["gw"].arp, macaddr.MustParse("AA:BB:CC:00:00:01"))
 	polled["gw"].wanInfo = probe.WanInfo{}
 	for _, d := range l.buildDevices(polled, "eth1") {
 		if d.MAC != macaddr.MustParse("0C:EF:15:00:00:02") {
@@ -432,13 +432,13 @@ func TestBuildDevicesSkipsArpOnUplink(t *testing.T) {
 		"travel": {
 			cfg:     RouterConfig{ID: "travel", Name: "travel", Host: "192.168.2.1"},
 			wanInfo: probe.WanInfo{Proto: "dhcp", Device: "phy1-sta0", Port: "phy1-sta0"},
-			arp: map[string]string{
-				"AA:BB:CC:00:00:01": "10.20.0.177",
-				"AA:BB:CC:00:00:02": "192.168.2.50",
+			arp: map[macaddr.MAC]string{
+				macaddr.MustParse("AA:BB:CC:00:00:01"): "10.20.0.177",
+				macaddr.MustParse("AA:BB:CC:00:00:02"): "192.168.2.50",
 			},
-			arpDevs: map[string]string{
-				"AA:BB:CC:00:00:01": "phy1-sta0",
-				"AA:BB:CC:00:00:02": "br-lan",
+			arpDevs: map[macaddr.MAC]string{
+				macaddr.MustParse("AA:BB:CC:00:00:01"): "phy1-sta0",
+				macaddr.MustParse("AA:BB:CC:00:00:02"): "br-lan",
 			},
 		},
 	}
@@ -456,8 +456,8 @@ func TestBuildDevicesKeepsArpOnBridgeUplink(t *testing.T) {
 		"ap": {
 			cfg:     RouterConfig{ID: "ap", Name: "AP", Host: "192.168.2.3"},
 			wanInfo: probe.WanInfo{Proto: "dhcp", Device: "br-lan", Port: "br-lan"},
-			arp:     map[string]string{"AA:BB:CC:00:00:03": "192.168.2.60"},
-			arpDevs: map[string]string{"AA:BB:CC:00:00:03": "br-lan"},
+			arp:     map[macaddr.MAC]string{macaddr.MustParse("AA:BB:CC:00:00:03"): "192.168.2.60"},
+			arpDevs: map[macaddr.MAC]string{macaddr.MustParse("AA:BB:CC:00:00:03"): "br-lan"},
 		},
 	}
 	if devs := l.buildDevices(polled, ""); len(devs) != 1 {
