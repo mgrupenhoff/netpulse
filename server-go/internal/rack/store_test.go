@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/db"
 )
 
@@ -91,8 +92,9 @@ func TestSaveLayoutAtomicAndOverlap(t *testing.T) {
 	}
 
 	// Fuera del rack por arriba: perfil 2U en un rack de 12U con u_start 12.
-	tall := Mount{DeviceMAC: "aa:bb:cc:dd:ee:ff", UStart: 12, ColStart: 0}
-	if err := UpsertProfile(db, DeviceProfile{MAC: "aa:bb:cc:dd:ee:ff", UHeight: 2, ColSpan: 12}); err != nil {
+	tallMAC := macaddr.MustParse("aa:bb:cc:dd:ee:ff")
+	tall := Mount{DeviceMAC: tallMAC, UStart: 12, ColStart: 0}
+	if err := UpsertProfile(db, DeviceProfile{MAC: tallMAC, UHeight: 2, ColSpan: 12}); err != nil {
 		t.Fatalf("UpsertProfile: %v", err)
 	}
 	if err := SaveLayout(db, LayoutChange{RackID: rack.ID, Upsert: []Mount{tall}}); !errors.Is(err, ErrOverlap) {
@@ -101,11 +103,12 @@ func TestSaveLayoutAtomicAndOverlap(t *testing.T) {
 
 	// El montaje del dispositivo creó perfil por defecto; lo comprobamos con
 	// un dispositivo nuevo sin perfil.
-	noProfile := Mount{DeviceMAC: "11:22:33:44:55:66", UStart: 6, ColStart: 0}
+	noProfileMAC := macaddr.MustParse("11:22:33:44:55:66")
+	noProfile := Mount{DeviceMAC: noProfileMAC, UStart: 6, ColStart: 0}
 	if err := SaveLayout(db, LayoutChange{RackID: rack.ID, Upsert: []Mount{noProfile}}); err != nil {
 		t.Fatalf("SaveLayout dispositivo sin perfil: %v", err)
 	}
-	p, err := GetProfile(db, "11:22:33:44:55:66")
+	p, err := GetProfile(db, noProfileMAC)
 	if err != nil || p.UHeight != 1 || p.ColSpan != 12 {
 		t.Fatalf("perfil por defecto no creado: %+v err=%v", p, err)
 	}
@@ -151,8 +154,9 @@ func TestUpdateRackGuardShrinkBelowMounted(t *testing.T) {
 	rack := createTestRack(t, db)
 
 	// Montaje 2U con el fondo en U3.
-	m := Mount{DeviceMAC: "aa:bb:cc:dd:ee:f1", UStart: 2, ColStart: 0}
-	if err := UpsertProfile(db, DeviceProfile{MAC: "aa:bb:cc:dd:ee:f1", UHeight: 2, ColSpan: 12}); err != nil {
+	mac := macaddr.MustParse("aa:bb:cc:dd:ee:f1")
+	m := Mount{DeviceMAC: mac, UStart: 2, ColStart: 0}
+	if err := UpsertProfile(db, DeviceProfile{MAC: mac, UHeight: 2, ColSpan: 12}); err != nil {
 		t.Fatalf("UpsertProfile: %v", err)
 	}
 	if err := SaveLayout(db, LayoutChange{RackID: rack.ID, Upsert: []Mount{m}}); err != nil {
@@ -174,7 +178,7 @@ func TestUpdateRackGuardShrinkBelowMounted(t *testing.T) {
 func TestProfileCRUD(t *testing.T) {
 	db := openTestDB(t)
 	p := DeviceProfile{
-		MAC: "aa:bb:cc:00:00:01", FaceplateID: "server-2u", UHeight: 2, ColSpan: 12,
+		MAC: macaddr.MustParse("aa:bb:cc:00:00:01"), FaceplateID: "server-2u", UHeight: 2, ColSpan: 12,
 		Color: "#334455", Ports: []Port{{ID: "eth0", Kind: PortRJ45, X: 0.1, Y: 0.5}},
 	}
 	if err := UpsertProfile(db, p); err != nil {
@@ -207,9 +211,9 @@ func TestCablesCapacityAndCascade(t *testing.T) {
 	rack := createTestRack(t, db)
 
 	// Dos switches con perfil con puertos sembrados.
-	sw1 := "AA:BB:CC:00:00:01"
-	sw2 := "AA:BB:CC:00:00:02"
-	for i, mac := range []string{sw1, sw2} {
+	sw1 := macaddr.MustParse("AA:BB:CC:00:00:01")
+	sw2 := macaddr.MustParse("AA:BB:CC:00:00:02")
+	for i, mac := range []macaddr.MAC{sw1, sw2} {
 		if err := UpsertProfile(db, DeviceProfile{MAC: mac, UHeight: 1, ColSpan: 12,
 			Ports: []Port{{ID: "eth0", Kind: PortRJ45}, {ID: "eth1", Kind: PortRJ45}}}); err != nil {
 			t.Fatalf("UpsertProfile: %v", err)
@@ -291,15 +295,16 @@ func TestCablesCapacityAndCascade(t *testing.T) {
 func TestSaveLayoutAndProfileJoinAcrossCases(t *testing.T) {
 	db := openTestDB(t)
 	rack := createTestRack(t, db)
+	wantMAC := macaddr.MustParse("AA:BB:CC:DD:EE:01")
 
 	if err := UpsertProfile(db, DeviceProfile{
-		MAC: "aa:bb:cc:dd:ee:01", FaceplateID: "server-2u", UHeight: 2, ColSpan: 6,
+		MAC: macaddr.MustParse("aa:bb:cc:dd:ee:01"), FaceplateID: "server-2u", UHeight: 2, ColSpan: 6,
 	}); err != nil {
 		t.Fatalf("UpsertProfile: %v", err)
 	}
 	if err := SaveLayout(db, LayoutChange{
 		RackID: rack.ID,
-		Upsert: []Mount{{DeviceMAC: "AA-BB-CC-DD-EE-01", UStart: 1, ColStart: 0}},
+		Upsert: []Mount{{DeviceMAC: macaddr.MustParse("AA-BB-CC-DD-EE-01"), UStart: 1, ColStart: 0}},
 	}); err != nil {
 		t.Fatalf("SaveLayout: %v", err)
 	}
@@ -308,8 +313,8 @@ func TestSaveLayoutAndProfileJoinAcrossCases(t *testing.T) {
 	if err != nil || len(mounts) != 1 {
 		t.Fatalf("ListMountRows: len=%d err=%v", len(mounts), err)
 	}
-	if mounts[0].DeviceMAC != "AA:BB:CC:DD:EE:01" {
-		t.Errorf("esperaba DeviceMAC en forma canónica AA:BB:CC:DD:EE:01, got %q", mounts[0].DeviceMAC)
+	if mounts[0].DeviceMAC != wantMAC {
+		t.Errorf("esperaba DeviceMAC en forma canónica %s, got %q", wantMAC, mounts[0].DeviceMAC)
 	}
 	if mounts[0].UHeight != 2 || mounts[0].ColSpan != 6 {
 		t.Errorf("el montaje no cruzó con el perfil 2Ux6: got %dUx%d", mounts[0].UHeight, mounts[0].ColSpan)
@@ -319,21 +324,59 @@ func TestSaveLayoutAndProfileJoinAcrossCases(t *testing.T) {
 	if err != nil || len(profiles) != 1 {
 		t.Fatalf("esperaba 1 único perfil sin duplicado por defecto, got %d (err=%v)", len(profiles), err)
 	}
-	if profiles[0].MAC != "AA:BB:CC:DD:EE:01" || profiles[0].UHeight != 2 {
+	if profiles[0].MAC != wantMAC || profiles[0].UHeight != 2 {
 		t.Errorf("perfil inesperado: %+v", profiles[0])
 	}
 }
 
-// TestSaveLayoutRejectsInvalidMAC comprueba que un montaje con una device_mac
-// que no es una MAC devuelve ErrInvalidMAC (el handler lo traduce a 400).
-func TestSaveLayoutRejectsInvalidMAC(t *testing.T) {
+// TestUpsertProfileRejectsZeroMAC comprueba que un perfil sin MAC válida
+// se rechaza con el error esperado.
+func TestUpsertProfileRejectsZeroMAC(t *testing.T) {
+	db := openTestDB(t)
+	err := UpsertProfile(db, DeviceProfile{UHeight: 1, ColSpan: 12})
+	if err == nil || err.Error() != "rack: mac requerida" {
+		t.Fatalf("esperaba error 'rack: mac requerida', obtuve %v", err)
+	}
+}
+
+// TestListProfilesAndMountsSkipCorruptLegacyMAC comprueba que una fila
+// heredada con MAC corrupta en SQLite no tumba la lectura del canvas:
+// ListProfiles la omite y ListMountRows degrada device_mac a valor cero.
+func TestListProfilesAndMountsSkipCorruptLegacyMAC(t *testing.T) {
 	db := openTestDB(t)
 	rack := createTestRack(t, db)
-	err := SaveLayout(db, LayoutChange{
-		RackID: rack.ID,
-		Upsert: []Mount{{DeviceMAC: "no-es-una-mac", UStart: 1, ColStart: 0}},
-	})
-	if !errors.Is(err, ErrInvalidMAC) {
-		t.Fatalf("esperaba ErrInvalidMAC, obtuve %v", err)
+	validMAC := macaddr.MustParse("AA:BB:CC:DD:EE:09")
+
+	if err := UpsertProfile(db, DeviceProfile{MAC: validMAC, UHeight: 1, ColSpan: 12}); err != nil {
+		t.Fatalf("UpsertProfile: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO device_rack_profile (mac, faceplate_id, u_height, col_span, color, ports_json)
+		 VALUES ('basura-no-mac', '', 1, 12, '', '[]')`,
+	); err != nil {
+		t.Fatalf("sembrar perfil corrupto: %v", err)
+	}
+
+	profiles, err := ListProfiles(db)
+	if err != nil {
+		t.Fatalf("ListProfiles falló por fila corrupta: %v", err)
+	}
+	if len(profiles) != 1 || profiles[0].MAC != validMAC {
+		t.Fatalf("esperaba solo el perfil válido %s, obtuve %+v", validMAC, profiles)
+	}
+
+	if _, err := db.Exec(
+		`INSERT INTO rack_mounts (id, rack_id, device_mac, faceplate_id, u_start, col_start, label, status_pin, port_visibility)
+		 VALUES ('m-corrupt', ?, 'basura-no-mac', '', 1, 0, 'legacy', 0, '')`,
+		rack.ID,
+	); err != nil {
+		t.Fatalf("sembrar montaje corrupto: %v", err)
+	}
+	mounts, err := ListMountRows(db)
+	if err != nil {
+		t.Fatalf("ListMountRows falló por device_mac corrupta: %v", err)
+	}
+	if len(mounts) != 1 || mounts[0].ID != "m-corrupt" || mounts[0].DeviceMAC.IsValid() {
+		t.Fatalf("esperaba montaje m-corrupt con MAC vacía, obtuve %+v", mounts)
 	}
 }

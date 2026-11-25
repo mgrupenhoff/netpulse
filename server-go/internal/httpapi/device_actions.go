@@ -97,9 +97,9 @@ type leaseRouterResolver interface {
 //  1. Router que reportó la MAC en leases (RouterServingDHCP), si el adapter
 //     lo soporta y el router es alcanzable por SSH.
 //  2. Fallback: el gateway (red gestionada clásica con un solo servidor DHCP).
-func (s *server) reservationTargetHost(mac string) string {
+func (s *server) reservationTargetHost(mac macaddr.MAC) string {
 	if lr, ok := s.adapter.(leaseRouterResolver); ok {
-		if routerID := lr.RouterServingDHCP(mac); routerID != "" {
+		if routerID := lr.RouterServingDHCP(mac.String()); routerID != "" {
 			if host := s.hostOfRouter(routerID); host != "" {
 				return host
 			}
@@ -216,25 +216,14 @@ func parseDhcpHosts(lines []string) []*dhcpHost {
 	return hosts
 }
 
-// uciMAC es la forma de una MAC canónica en el router: las secciones, nombres
-// y opciones UCI que escribe netpulse van en minúsculas, y así casan las reglas
-// ya existentes.
-func uciMAC(mac string) string {
-	return strings.ToLower(mac)
-}
-
 // findDhcpHost busca una sección host cuya MAC coincida (sin importar el
 // formato; admite varias MACs separadas por coma/espacio en una misma sección).
 // Una `list mac` sale de `uci show` como 'aa:…' 'bb:…' y uciValue solo quita
 // las comillas de fuera, así que también se corta por las comillas.
-func findDhcpHost(hosts []*dhcpHost, mac string) *dhcpHost {
-	macNorm := macaddr.Normalize(mac)
-	if macNorm == "" {
-		return nil
-	}
+func findDhcpHost(hosts []*dhcpHost, mac macaddr.MAC) *dhcpHost {
 	for _, h := range hosts {
 		for _, m := range strings.FieldsFunc(h.MAC, func(r rune) bool { return r == ',' || r == ' ' || r == '\'' || r == '"' }) {
-			if macaddr.Normalize(m) == macNorm {
+			if parsed, err := macaddr.Parse(m); err == nil && parsed == mac {
 				return h
 			}
 		}
@@ -244,14 +233,14 @@ func findDhcpHost(hosts []*dhcpHost, mac string) *dhcpHost {
 
 // dhcpHostSection es el nombre de sección determinista para la reserva de una
 // MAC (uci set dhcp.np_host_<mac12>=host).
-func dhcpHostSection(mac string) string {
-	return "np_host_" + strings.ReplaceAll(uciMAC(mac), ":", "")
+func dhcpHostSection(mac macaddr.MAC) string {
+	return "np_host_" + strings.ReplaceAll(mac.Lower(), ":", "")
 }
 
 // handleDeviceReservationGet devuelve la reserva DHCP estática de un dispositivo.
 func (s *server) handleDeviceReservationGet(w http.ResponseWriter, r *http.Request) {
-	mac := macaddr.Normalize(r.PathValue("mac"))
-	if mac == "" {
+	mac, err := macaddr.Parse(r.PathValue("mac"))
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_mac")
 		return
 	}
@@ -283,8 +272,8 @@ func (s *server) handleDeviceReservationGet(w http.ResponseWriter, r *http.Reque
 func (s *server) handleDeviceReservationPut(w http.ResponseWriter, r *http.Request) {
 	// #2112: uci show + commit + restart del servicio en la unidad antes de responder.
 	setLongWriteDeadline(w, deviceActionWriteCeiling)
-	mac := macaddr.Normalize(r.PathValue("mac"))
-	if mac == "" {
+	mac, err := macaddr.Parse(r.PathValue("mac"))
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_mac")
 		return
 	}
@@ -343,12 +332,12 @@ func (s *server) handleDeviceReservationPut(w http.ResponseWriter, r *http.Reque
 		section := dhcpHostSection(mac)
 		name := body.Hostname
 		if name == "" {
-			name = uciMAC(mac)
+			name = mac.Lower()
 		}
 		apply = append(apply,
 			fmt.Sprintf("uci set dhcp.%s=host", section),
 			uciSetCmd("dhcp", section, "name", name),
-			uciSetCmd("dhcp", section, "mac", uciMAC(mac)),
+			uciSetCmd("dhcp", section, "mac", mac.Lower()),
 			uciSetCmd("dhcp", section, "ip", body.IP),
 		)
 		rollback = append(rollback, fmt.Sprintf("uci delete dhcp.%s", section))
@@ -383,8 +372,8 @@ func (s *server) handleDeviceReservationPut(w http.ResponseWriter, r *http.Reque
 func (s *server) handleDeviceReservationHostnamePut(w http.ResponseWriter, r *http.Request) {
 	// #2112: uci show + commit + restart del servicio en la unidad antes de responder.
 	setLongWriteDeadline(w, deviceActionWriteCeiling)
-	mac := macaddr.Normalize(r.PathValue("mac"))
-	if mac == "" {
+	mac, err := macaddr.Parse(r.PathValue("mac"))
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_mac")
 		return
 	}
@@ -455,7 +444,7 @@ func (s *server) handleDeviceReservationHostnamePut(w http.ResponseWriter, r *ht
 		apply = append(apply,
 			fmt.Sprintf("uci set dhcp.%s=host", section),
 			uciSetCmd("dhcp", section, "name", body.Hostname),
-			uciSetCmd("dhcp", section, "mac", uciMAC(mac)),
+			uciSetCmd("dhcp", section, "mac", mac.Lower()),
 			uciSetCmd("dhcp", section, "ip", body.IP),
 		)
 		rollback = append(rollback, fmt.Sprintf("uci delete dhcp.%s", section))
@@ -485,7 +474,7 @@ func (s *server) handleDeviceReservationHostnamePut(w http.ResponseWriter, r *ht
 
 // writeDevicePlan responde un dry-run (#754): comandos que SE EJECUTARÍAN
 // (apply) y su plan de vuelta (rollback), sin tocar el router.
-func writeDevicePlan(w http.ResponseWriter, mac, host string, apply, rollback []string) {
+func writeDevicePlan(w http.ResponseWriter, mac macaddr.MAC, host string, apply, rollback []string) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":       true,
 		"dryRun":   true,
@@ -500,8 +489,8 @@ func writeDevicePlan(w http.ResponseWriter, mac, host string, apply, rollback []
 func (s *server) handleDeviceReservationDelete(w http.ResponseWriter, r *http.Request) {
 	// #2112: uci show + commit + restart del servicio en la unidad antes de responder.
 	setLongWriteDeadline(w, deviceActionWriteCeiling)
-	mac := macaddr.Normalize(r.PathValue("mac"))
-	if mac == "" {
+	mac, err := macaddr.Parse(r.PathValue("mac"))
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_mac")
 		return
 	}
@@ -606,18 +595,18 @@ func parseFirewallRules(lines []string) []*firewallRule {
 
 // blockRuleSection es el nombre de sección determinista para el bloqueo de una
 // MAC (uci set firewall.np_block_<mac12>=rule).
-func blockRuleSection(mac string) string {
-	return "np_block_" + strings.ReplaceAll(uciMAC(mac), ":", "")
+func blockRuleSection(mac macaddr.MAC) string {
+	return "np_block_" + strings.ReplaceAll(mac.Lower(), ":", "")
 }
 
 // blockRuleName es el nombre legible de la regla (mostrado en LuCI).
-func blockRuleName(mac string) string {
-	return "np-block-" + strings.ReplaceAll(uciMAC(mac), ":", "")
+func blockRuleName(mac macaddr.MAC) string {
+	return "np-block-" + strings.ReplaceAll(mac.Lower(), ":", "")
 }
 
 // findBlockRule busca la regla de bloqueo de una MAC: por sección determinista
 // o por nombre legado (reglas anónimas `@rule[N]` con name='np-block-<mac>').
-func findBlockRule(rules []*firewallRule, mac string) *firewallRule {
+func findBlockRule(rules []*firewallRule, mac macaddr.MAC) *firewallRule {
 	section := blockRuleSection(mac)
 	name := blockRuleName(mac)
 	for _, r := range rules {
@@ -632,14 +621,14 @@ func findBlockRule(rules []*firewallRule, mac string) *firewallRule {
 // fw4. Forma mínima correcta (drop de tráfico reenviado desde la MAC, sin
 // romper su lease DHCP, que es input al router): src=lan, dest=*, target=DROP,
 // src_mac=<mac>.
-func blockRuleApply(section, mac string) []string {
+func blockRuleApply(section string, mac macaddr.MAC) []string {
 	return []string{
 		fmt.Sprintf("uci set firewall.%s=rule", section),
 		uciSetCmd("firewall", section, "name", blockRuleName(mac)),
 		fmt.Sprintf("uci set firewall.%s.src='lan'", section),
 		fmt.Sprintf("uci set firewall.%s.dest='*'", section),
 		fmt.Sprintf("uci set firewall.%s.target='DROP'", section),
-		uciSetCmd("firewall", section, "src_mac", uciMAC(mac)),
+		uciSetCmd("firewall", section, "src_mac", mac.Lower()),
 	}
 }
 
@@ -649,8 +638,8 @@ func blockRuleRollback(section string) []string {
 
 // handleDeviceBlockGet indica si un dispositivo está bloqueado.
 func (s *server) handleDeviceBlockGet(w http.ResponseWriter, r *http.Request) {
-	mac := macaddr.Normalize(r.PathValue("mac"))
-	if mac == "" {
+	mac, err := macaddr.Parse(r.PathValue("mac"))
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_mac")
 		return
 	}
@@ -678,8 +667,8 @@ func (s *server) handleDeviceBlockGet(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleDeviceBlockPut(w http.ResponseWriter, r *http.Request) {
 	// #2112: uci show + commit + restart del servicio en la unidad antes de responder.
 	setLongWriteDeadline(w, deviceActionWriteCeiling)
-	mac := macaddr.Normalize(r.PathValue("mac"))
-	if mac == "" {
+	mac, err := macaddr.Parse(r.PathValue("mac"))
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_mac")
 		return
 	}
@@ -734,8 +723,8 @@ func (s *server) handleDeviceBlockPut(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleDeviceBlockDelete(w http.ResponseWriter, r *http.Request) {
 	// #2112: uci show + commit + restart del servicio en la unidad antes de responder.
 	setLongWriteDeadline(w, deviceActionWriteCeiling)
-	mac := macaddr.Normalize(r.PathValue("mac"))
-	if mac == "" {
+	mac, err := macaddr.Parse(r.PathValue("mac"))
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_mac")
 		return
 	}

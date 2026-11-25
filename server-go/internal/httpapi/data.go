@@ -701,16 +701,12 @@ func (s *server) handleUsteer(w http.ResponseWriter, r *http.Request) {
 // handleUsteerKick: POST /api/usteer/{mac}/kick - expulsa un cliente de su AP
 // usteer actual para forzar la reconexión a otro AP.
 func (s *server) handleUsteerKick(w http.ResponseWriter, r *http.Request) {
-	mac := r.PathValue("mac")
+	mac := macaddr.Normalize(r.PathValue("mac"))
 	if mac == "" {
-		writeError(w, http.StatusBadRequest, "invalid_input", "mac is required")
+		writeError(w, http.StatusBadRequest, "invalid_mac", "invalid MAC")
 		return
 	}
 	if err := s.adapter.KickUsteerClient(r.Context(), mac); err != nil {
-		if err.Error() == "invalid MAC" {
-			writeError(w, http.StatusBadRequest, "invalid_input", err.Error())
-			return
-		}
 		if strings.Contains(err.Error(), "client not found") {
 			writeError(w, http.StatusNotFound, "not_found", err.Error())
 			return
@@ -769,21 +765,20 @@ func (s *server) handleRoamEvents(w http.ResponseWriter, r *http.Request) {
 	routerID := r.URL.Query().Get("router")
 	eventType := r.URL.Query().Get("type")
 	// El filtro mac admite lista separada por comas (#1127): cada elemento se
-	// pasa a la forma canónica que usa la tabla (AA:BB:CC:DD:EE:FF).
-	var macs []string
+	// valida y normaliza al tipo canónico antes de consultar roam_events.
+	var macs []macaddr.MAC
 	for _, part := range strings.Split(r.URL.Query().Get("mac"), ",") {
 		if strings.TrimSpace(part) == "" {
 			continue
 		}
-		m := macaddr.Normalize(part)
-		if m == "" {
+		m, err := macaddr.Parse(part)
+		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_mac")
 			return
 		}
 		macs = append(macs, m)
 	}
-	mac := strings.Join(macs, ",")
-	events, err := roamevents.ListEvents(s.db.DB, limit, since, routerID, eventType, mac)
+	events, err := roamevents.ListEvents(s.db.DB, limit, since, routerID, eventType, macs)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error")
 		return
@@ -819,13 +814,15 @@ func (s *server) handleDeviceEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	routerID := r.URL.Query().Get("router")
-	mac := r.URL.Query().Get("mac")
-	if mac != "" {
+	var mac macaddr.MAC
+	if raw := r.URL.Query().Get("mac"); raw != "" {
 		// La tabla guarda MAC canónicas: ?mac=aa-bb-... debe encontrarlas.
-		if mac = macaddr.Normalize(mac); mac == "" {
+		parsed, err := macaddr.Parse(raw)
+		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_mac")
 			return
 		}
+		mac = parsed
 	}
 	state := r.URL.Query().Get("state")
 	events, err := deviceevents.ListEvents(s.db.DB, limit, since, routerID, mac, state)
@@ -909,8 +906,8 @@ func (s *server) handleDeviceTraffic(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "unavailable")
 		return
 	}
-	mac := macaddr.Normalize(r.PathValue("mac"))
-	if mac == "" {
+	mac, err := macaddr.Parse(r.PathValue("mac"))
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_mac")
 		return
 	}

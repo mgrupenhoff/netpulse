@@ -20,6 +20,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/clientbw"
 	"github.com/gnacho/netpulse/server-go/internal/portseries"
 	"github.com/gnacho/netpulse/server-go/internal/wgseries"
@@ -1347,7 +1348,7 @@ func (d *DB) ShutdownContext(ctx context.Context) error {
 
 // KnownMac es una fila de la allowlist (issue #196).
 type KnownMac struct {
-	MAC       string
+	MAC       macaddr.MAC
 	Name      string
 	Note      string
 	CreatedAt int64
@@ -1414,7 +1415,7 @@ func (d *DB) DeleteDeletedClient(mac string) error {
 }
 
 // DeleteKnownMac quita una MAC de la allowlist.
-func (d *DB) DeleteKnownMac(mac string) error {
+func (d *DB) DeleteKnownMac(mac macaddr.MAC) error {
 	_, err := d.Exec("DELETE FROM known_macs WHERE mac = ?", mac)
 	return err
 }

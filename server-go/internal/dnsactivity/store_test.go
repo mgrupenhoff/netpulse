@@ -5,6 +5,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 func TestTopForMACAggregatesAndOrders(t *testing.T) {
@@ -12,14 +14,14 @@ func TestTopForMACAggregatesAndOrders(t *testing.T) {
 	st := NewStore(d)
 	ctx := context.Background()
 	hour := time.Date(2026, 11, 16, 10, 0, 0, 0, time.UTC)
+	m1 := macaddr.MustParse("AA:BB:CC:DD:EE:01")
+	m2 := macaddr.MustParse("AA:BB:CC:DD:EE:02")
 
 	if err := st.Apply(ctx,
 		[]Bucket{
-			// La ingesta guarda la MAC de device_seen (mayúsculas); la API
-			// consulta con la de la ruta normalizada (minúsculas).
-			{MAC: "AA:BB:CC:DD:EE:01", Domain: "a.example", Hour: hour, Queries: 5, Blocked: 1, FirstSeen: hour, LastSeen: hour.Add(time.Minute)},
-			{MAC: "AA:BB:CC:DD:EE:01", Domain: "b.example", Hour: hour, Queries: 9, Blocked: 0, FirstSeen: hour, LastSeen: hour},
-			{MAC: "AA:BB:CC:DD:EE:02", Domain: "c.example", Hour: hour, Queries: 50, Blocked: 0, FirstSeen: hour, LastSeen: hour},
+			{MAC: m1, Domain: "a.example", Hour: hour, Queries: 5, Blocked: 1, FirstSeen: hour, LastSeen: hour.Add(time.Minute)},
+			{MAC: m1, Domain: "b.example", Hour: hour, Queries: 9, Blocked: 0, FirstSeen: hour, LastSeen: hour},
+			{MAC: m2, Domain: "c.example", Hour: hour, Queries: 50, Blocked: 0, FirstSeen: hour, LastSeen: hour},
 		},
 		nil); err != nil {
 		t.Fatalf("Apply: %v", err)
@@ -27,7 +29,7 @@ func TestTopForMACAggregatesAndOrders(t *testing.T) {
 
 	from := hour.Add(-time.Hour)
 	to := hour.Add(2 * time.Hour)
-	top, err := st.TopForMAC(ctx, "aa:bb:cc:dd:ee:01", from, to, 10)
+	top, err := st.TopForMAC(ctx, macaddr.MustParse("aa:bb:cc:dd:ee:01"), from, to, 10)
 	if err != nil {
 		t.Fatalf("TopForMAC: %v", err)
 	}
@@ -41,7 +43,7 @@ func TestTopForMACAggregatesAndOrders(t *testing.T) {
 		t.Errorf("segundo = %+v", top[1])
 	}
 
-	q, b, err := st.TotalsForMAC(ctx, "aa:bb:cc:dd:ee:01", from, to)
+	q, b, err := st.TotalsForMAC(ctx, macaddr.MustParse("aa:bb:cc:dd:ee:01"), from, to)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,10 +57,11 @@ func TestTopUsesWindow(t *testing.T) {
 	st := NewStore(d)
 	ctx := context.Background()
 	now := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+	m1 := macaddr.MustParse("AA:BB:CC:DD:EE:01")
 
 	if err := st.Apply(ctx, []Bucket{
-		{MAC: "m1", Domain: "old.example", Hour: now.Add(-30 * time.Hour), Queries: 99, FirstSeen: now, LastSeen: now},
-		{MAC: "m1", Domain: "new.example", Hour: now.Add(-time.Hour), Queries: 3, FirstSeen: now, LastSeen: now},
+		{MAC: m1, Domain: "old.example", Hour: now.Add(-30 * time.Hour), Queries: 99, FirstSeen: now, LastSeen: now},
+		{MAC: m1, Domain: "new.example", Hour: now.Add(-time.Hour), Queries: 3, FirstSeen: now, LastSeen: now},
 	}, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -77,16 +80,19 @@ func TestNewDomains(t *testing.T) {
 	st := NewStore(d)
 	ctx := context.Background()
 	now := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+	m1 := macaddr.MustParse("AA:BB:CC:DD:EE:01")
+	m2 := macaddr.MustParse("AA:BB:CC:DD:EE:02")
+	m3 := macaddr.MustParse("AA:BB:CC:DD:EE:03")
 
 	if err := st.Apply(ctx, nil, []FirstSeen{
-		{Domain: "new.example", MAC: "m1", FirstSeenMS: now.Add(-time.Minute).UnixMilli()},
-		{Domain: "old.example", MAC: "m2", FirstSeenMS: now.Add(-72 * time.Hour).UnixMilli()},
+		{Domain: "new.example", MAC: m1, FirstSeenMS: now.Add(-time.Minute).UnixMilli()},
+		{Domain: "old.example", MAC: m2, FirstSeenMS: now.Add(-72 * time.Hour).UnixMilli()},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	// Repetir no debe duplicar ni mover la fecha.
 	if err := st.Apply(ctx, nil, []FirstSeen{
-		{Domain: "new.example", MAC: "m3", FirstSeenMS: now.UnixMilli()},
+		{Domain: "new.example", MAC: m3, FirstSeenMS: now.UnixMilli()},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +101,7 @@ func TestNewDomains(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].Domain != "new.example" || got[0].MAC != "m1" {
+	if len(got) != 1 || got[0].Domain != "new.example" || got[0].MAC != m1 {
 		t.Errorf("new domains = %+v", got)
 	}
 }
@@ -105,7 +111,8 @@ func TestApplyIsAdditive(t *testing.T) {
 	st := NewStore(d)
 	ctx := context.Background()
 	hour := time.Date(2026, 11, 16, 10, 0, 0, 0, time.UTC)
-	b := Bucket{MAC: "m1", Domain: "a.example", Hour: hour, Queries: 2, Blocked: 1,
+	m1 := macaddr.MustParse("AA:BB:CC:DD:EE:01")
+	b := Bucket{MAC: m1, Domain: "a.example", Hour: hour, Queries: 2, Blocked: 1,
 		FirstSeen: hour.Add(time.Minute), LastSeen: hour.Add(2 * time.Minute)}
 
 	if err := st.Apply(ctx, []Bucket{b}, nil); err != nil {
@@ -121,7 +128,7 @@ func TestApplyIsAdditive(t *testing.T) {
 
 	var queries, blocked, first, last int64
 	if err := d.QueryRow(`SELECT queries, blocked, first_seen, last_seen FROM dns_activity
-		WHERE mac='m1' AND domain='a.example'`).Scan(&queries, &blocked, &first, &last); err != nil {
+		WHERE mac='AA:BB:CC:DD:EE:01' AND domain='a.example'`).Scan(&queries, &blocked, &first, &last); err != nil {
 		t.Fatal(err)
 	}
 	if queries != 5 || blocked != 1 {
@@ -134,15 +141,55 @@ func TestApplyIsAdditive(t *testing.T) {
 
 func TestResolveMACsCanonicalizes(t *testing.T) {
 	d := testDB(t)
+	m99 := macaddr.MustParse("AA:BB:CC:DD:EE:99")
 	if _, err := d.Exec(`INSERT INTO device_seen (mac, first_seen, last_seen, ip) VALUES
-		('m1', 0, 0, ' 192.168.1.42 ')`); err != nil {
+		('aa:bb:cc:dd:ee:99', 0, 0, ' 192.168.1.99 ')`); err != nil {
 		t.Fatal(err)
 	}
 	macs, err := resolveMACs(context.Background(), d)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if macs["192.168.1.42"] != "m1" {
+	if macs["192.168.1.99"] != m99 {
 		t.Errorf("mapa = %+v", macs)
+	}
+}
+
+// TestSkipsCorruptLegacyMACRows comprueba que filas heredadas con MAC corrupta
+// en dns_domain_first o device_seen se descartan sin romper la consulta.
+func TestSkipsCorruptLegacyMACRows(t *testing.T) {
+	d := testDB(t)
+	st := NewStore(d)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+	validMAC := macaddr.MustParse("AA:BB:CC:DD:EE:01")
+
+	if _, err := d.Exec(`INSERT INTO dns_domain_first (domain, first_seen, mac) VALUES
+		('corrupt.example', ?, 'basura-no-mac'),
+		('ok.example', ?, 'aa:bb:cc:dd:ee:01')`,
+		now.Add(-time.Minute).UnixMilli(), now.Add(-2*time.Minute).UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.NewDomains(ctx, now.Add(-time.Hour), now, 10)
+	if err != nil {
+		t.Fatalf("NewDomains falló por fila corrupta: %v", err)
+	}
+	if len(got) != 1 || got[0].Domain != "ok.example" || got[0].MAC != validMAC {
+		t.Fatalf("esperaba solo ok.example con %s, obtuve %+v", validMAC, got)
+	}
+
+	if _, err := d.Exec(`INSERT INTO device_seen (mac, first_seen, last_seen, ip) VALUES
+		('no-es-mac', 0, 0, '192.168.1.10')`); err != nil {
+		t.Fatal(err)
+	}
+	macs, err := resolveMACs(ctx, d)
+	if err != nil {
+		t.Fatalf("resolveMACs falló por fila corrupta: %v", err)
+	}
+	if _, found := macs["192.168.1.10"]; found {
+		t.Fatalf("la fila corrupta no debió resolverse: %+v", macs)
+	}
+	if macs["192.168.1.42"] != validMAC {
+		t.Fatalf("esperaba 192.168.1.42 -> %s, obtuve %+v", validMAC, macs)
 	}
 }

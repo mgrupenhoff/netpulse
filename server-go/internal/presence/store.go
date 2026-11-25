@@ -2,26 +2,28 @@ package presence
 
 import (
 	"encoding/json"
+	"log"
 	"sync"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/db"
 )
 
 const peopleKey = "presence.people.v1"
 
 type Person struct {
-	ID    string   `json:"id"`
-	Name  string   `json:"name"`
-	MACs  []string `json:"macs"`
-	Color string   `json:"color"`
+	ID    string        `json:"id"`
+	Name  string        `json:"name"`
+	MACs  []macaddr.MAC `json:"macs"`
+	Color string        `json:"color"`
 }
 
 type PresenceEvent struct {
-	Ts     int64  `json:"ts"`
-	MAC    string `json:"mac"`
-	State  string `json:"state"`
-	Person string `json:"person"`
+	Ts     int64       `json:"ts"`
+	MAC    macaddr.MAC `json:"mac"`
+	State  string      `json:"state"`
+	Person string      `json:"person"`
 }
 
 type Status struct {
@@ -35,13 +37,13 @@ type Store struct {
 	mu          sync.RWMutex
 	db          *db.DB
 	people      []Person
-	macToPerson map[string]string
+	macToPerson map[macaddr.MAC]string
 }
 
 func NewStore(d *db.DB) *Store {
 	s := &Store{
 		db:          d,
-		macToPerson: map[string]string{},
+		macToPerson: map[macaddr.MAC]string{},
 	}
 	s.load()
 	return s
@@ -55,17 +57,47 @@ func (s *Store) load() {
 	if err := s.db.QueryRow("SELECT value FROM kv WHERE key = ?", peopleKey).Scan(&raw); err != nil {
 		return
 	}
-	var people []Person
-	if json.Unmarshal([]byte(raw), &people) == nil {
-		s.people = people
-		s.rebuildIndex()
+	type personDTO struct {
+		ID    string   `json:"id"`
+		Name  string   `json:"name"`
+		MACs  []string `json:"macs"`
+		Color string   `json:"color"`
 	}
+	var dtos []personDTO
+	if json.Unmarshal([]byte(raw), &dtos) != nil {
+		return
+	}
+	people := make([]Person, 0, len(dtos))
+	for _, d := range dtos {
+		macs := make([]macaddr.MAC, 0, len(d.MACs))
+		for _, rawMAC := range d.MACs {
+			m, err := macaddr.Parse(rawMAC)
+			if err != nil {
+				if rawMAC != "" {
+					log.Printf("[presence] skipping invalid MAC %q for person %q: %v", rawMAC, d.ID, err)
+				}
+				continue
+			}
+			macs = append(macs, m)
+		}
+		people = append(people, Person{
+			ID:    d.ID,
+			Name:  d.Name,
+			MACs:  macs,
+			Color: d.Color,
+		})
+	}
+	s.people = people
+	s.rebuildIndex()
 }
 
 func (s *Store) rebuildIndex() {
-	s.macToPerson = map[string]string{}
+	s.macToPerson = map[macaddr.MAC]string{}
 	for _, p := range s.people {
 		for _, mac := range p.MACs {
+			if !mac.IsValid() {
+				continue
+			}
 			s.macToPerson[mac] = p.ID
 		}
 	}
@@ -128,7 +160,7 @@ func (s *Store) DeletePerson(id string) {
 	}
 }
 
-func (s *Store) PersonForMAC(mac string) string {
+func (s *Store) PersonForMAC(mac macaddr.MAC) string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.macToPerson[mac]

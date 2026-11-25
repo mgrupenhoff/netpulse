@@ -328,9 +328,9 @@ func (s *server) setMQTTEnabled(enabled bool) error {
 
 // knownMacItem es la forma JSON de una entrada de la allowlist (#196).
 type knownMacItem struct {
-	MAC  string `json:"mac"`
-	Name string `json:"name"`
-	Note string `json:"note,omitempty"`
+	MAC  macaddr.MAC `json:"mac"`
+	Name string      `json:"name"`
+	Note string      `json:"note,omitempty"`
 }
 
 // validMAC normaliza y valida una dirección MAC a su forma canónica
@@ -360,13 +360,17 @@ func (s *server) registerKnownMacsRoutes(mux *http.ServeMux) {
 
 	// PUT /api/settings/known-macs — alta o actualización de una MAC.
 	mux.Handle("PUT /api/settings/known-macs", auth.RequireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body knownMacItem
+		var body struct {
+			MAC  string `json:"mac"`
+			Name string `json:"name"`
+			Note string `json:"note,omitempty"`
+		}
 		if st := readJSONBody(w, r, &body); st != 0 {
 			writeBodyError(w, st, "invalid_body", "")
 			return
 		}
-		mac, ok := validMAC(body.MAC)
-		if !ok {
+		mac, err := macaddr.Parse(body.MAC)
+		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_input", "dirección MAC inválida (AA:BB:CC:DD:EE:FF)")
 			return
 		}
@@ -376,14 +380,14 @@ func (s *server) registerKnownMacsRoutes(mux *http.ServeMux) {
 		}
 		// #1278: re-alta manual quita la lápida (en el camino de éxito: en el
 		// de error no se registró nada y la lápida debe quedarse).
-		_ = s.db.DeleteDeletedClient(mac)
+		_ = s.db.DeleteDeletedClient(mac.String())
 		writeJSON(w, http.StatusOK, knownMacItem{MAC: mac, Name: body.Name, Note: body.Note})
 	})))
 
 	// DELETE /api/settings/known-macs/{mac} — baja de la allowlist.
 	mux.Handle("DELETE /api/settings/known-macs/{mac}", auth.RequireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mac, ok := validMAC(r.PathValue("mac"))
-		if !ok {
+		mac, err := macaddr.Parse(r.PathValue("mac"))
+		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_input", "dirección MAC inválida (AA:BB:CC:DD:EE:FF)")
 			return
 		}

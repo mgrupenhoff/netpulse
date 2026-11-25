@@ -169,7 +169,7 @@ func TestIngestSecondTickSumsSameHour(t *testing.T) {
 		t.Fatal(err)
 	}
 	var total int
-	if err := d.QueryRow(`SELECT SUM(queries) FROM dns_activity WHERE mac = 'aa:bb:cc:dd:ee:01'`).Scan(&total); err != nil {
+	if err := d.QueryRow(`SELECT SUM(queries) FROM dns_activity WHERE mac = 'AA:BB:CC:DD:EE:01'`).Scan(&total); err != nil {
 		t.Fatal(err)
 	}
 	if total != 2 {

@@ -6,7 +6,11 @@
 // consultable por la API (GET /api/device-events), espejo de roam_events.
 package deviceevents
 
-import "database/sql"
+import (
+	"database/sql"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
+)
 
 // Estado del dispositivo en el evento.
 const (
@@ -16,13 +20,13 @@ const (
 
 // Event es una fila de device_events (transición de presencia).
 type Event struct {
-	ID        int64  `json:"id"`
-	TsMs      int64  `json:"ts_ms"`
-	MAC       string `json:"mac"`
-	RouterID  string `json:"router_id,omitempty"`
-	State     string `json:"state"`
-	SignalDbm *int   `json:"signal_dbm,omitempty"`
-	Detail    string `json:"detail,omitempty"`
+	ID        int64       `json:"id"`
+	TsMs      int64       `json:"ts_ms"`
+	MAC       macaddr.MAC `json:"mac"`
+	RouterID  string      `json:"router_id,omitempty"`
+	State     string      `json:"state"`
+	SignalDbm *int        `json:"signal_dbm,omitempty"`
+	Detail    string      `json:"detail,omitempty"`
 }
 
 // Insert registra una transición de presencia.
@@ -38,7 +42,7 @@ func Insert(db *sql.DB, ev Event) error {
 // ListEvents lee eventos ordenados por ts DESC. Filtros opcionales: router,
 // mac y state. limit se acota a [1,1000] (default 100); sinceMs excluye
 // eventos anteriores.
-func ListEvents(db *sql.DB, limit int, sinceMs int64, routerID, mac, state string) ([]Event, error) {
+func ListEvents(db *sql.DB, limit int, sinceMs int64, routerID string, mac macaddr.MAC, state string) ([]Event, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
@@ -48,7 +52,7 @@ func ListEvents(db *sql.DB, limit int, sinceMs int64, routerID, mac, state strin
 		q += " AND router_id = ?"
 		args = append(args, routerID)
 	}
-	if mac != "" {
+	if mac.IsValid() {
 		q += " AND mac = ?"
 		args = append(args, mac)
 	}
@@ -90,7 +94,7 @@ type Interval struct {
 // mientras hay tramo abierto cierra ese tramo y abre uno nuevo (roaming).
 // Los eventos se recorren en ascendente; un online en el mismo router que el
 // tramo abierto es no-op (el poller repite online por reconexiones rápidas).
-func Intervals(db *sql.DB, mac string, sinceMs int64) ([]Interval, error) {
+func Intervals(db *sql.DB, mac macaddr.MAC, sinceMs int64) ([]Interval, error) {
 	devEv, err := listEventsAsc(db, mac, sinceMs)
 	if err != nil {
 		return nil, err
@@ -148,7 +152,7 @@ func Intervals(db *sql.DB, mac string, sinceMs int64) ([]Interval, error) {
 
 // lastStateBefore: último estado de presencia del cliente ANTES de sinceMs
 // (#1493). Sirve para saber si el tramo abierto viene de antes de la ventana.
-func lastStateBefore(db *sql.DB, mac string, sinceMs int64) (state, routerID string, ok bool) {
+func lastStateBefore(db *sql.DB, mac macaddr.MAC, sinceMs int64) (state, routerID string, ok bool) {
 	err := db.QueryRow(
 		`SELECT state, COALESCE(router_id,'') FROM device_events
 		 WHERE mac = ? AND ts_ms < ? ORDER BY ts_ms DESC LIMIT 1`,
@@ -160,7 +164,7 @@ func lastStateBefore(db *sql.DB, mac string, sinceMs int64) (state, routerID str
 }
 
 // listEventsAsc devuelve los device_events de la MAC en ascendente.
-func listEventsAsc(db *sql.DB, mac string, sinceMs int64) ([]Event, error) {
+func listEventsAsc(db *sql.DB, mac macaddr.MAC, sinceMs int64) ([]Event, error) {
 	rows, err := db.Query(`SELECT ts_ms, COALESCE(router_id,''), state FROM device_events
 		WHERE mac = ? AND ts_ms >= ? ORDER BY ts_ms ASC`, mac, sinceMs)
 	if err != nil {
@@ -180,7 +184,7 @@ func listEventsAsc(db *sql.DB, mac string, sinceMs int64) ([]Event, error) {
 // listConnectedAsc devuelve los roam_events 'connected' de la MAC en
 // ascendente (el feed hostapd/DAWN tiene la MAC tal cual la loguea hostapd:
 // mayúsculas con ':').
-func listConnectedAsc(db *sql.DB, mac string, sinceMs int64) ([]Event, error) {
+func listConnectedAsc(db *sql.DB, mac macaddr.MAC, sinceMs int64) ([]Event, error) {
 	rows, err := db.Query(`SELECT ts_ms, router_id FROM roam_events
 		WHERE mac = ? AND type = 'connected' AND ts_ms >= ? ORDER BY ts_ms ASC`, mac, sinceMs)
 	if err != nil {
@@ -199,8 +203,8 @@ func listConnectedAsc(db *sql.DB, mac string, sinceMs int64) ([]Event, error) {
 
 // RoamCount resume la actividad de roaming de una MAC en la ventana pedida.
 type RoamCount struct {
-	MAC      string `json:"mac"`
-	Connects int    `json:"connects"`
+	MAC      macaddr.MAC `json:"mac"`
+	Connects int         `json:"connects"`
 }
 
 // RoamCounts devuelve las MACs con más eventos 'connected' en la ventana
@@ -238,7 +242,7 @@ func HasAttribution(db *sql.DB, sinceMs int64) bool {
 }
 
 // CountConnects cuenta los eventos 'connected' de una MAC en la ventana.
-func CountConnects(db *sql.DB, mac string, sinceMs int64) (int, error) {
+func CountConnects(db *sql.DB, mac macaddr.MAC, sinceMs int64) (int, error) {
 	var n int
 	err := db.QueryRow(`SELECT COUNT(*) FROM roam_events
 		WHERE mac = ? AND type = 'connected' AND ts_ms >= ?`, mac, sinceMs).Scan(&n)

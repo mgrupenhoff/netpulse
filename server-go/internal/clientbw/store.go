@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"log"
 	"time"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 const (
@@ -73,7 +75,7 @@ CREATE TABLE IF NOT EXISTS client_bw_daily (
 // Sample es una muestra de tráfico de UN cliente en UN router: bytes del
 // intervalo (delta) y rate medio del intervalo en bps.
 type Sample struct {
-	MAC      string
+	MAC      macaddr.MAC
 	RouterID string
 	TS       time.Time
 	RxBytes  uint64
@@ -137,7 +139,7 @@ func (s *Store) Insert(sample Sample) error {
 	return err
 }
 
-func (s *Store) GetSeries(mac, routerID string, from, to time.Time, resolution string) ([]Point, error) {
+func (s *Store) GetSeries(mac macaddr.MAC, routerID string, from, to time.Time, resolution string) ([]Point, error) {
 	if s.db == nil {
 		return nil, nil
 	}
@@ -158,7 +160,7 @@ func (s *Store) GetSeries(mac, routerID string, from, to time.Time, resolution s
 // GetMACSeries devuelve la serie de un cliente (MAC) agregando a través de
 // TODOS los routers: un dispositivo puede verse en varios APs a lo largo del
 // día (roaming), y la UI del detalle quiere el total, no el de un router.
-func (s *Store) GetMACSeries(mac string, from, to time.Time, resolution string) ([]Point, error) {
+func (s *Store) GetMACSeries(mac macaddr.MAC, from, to time.Time, resolution string) ([]Point, error) {
 	if s.db == nil {
 		return nil, nil
 	}
@@ -175,7 +177,7 @@ func (s *Store) GetMACSeries(mac string, from, to time.Time, resolution string) 
 	}
 }
 
-func (s *Store) queryRawMAC(mac string, fromMs, toMs int64) ([]Point, error) {
+func (s *Store) queryRawMAC(mac macaddr.MAC, fromMs, toMs int64) ([]Point, error) {
 	rows, err := s.db.Query(
 		`SELECT ts, SUM(rx_bytes), SUM(tx_bytes), AVG(rx_bps), AVG(tx_bps)
 		 FROM client_bw_raw
@@ -197,7 +199,7 @@ func (s *Store) queryRawMAC(mac string, fromMs, toMs int64) ([]Point, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) query5mMAC(mac string, fromMs, toMs int64) ([]Point, error) {
+func (s *Store) query5mMAC(mac macaddr.MAC, fromMs, toMs int64) ([]Point, error) {
 	rows, err := s.db.Query(
 		`SELECT bucket_ts, SUM(rx_bytes), SUM(tx_bytes), AVG(rx_bps_avg), AVG(tx_bps_avg)
 		 FROM client_bw_5m
@@ -219,7 +221,7 @@ func (s *Store) query5mMAC(mac string, fromMs, toMs int64) ([]Point, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) queryDailyMAC(mac string, from, to time.Time) ([]Point, error) {
+func (s *Store) queryDailyMAC(mac macaddr.MAC, from, to time.Time) ([]Point, error) {
 	fromDate := from.Format("2006-01-02")
 	toDate := to.Format("2006-01-02")
 	rows, err := s.db.Query(
@@ -243,7 +245,7 @@ func (s *Store) queryDailyMAC(mac string, from, to time.Time) ([]Point, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) queryRaw(mac, routerID string, fromMs, toMs int64) ([]Point, error) {
+func (s *Store) queryRaw(mac macaddr.MAC, routerID string, fromMs, toMs int64) ([]Point, error) {
 	rows, err := s.db.Query(
 		`SELECT ts, rx_bytes, tx_bytes, rx_bps, tx_bps FROM client_bw_raw
 		 WHERE mac = ? AND router_id = ? AND ts >= ? AND ts <= ?
@@ -264,7 +266,7 @@ func (s *Store) queryRaw(mac, routerID string, fromMs, toMs int64) ([]Point, err
 	return out, rows.Err()
 }
 
-func (s *Store) query5m(mac, routerID string, fromMs, toMs int64) ([]Point, error) {
+func (s *Store) query5m(mac macaddr.MAC, routerID string, fromMs, toMs int64) ([]Point, error) {
 	rows, err := s.db.Query(
 		`SELECT bucket_ts, rx_bytes, tx_bytes, rx_bps_avg, tx_bps_avg FROM client_bw_5m
 		 WHERE mac = ? AND router_id = ? AND bucket_ts >= ? AND bucket_ts <= ?
@@ -285,7 +287,7 @@ func (s *Store) query5m(mac, routerID string, fromMs, toMs int64) ([]Point, erro
 	return out, rows.Err()
 }
 
-func (s *Store) queryDaily(mac, routerID string, from, to time.Time) ([]Point, error) {
+func (s *Store) queryDaily(mac macaddr.MAC, routerID string, from, to time.Time) ([]Point, error) {
 	fromDate := from.Format("2006-01-02")
 	toDate := to.Format("2006-01-02")
 	rows, err := s.db.Query(
@@ -401,7 +403,7 @@ func (s *Store) TopClients(routerID string, since time.Time, limit int) ([]TopCl
 }
 
 type TopClient struct {
-	MAC     string `json:"mac"`
-	RxBytes uint64 `json:"rxBytes"`
-	TxBytes uint64 `json:"txBytes"`
+	MAC     macaddr.MAC `json:"mac"`
+	RxBytes uint64      `json:"rxBytes"`
+	TxBytes uint64      `json:"txBytes"`
 }

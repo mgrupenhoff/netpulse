@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/alerts"
 	"github.com/gnacho/netpulse/server-go/internal/db"
 )
@@ -497,7 +498,7 @@ func TestLiveTrackUnknownDevicesTrustedAllowlist(t *testing.T) {
 	l := liveTestLive()
 	l.db = openLiveTestDB(t) // allowlist en BD real
 	trusted := Device{MAC: "A4:7E:FA:65:0C:AA", Name: "A4:7E:FA:65:0C:AA", RouterID: "living", Online: true}
-	if err := l.db.UpsertKnownMac(db.KnownMac{MAC: "A4:7E:FA:65:0C:AA", Name: "Withings"}); err != nil {
+	if err := l.db.UpsertKnownMac(db.KnownMac{MAC: macaddr.MustParse("A4:7E:FA:65:0C:AA"), Name: "Withings"}); err != nil {
 		t.Fatal(err)
 	}
 	// Primer ciclo siembra; desconexión; reconexión: la MAC de la allowlist

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	_ "modernc.org/sqlite"
 )
 
@@ -37,9 +38,10 @@ func TestSchemaCreation(t *testing.T) {
 func TestInsertAndQuery(t *testing.T) {
 	s := openTestStore(t)
 	now := time.Now()
+	mac := macaddr.MustParse("aa:bb:cc:dd:ee:ff")
 	for i := 0; i < 10; i++ {
 		if err := s.Insert(Sample{
-			MAC: "aa:bb:cc:dd:ee:ff", RouterID: "gw",
+			MAC: mac, RouterID: "gw",
 			TS:      now.Add(time.Duration(i) * time.Minute),
 			RxBytes: uint64(i * 1000), TxBytes: uint64(i * 500),
 			RxBps: float64(i * 8000), TxBps: float64(i * 4000),
@@ -48,7 +50,7 @@ func TestInsertAndQuery(t *testing.T) {
 		}
 	}
 
-	points, err := s.GetSeries("aa:bb:cc:dd:ee:ff", "gw",
+	points, err := s.GetSeries(mac, "gw",
 		now.Add(-time.Hour), now.Add(time.Hour), "raw")
 	if err != nil {
 		t.Fatalf("query: %v", err)
@@ -65,9 +67,10 @@ func TestInsertAndQuery(t *testing.T) {
 func TestRollup(t *testing.T) {
 	s := openTestStore(t)
 	now := time.Now()
+	mac := macaddr.MustParse("aa:bb:cc:dd:ee:ff")
 	for i := 0; i < 20; i++ {
 		_ = s.Insert(Sample{
-			MAC: "aa:bb:cc:dd:ee:ff", RouterID: "gw",
+			MAC: mac, RouterID: "gw",
 			TS:      now.Add(time.Duration(i) * time.Minute),
 			RxBytes: 1000, TxBytes: 500,
 			RxBps: 8000, TxBps: 4000,
@@ -78,7 +81,7 @@ func TestRollup(t *testing.T) {
 		t.Fatalf("rollup 5m: %v", err)
 	}
 
-	points, err := s.GetSeries("aa:bb:cc:dd:ee:ff", "gw",
+	points, err := s.GetSeries(mac, "gw",
 		now.Add(-time.Hour), now.Add(time.Hour), "5m")
 	if err != nil {
 		t.Fatalf("query 5m: %v", err)
@@ -97,7 +100,11 @@ func TestRollup(t *testing.T) {
 func TestTopClients(t *testing.T) {
 	s := openTestStore(t)
 	now := time.Now()
-	macs := []string{"aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02", "aa:bb:cc:dd:ee:03"}
+	macs := []macaddr.MAC{
+		macaddr.MustParse("aa:bb:cc:dd:ee:01"),
+		macaddr.MustParse("aa:bb:cc:dd:ee:02"),
+		macaddr.MustParse("aa:bb:cc:dd:ee:03"),
+	}
 	for i, mac := range macs {
 		for j := 0; j < 5; j++ {
 			_ = s.Insert(Sample{
@@ -115,7 +122,7 @@ func TestTopClients(t *testing.T) {
 	if len(top) != 2 {
 		t.Fatalf("expected 2 top clients, got %d", len(top))
 	}
-	if top[0].MAC != "aa:bb:cc:dd:ee:03" {
+	if top[0].MAC != macs[2] {
 		t.Fatalf("expected heaviest client first: %s", top[0].MAC)
 	}
 }
@@ -123,22 +130,23 @@ func TestTopClients(t *testing.T) {
 func TestGetMACSeriesAgregaRouters(t *testing.T) {
 	s := openTestStore(t)
 	now := time.Now().Truncate(time.Minute).Add(time.Minute)
+	mac := macaddr.MustParse("aa:bb:cc:dd:ee:ff")
 	// La misma MAC vista en dos routers (roaming) a la misma hora.
 	for _, rid := range []string{"rt2", "rt4"} {
 		for i := 0; i < 3; i++ {
 			_ = s.Insert(Sample{
-				MAC: "aa:bb:cc:dd:ee:ff", RouterID: rid,
+				MAC: mac, RouterID: rid,
 				TS:      now.Add(time.Duration(i) * time.Minute),
 				RxBytes: 1000, TxBytes: 500, RxBps: 8000, TxBps: 4000,
 			})
 		}
 	}
 	// GetSeries con router filtra; GetMACSeries agrega ambos.
-	one, err := s.GetSeries("aa:bb:cc:dd:ee:ff", "rt2", now.Add(-time.Hour), now.Add(time.Hour), "raw")
+	one, err := s.GetSeries(mac, "rt2", now.Add(-time.Hour), now.Add(time.Hour), "raw")
 	if err != nil || len(one) != 3 {
 		t.Fatalf("serie por router: %d %v", len(one), err)
 	}
-	all, err := s.GetMACSeries("aa:bb:cc:dd:ee:ff", now.Add(-time.Hour), now.Add(time.Hour), "raw")
+	all, err := s.GetMACSeries(mac, now.Add(-time.Hour), now.Add(time.Hour), "raw")
 	if err != nil {
 		t.Fatalf("serie mac: %v", err)
 	}
@@ -156,10 +164,11 @@ func TestNilDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("store: %v", err)
 	}
-	if err := s.Insert(Sample{MAC: "x", RouterID: "y", TS: time.Now()}); err != nil {
+	mac := macaddr.MustParse("AA:BB:CC:DD:EE:FF")
+	if err := s.Insert(Sample{MAC: mac, RouterID: "y", TS: time.Now()}); err != nil {
 		t.Fatalf("insert nil: %v", err)
 	}
-	points, err := s.GetSeries("x", "y", time.Now(), time.Now(), "raw")
+	points, err := s.GetSeries(mac, "y", time.Now(), time.Now(), "raw")
 	if err != nil || len(points) != 0 {
 		t.Fatalf("query nil: %v, %d", err, len(points))
 	}
@@ -171,7 +180,7 @@ func TestNightlyJobBackfillsGapBeyond48h(t *testing.T) {
 	s := openTestStore(t)
 	old := time.Now().Add(-60 * time.Hour)
 	if err := s.Insert(Sample{
-		MAC: "aa:bb:cc:dd:ee:ff", RouterID: "gw", TS: old,
+		MAC: macaddr.MustParse("aa:bb:cc:dd:ee:ff"), RouterID: "gw", TS: old,
 		RxBytes: 1000, TxBytes: 500, RxBps: 8000, TxBps: 4000,
 	}); err != nil {
 		t.Fatalf("insert: %v", err)
@@ -183,7 +192,7 @@ func TestNightlyJobBackfillsGapBeyond48h(t *testing.T) {
 	var n int
 	if err := s.db.QueryRow(
 		"SELECT COUNT(*) FROM client_bw_5m WHERE mac=? AND router_id=? AND bucket_ts=?",
-		"aa:bb:cc:dd:ee:ff", "gw", bucket).Scan(&n); err != nil {
+		"AA:BB:CC:DD:EE:FF", "gw", bucket).Scan(&n); err != nil {
 		t.Fatalf("query: %v", err)
 	}
 	if n != 1 {

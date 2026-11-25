@@ -3,6 +3,8 @@ package httpapi
 import (
 	"strings"
 	"testing"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 // TestFindDhcpHostMultiMACList comprueba que findDhcpHost reconoce una sección
@@ -35,7 +37,7 @@ func TestFindDhcpHostMultiMACList(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := findDhcpHost(hosts, tc.mac)
+			got := findDhcpHost(hosts, macaddr.MustParse(tc.mac))
 			if got == nil {
 				t.Fatalf("esperaba encontrar la sección cfg0abc12 para %s (h.MAC=%q), obtuve nil", tc.mac, hosts[0].MAC)
 			}

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/adapters"
 	"github.com/gnacho/netpulse/server-go/internal/apitoken"
 	"github.com/gnacho/netpulse/server-go/internal/auth"
@@ -1096,7 +1097,7 @@ func TestDeviceTrafficEndpoint(t *testing.T) {
 	}
 	now := time.Now()
 	err := srv.db.ClientBW.Insert(clientbw.Sample{
-		MAC: "AA:BB:CC:DD:EE:01", RouterID: "rt2", TS: now,
+		MAC: macaddr.MustParse("AA:BB:CC:DD:EE:01"), RouterID: "rt2", TS: now,
 		RxBytes: 1000, TxBytes: 2000, RxBps: 8000, TxBps: 16000,
 	})
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"testing"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	_ "modernc.org/sqlite"
 )
 
@@ -38,10 +39,12 @@ CREATE INDEX idx_device_events_mac_ts ON device_events(mac, ts_ms DESC);
 // TestInsertAndList cubre insert + lectura con todos los filtros y orden DESC.
 func TestInsertAndList(t *testing.T) {
 	db := openMemDB(t)
+	m1 := macaddr.MustParse("AA:AA:AA:AA:AA:01")
+	m2 := macaddr.MustParse("AA:AA:AA:AA:AA:02")
 	events := []Event{
-		{TsMs: 1000, MAC: "AA:AA:AA:AA:AA:01", RouterID: "rt1", State: "offline", SignalDbm: nil, Detail: ""},
-		{TsMs: 2000, MAC: "AA:AA:AA:AA:AA:02", RouterID: "rt2", State: "online", SignalDbm: intPtr(-45), Detail: "resumed"},
-		{TsMs: 3000, MAC: "AA:AA:AA:AA:AA:01", RouterID: "rt1", State: "online", SignalDbm: intPtr(-50), Detail: "back"},
+		{TsMs: 1000, MAC: m1, RouterID: "rt1", State: "offline", SignalDbm: nil, Detail: ""},
+		{TsMs: 2000, MAC: m2, RouterID: "rt2", State: "online", SignalDbm: intPtr(-45), Detail: "resumed"},
+		{TsMs: 3000, MAC: m1, RouterID: "rt1", State: "online", SignalDbm: intPtr(-50), Detail: "back"},
 	}
 	for _, ev := range events {
 		if err := Insert(db, ev); err != nil {
@@ -50,7 +53,7 @@ func TestInsertAndList(t *testing.T) {
 	}
 
 	// Sin filtro: 3 eventos, orden DESC por ts.
-	got, err := ListEvents(db, 100, 0, "", "", "")
+	got, err := ListEvents(db, 100, 0, "", macaddr.MAC{}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,12 +63,12 @@ func TestInsertAndList(t *testing.T) {
 	if got[0].TsMs != 3000 {
 		t.Errorf("primero debería ser ts=3000 (DESC), got %d", got[0].TsMs)
 	}
-	if got[0].State != "online" || got[0].MAC != "AA:AA:AA:AA:AA:01" {
+	if got[0].State != "online" || got[0].MAC != m1 {
 		t.Errorf("fila ts=3000 mal: %+v", got[0])
 	}
 
 	// Filtro mac.
-	got, err = ListEvents(db, 100, 0, "", "AA:AA:AA:AA:AA:01", "")
+	got, err = ListEvents(db, 100, 0, "", m1, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +77,7 @@ func TestInsertAndList(t *testing.T) {
 	}
 
 	// Filtro state.
-	got, err = ListEvents(db, 100, 0, "", "", "offline")
+	got, err = ListEvents(db, 100, 0, "", macaddr.MAC{}, "offline")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +86,7 @@ func TestInsertAndList(t *testing.T) {
 	}
 
 	// Filtro router.
-	got, err = ListEvents(db, 100, 0, "rt2", "", "")
+	got, err = ListEvents(db, 100, 0, "rt2", macaddr.MAC{}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +95,7 @@ func TestInsertAndList(t *testing.T) {
 	}
 
 	// Filtro since.
-	got, err = ListEvents(db, 100, 2000, "", "", "")
+	got, err = ListEvents(db, 100, 2000, "", macaddr.MAC{}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +104,7 @@ func TestInsertAndList(t *testing.T) {
 	}
 
 	// limit acota.
-	got, err = ListEvents(db, 1, 0, "", "", "")
+	got, err = ListEvents(db, 1, 0, "", macaddr.MAC{}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +116,7 @@ func TestInsertAndList(t *testing.T) {
 	if _, err := db.Exec("DELETE FROM device_events"); err != nil {
 		t.Fatal(err)
 	}
-	got, err = ListEvents(db, 100, 0, "", "", "")
+	got, err = ListEvents(db, 100, 0, "", macaddr.MAC{}, "")
 	if err != nil {
 		t.Fatal(err)
 	}

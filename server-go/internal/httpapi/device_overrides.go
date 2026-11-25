@@ -57,8 +57,8 @@ const deviceNameMax = 64
 // handleDeviceOverridePut: campos opcionales {"icon","name","type"}; vacío
 // limpia, ausente no toca. Si los tres quedan vacíos la fila se borra.
 func (s *server) handleDeviceOverridePut(w http.ResponseWriter, r *http.Request) {
-	mac := macaddr.Normalize(r.PathValue("mac"))
-	if mac == "" {
+	mac, err := macaddr.Parse(r.PathValue("mac"))
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_mac")
 		return
 	}
@@ -149,8 +149,8 @@ func (s *server) handleDeviceOverridePut(w http.ResponseWriter, r *http.Request)
 
 // handleDeviceOverrideGet: devuelve el override actual de un dispositivo.
 func (s *server) handleDeviceOverrideGet(w http.ResponseWriter, r *http.Request) {
-	mac := macaddr.Normalize(r.PathValue("mac"))
-	if mac == "" {
+	mac, err := macaddr.Parse(r.PathValue("mac"))
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_mac")
 		return
 	}

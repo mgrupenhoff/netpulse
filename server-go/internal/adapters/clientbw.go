@@ -81,9 +81,8 @@ func (l *Live) recordClientBwSamples(routerID string, now time.Time, samples []c
 	for _, s := range samples {
 		mac := canonBWMac(s.mac)
 		if mac == "" {
-			if s.mac != "" {
-				bwWarn.Printf(s.mac, "skipping sample with invalid MAC %q (source=%s router=%s)", s.mac, source, routerID)
-			}
+			// Avisa (una sola vez) del valor descartado; no hay MAC que usar.
+			macaddr.ParseOrWarn(bwWarn, "clientbw source="+source+" router="+routerID, s.mac)
 			continue
 		}
 		prev := last[mac]
@@ -110,11 +109,13 @@ func (l *Live) recordClientBwSamples(routerID string, now time.Time, samples []c
 		txDelta := s.tx - prev.tx
 		prev.rxBps = float64(rxDelta) * 8 / dt
 		prev.txBps = float64(txDelta) * 8 / dt
-		_ = l.db.ClientBW.Insert(clientbw.Sample{
-			MAC: mac, RouterID: routerID, TS: now,
-			RxBytes: rxDelta, TxBytes: txDelta,
-			RxBps: prev.rxBps, TxBps: prev.txBps,
-		})
+		if parsed, ok := macaddr.ParseOrWarn(bwWarn, "clientbw.insert", mac); ok {
+			_ = l.db.ClientBW.Insert(clientbw.Sample{
+				MAC: parsed, RouterID: routerID, TS: now,
+				RxBytes: rxDelta, TxBytes: txDelta,
+				RxBps: prev.rxBps, TxBps: prev.txBps,
+			})
+		}
 		prev.at = now
 		prev.rx = s.rx
 		prev.tx = s.tx

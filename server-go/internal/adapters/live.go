@@ -28,10 +28,15 @@ import (
 	"github.com/gnacho/netpulse/server-go/internal/config"
 	"github.com/gnacho/netpulse/server-go/internal/db"
 	"github.com/gnacho/netpulse/server-go/internal/deviceevents"
+	"github.com/gnacho/netpulse/server-go/internal/logonce"
 	"github.com/gnacho/netpulse/server-go/internal/oui"
 	"github.com/gnacho/netpulse/server-go/internal/portseries"
 	"github.com/gnacho/netpulse/server-go/internal/roamevents"
 )
+
+// macWarn avisa una sola vez por valor de las MAC inválidas que llegan de
+// fuera (sondeos, pushes del agente, descubrimiento): se repiten en cada sondeo.
+var macWarn = logonce.New("[adapters] ")
 
 // uptimeLabel: "—" cuando ninguna fuente declaró uptime (#55). Un pusher que
 // no recoge la sección system.sysinfo dejaba uptimeSec en 0 y la tarjeta
@@ -3240,10 +3245,12 @@ func (l *Live) insertDeviceEvent(mac, routerID, state string, signalDbm *int, no
 	if l.db == nil {
 		return
 	}
-	_ = deviceevents.Insert(l.db.DB, deviceevents.Event{
-		TsMs: nowMs, MAC: mac, RouterID: routerID, State: state,
-		SignalDbm: signalDbm,
-	})
+	if parsed, ok := macaddr.ParseOrWarn(macWarn, "deviceevents.insert", mac); ok {
+		_ = deviceevents.Insert(l.db.DB, deviceevents.Event{
+			TsMs: nowMs, MAC: parsed, RouterID: routerID, State: state,
+			SignalDbm: signalDbm,
+		})
+	}
 }
 
 // lastRouterFor devuelve el último router conocido de una MAC desde
@@ -3948,14 +3955,16 @@ func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort st
 			if l.roamIsEcho(mac, prev.routerID, cur.routerID) {
 				continue
 			}
-			if err := roamevents.InsertEvent(l.db.DB, roamevents.Event{
-				TsMs:     now,
-				RouterID: cur.routerID,
-				Type:     roamevents.TypeConnected,
-				MAC:      mac,
-				Detail:   detail,
-			}); err == nil {
-				l.markRoam(mac, prev.routerID, cur.routerID, time.UnixMilli(now))
+			if parsed, ok := macaddr.ParseOrWarn(macWarn, "roamevents.insert", mac); ok {
+				if err := roamevents.InsertEvent(l.db.DB, roamevents.Event{
+					TsMs:     now,
+					RouterID: cur.routerID,
+					Type:     roamevents.TypeConnected,
+					MAC:      parsed,
+					Detail:   detail,
+				}); err == nil {
+					l.markRoam(mac, prev.routerID, cur.routerID, time.UnixMilli(now))
+				}
 			}
 		}
 	}

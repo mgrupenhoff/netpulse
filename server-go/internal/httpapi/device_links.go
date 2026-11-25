@@ -7,6 +7,8 @@ package httpapi
 import (
 	"net/http"
 	"strings"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 // handleDeviceLinkPut: body {"target": "<mac>"} — enlaza la MAC {mac} como
@@ -21,10 +23,14 @@ func (s *server) handleDeviceLinkPut(w http.ResponseWriter, r *http.Request) {
 		writeBodyError(w, st, "invalid_body", "body JSON inválido")
 		return
 	}
-	alias := normalizeMACKey(r.PathValue("mac"))
-	target := normalizeMACKey(body.Target)
-	if alias == "" || target == "" {
-		writeError(w, http.StatusBadRequest, "invalid_input", "missing mac")
+	alias := macaddr.Normalize(r.PathValue("mac"))
+	if alias == "" {
+		writeError(w, http.StatusBadRequest, "invalid_mac", "invalid mac")
+		return
+	}
+	target := macaddr.Normalize(body.Target)
+	if target == "" {
+		writeError(w, http.StatusBadRequest, "invalid_mac", "invalid target mac")
 		return
 	}
 	if alias == target {
@@ -51,7 +57,9 @@ func (s *server) handleDeviceLinkPut(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleDeviceLinkDelete: desenlaza la alias {mac} (vuelve a ser un cliente
-// independiente en la siguiente construcción de la lista).
+// independiente en la siguiente construcción de la lista). A diferencia del
+// PUT, tolera claves que no son MAC: una fila heredada con basura en la tabla
+// tiene que poder desenlazarse.
 func (s *server) handleDeviceLinkDelete(w http.ResponseWriter, r *http.Request) {
 	alias := normalizeMACKey(r.PathValue("mac"))
 	if alias == "" {

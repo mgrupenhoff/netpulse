@@ -30,7 +30,7 @@ func TestRecordClientBwSamplesWarnsOncePerInvalidMAC(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		l.recordClientBwSamples("gw", t0.Add(time.Duration(i)*time.Second), samples, "hostapd")
 	}
-	if len(lines) != 1 || !strings.Contains(lines[0], `"xyz"`) || !strings.Contains(lines[0], "router=gw") {
+	if len(lines) != 1 || !strings.Contains(lines[0], `ignoring invalid MAC "xyz"`) || !strings.Contains(lines[0], "router=gw") {
 		t.Fatalf("avisos: %q (want uno que cite el valor y el router)", lines)
 	}
 }
