@@ -59,7 +59,7 @@ func TestDeviceSeenSkipsAndPurgesWanSide(t *testing.T) {
 		t.Fatalf("noteDevicesSeen no debe insertar vecinos WAN, filas=%d", n)
 	}
 
-	l.purgeWanSideSeen([]Device{wan, lan})
+	l.purgeWanSideSeen([]Device{wan, lan}, nil)
 	if n := countRows(t, d, "SELECT COUNT(*) FROM device_seen WHERE mac = ?", "0C:EF:15:00:00:02"); n != 0 {
 		t.Fatalf("el vecino WAN debe purgarse del registro, filas=%d", n)
 	}

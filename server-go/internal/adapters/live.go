@@ -3546,6 +3546,28 @@ func wgDuration(d time.Duration) string {
 // buildDevices: unión de leases + MACs vistas (wireless > FDB satélites >
 // FDB gateway si no hay memoria) + device_attrib (index.js:396-460).
 func (l *Live) buildDevices(polled map[string]*routerPolled, wanPort string) []Device {
+	l.mu.Lock()
+	gw := l.gatewayCfg
+	l.mu.Unlock()
+	gwID := ""
+	if gw != nil {
+		gwID = gw.ID
+	}
+	devices, _ := l.buildDevicesWan(polled, gwID, wanPort)
+	return devices
+}
+
+// buildDevicesWan es buildDevices y además devuelve wanSegment (#2183): las
+// MACs que el gateway aprendió en su boca WAN sin evidencia LAN, más el peer
+// de su ruta por defecto aunque no esté en esa boca (PPPoE). Casi ninguna
+// llega a ser un dispositivo (los vecinos del segmento van a wanIgnored y el
+// peer lo absorbe #1791), así que la purga del registro no puede
+// encontrarlas en la lista de dispositivos.
+//
+// gwID y wanPort los fija quien llama, a partir de la misma lectura del
+// gateway: si se leyera aquí otra vez, un SetRouters entre medias aplicaría
+// la boca WAN de un gateway al ARP de otro.
+func (l *Live) buildDevicesWan(polled map[string]*routerPolled, gwID, wanPort string) ([]Device, map[string]bool) {
 	leasesByMac := map[string]DhcpLease{}
 	leaseRouter := map[string]string{}
 	arpByMac := map[string]string{}
@@ -3647,8 +3669,9 @@ func (l *Live) buildDevices(polled map[string]*routerPolled, wanPort string) []D
 	for routerID, p := range polled {
 		for mac, w := range p.wireless {
 			sig := w.SignalDbm
-			seen[mac] = seenInfo{routerID: routerID, band: w.Band, wifiIface: w.Iface, ssid: w.SSID, signal: &sig}
-			assocSeen[mac] = append(assocSeen[mac], seenInfo{routerID: routerID, band: w.Band, wifiIface: w.Iface, ssid: w.SSID, signal: &sig})
+			si := seenInfo{routerID: routerID, band: w.Band, wifiIface: w.Iface, ssid: w.SSID, signal: &sig}
+			seen[mac] = si
+			assocSeen[mac] = append(assocSeen[mac], si)
 			if l.db != nil {
 				_, _ = l.db.Exec(
 					`INSERT INTO device_attrib (mac, router_id, band, signal_dbm, last_seen) VALUES (?, ?, ?, ?, ?)
@@ -3738,16 +3761,11 @@ func (l *Live) buildDevices(polled map[string]*routerPolled, wanPort string) []D
 		}
 	}
 	l.mu.Lock()
-	gw := l.gatewayCfg
 	registered := make(map[string]bool, len(l.routers))
 	for _, rc := range l.routers {
 		registered[rc.ID] = true
 	}
 	l.mu.Unlock()
-	gwID := ""
-	if gw != nil {
-		gwID = gw.ID
-	}
 	// A stored attribution outlives the router it names. Deleting a router --
 	// or an integration that registered some, as the UniFi scraper did for
 	// each AP -- leaves its clients in device_attrib pointing at an id that
@@ -3847,6 +3865,7 @@ func (l *Live) buildDevices(polled map[string]*routerPolled, wanPort string) []D
 	// pero no se materializan como dispositivo: en una WAN con subred
 	// pública compartida son decenas de equipos ajenos.
 	wanIgnored := map[string]bool{}
+	wanSegment := map[string]bool{}
 	if gwID != "" && wanPort != "" {
 		if gwP := polled[gwID]; gwP != nil {
 			peerIP := strings.TrimSpace(gwP.wanInfo.Gateway)
@@ -3858,6 +3877,7 @@ func (l *Live) buildDevices(polled map[string]*routerPolled, wanPort string) []D
 					continue
 				}
 				seen[mac] = seenInfo{routerID: gwID, band: "cable"}
+				wanSegment[mac] = true
 				// Sin IP de puerta de enlace WAN no hay forma de saber cuál
 				// es el primer salto: se conserva el comportamiento anterior
 				// (#1485) en vez de esconder el peer a ciegas.
@@ -4010,14 +4030,19 @@ func (l *Live) buildDevices(polled map[string]*routerPolled, wanPort string) []D
 	// IP de la puerta de enlace WAN, no por un prefijo de MAC ni por un puerto,
 	// que en PPPoE no existe.
 	defaultRouteMacs := map[string]bool{}
-	for _, p := range polled {
+	for routerID, p := range polled {
 		gwIP := strings.TrimSpace(p.wanInfo.Gateway)
 		if gwIP == "" {
 			continue
 		}
 		for mac, ip := range p.arp {
-			if strings.TrimSpace(ip) == gwIP {
+			if strings.EqualFold(strings.TrimSpace(ip), gwIP) {
 				defaultRouteMacs[strings.ToUpper(mac)] = true
+				// #2183: el peer del gateway tampoco es un cliente y se
+				// purga del registro, esté o no en wanPort.
+				if gwID != "" && routerID == gwID {
+					wanSegment[mac] = true
+				}
 			}
 		}
 	}
@@ -4265,7 +4290,7 @@ func (l *Live) buildDevices(polled map[string]*routerPolled, wanPort string) []D
 	// MAC hace el contrato determinista para el mismo set de dispositivos.
 	sort.Slice(devices, func(i, j int) bool { return devices[i].MAC < devices[j].MAC })
 	// #1151: canónicas + fusión de enlazadas (orden: normalizar -> fusionar).
-	return normalizeDevices(mergeLinkedDevices(devices, l.deviceLinks()))
+	return normalizeDevices(mergeLinkedDevices(devices, l.deviceLinks())), wanSegment
 }
 
 // normalizeDevices: MACs a formato canónico (mayúsculas, ':') y dedup por
@@ -4589,7 +4614,11 @@ func (l *Live) buildOverview(ctx context.Context) (*Overview, error) {
 			wanPort = gp.wanInfo.Port
 		}
 	}
-	devices := l.buildDevices(polled, wanPort)
+	gwID := ""
+	if gw != nil {
+		gwID = gw.ID
+	}
+	devices, wanSegment := l.buildDevicesWan(polled, gwID, wanPort)
 	stickyPolled := overlayStickyFdb(polled, memo, nowMs)
 	devices, distNodes := inferTopology(stickyPolled, devices)
 	// Capa 2 manual (issue #142): overrides de topología tras el autodiscover.
@@ -4679,7 +4708,7 @@ func (l *Live) buildOverview(ctx context.Context) (*Overview, error) {
 	devices = l.settleTransient(devices, time.Now().UnixMilli())
 	// #2183: los vecinos del segmento WAN no se registran; si quedaron de
 	// antes, se purgan para que no reaparezcan como fantasmas offline.
-	l.purgeWanSideSeen(devices)
+	l.purgeWanSideSeen(devices, wanSegment)
 	l.trackUnknownDevices(devices, distNodes)
 	l.trackWiFiNoIP(devices, distNodes)
 	l.trackOfflineDevices(devices)
@@ -4703,10 +4732,6 @@ func (l *Live) buildOverview(ctx context.Context) (*Overview, error) {
 	l.fillSparklineFromPorts(routerList)
 	adguard := l.pollAdGuard(ctx)
 	wireguard := l.pollWireGuard(devices)
-	gwID := ""
-	if gw != nil {
-		gwID = gw.ID
-	}
 	// MACs registradas (routers.mac): permiten a fleetFdbEvidence anclar
 	// unidades sin bridge MAC utilizable (DSM: docker0 en bridgeDetect, sin
 	// lldpd) desde el FDB del switch que aprende su NIC (p. ej. NAS en xg4).
@@ -5344,9 +5369,14 @@ func (l *Live) attributedDevices() []Device {
 			detailWanPort = gp.wanInfo.Port
 		}
 	}
+	detailGwID := ""
+	if gwCfg != nil {
+		detailGwID = gwCfg.ID
+	}
+	detailDevices, _ := l.buildDevicesWan(polled, detailGwID, detailWanPort)
 	devices, _ := inferTopology(
 		overlayStickyFdb(polled, detailMemo, detailNowMs),
-		l.buildDevices(polled, detailWanPort),
+		detailDevices,
 	)
 	// #1292: lápidas fuera de la lista del detalle (la fuente viva puede
 	// seguir emitiendo la MAC borrada).

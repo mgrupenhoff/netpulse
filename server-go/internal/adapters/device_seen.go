@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"strings"
 	"time"
@@ -177,31 +178,42 @@ func (l *Live) purgeFleetSeen() {
 // segmento WAN (#2183). Antes se persistían como cualquier cliente y, al
 // dejar de aparecer en el ARP, salían como fantasmas offline en el
 // inventario para siempre. No son equipos de esta red.
-func (l *Live) purgeWanSideSeen(devices []Device) {
+//
+// Son los dispositivos marcados WanSide y las MACs de wanSegment (ver
+// buildDevicesWan): con IP de puerta de enlace WAN, ninguna de estas últimas
+// llega a la lista. Solo alcanza a las que están en el ARP del gateway en
+// este ciclo: un vecino que ya no aparece conserva su fila. El barrido de
+// presencia (#2110) solo ayuda en parte: toca las primeras 254 direcciones
+// de cada subred, y solo si la unidad enruta.
+func (l *Live) purgeWanSideSeen(devices []Device, wanSegment map[string]bool) {
 	if l.db == nil {
 		return
 	}
-	macs := make([]any, 0, len(devices))
-	placeholders := ""
+	macs := map[string]bool{}
+	add := func(raw string) {
+		if mac := normSeenMAC(raw); mac != "" {
+			macs[mac] = true
+		}
+	}
 	for _, d := range devices {
-		if !d.WanSide {
-			continue
+		if d.WanSide {
+			add(d.MAC)
 		}
-		mac := normSeenMAC(d.MAC)
-		if mac == "" {
-			continue
-		}
-		macs = append(macs, mac)
-		if placeholders == "" {
-			placeholders = "?"
-		} else {
-			placeholders += ",?"
-		}
+	}
+	for mac := range wanSegment {
+		add(mac)
 	}
 	if len(macs) == 0 {
 		return
 	}
-	_, _ = l.db.Exec("DELETE FROM device_seen WHERE mac IN ("+placeholders+")", macs...)
+	args := make([]any, 0, len(macs))
+	for mac := range macs {
+		args = append(args, mac)
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(args)), ",")
+	if _, err := l.db.Exec("DELETE FROM device_seen WHERE mac IN ("+placeholders+")", args...); err != nil {
+		log.Printf("[netpulse] device_seen: WAN segment purge failed: %v", err)
+	}
 }
 
 // noteDevicesSeen actualiza el registro (#954) y devuelve los clientes que
