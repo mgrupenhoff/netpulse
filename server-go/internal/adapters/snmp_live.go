@@ -94,7 +94,8 @@ func (l *Live) pollRouterSNMP(cfg RouterConfig) (*routerPolled, error) {
 	// #1036: MAC propia del switch (dot1dBaseBridgeAddress). Sin ella el
 	// equipo no tenía MAC en flota ni casaba por MAC en topología. Cache:
 	// si el OID no contesta en este poll se conserva la última conocida.
-	brMac, _ := npsnmp.PollBridgeAddress(session)
+	brMacRaw, _ := npsnmp.PollBridgeAddress(session)
+	brMac := brMacRaw.String()
 	l.mu.Lock()
 	if brMac == "" {
 		brMac = l.snmpBrMac[cfg.ID]
@@ -581,7 +582,7 @@ func snmpFdbMap(fdb []npsnmp.FdbEntry, portIdxToName map[int]string) map[string]
 		if snmpInternalPort(name) {
 			continue
 		}
-		out[e.MAC] = name
+		out[e.MAC.String()] = name
 	}
 	return out
 }
@@ -602,7 +603,7 @@ func snmpSelfMacs(fdb []npsnmp.FdbEntry, portIdxToName map[int]string) []string 
 		if name == "" || !snmpInternalPort(name) {
 			continue
 		}
-		out = append(out, e.MAC)
+		out = append(out, e.MAC.String())
 	}
 	return out
 }
@@ -637,7 +638,7 @@ func snmpLldpNeighbors(rem []npsnmp.LldpRemEntry, portIdxToName map[int]string) 
 		}
 		out = append(out, LldpNeighbor{
 			Port:               port,
-			ChassisMac:         e.ChassisMac,
+			ChassisMac:         e.ChassisMac.String(),
 			Chassis:            e.Chassis,
 			Mgmt:               e.Mgmt,
 			Caps:               e.Caps,

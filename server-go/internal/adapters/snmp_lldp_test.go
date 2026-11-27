@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	npsnmp "github.com/gnacho/netpulse/server-go/internal/snmp"
 )
 
@@ -15,9 +16,9 @@ import (
 // (paridad con snmpFdbMap, #661).
 func TestSnmpLldpNeighborsNaming(t *testing.T) {
 	rem := []npsnmp.LldpRemEntry{
-		{LocalPortNum: 5, IfIndex: 5, ChassisMac: "78:55:36:02:58:BA", Chassis: "ryzen-ai", Mgmt: "192.168.1.80", Caps: []string{"Wlan"}, PortDesc: "enp195s0"},
+		{LocalPortNum: 5, IfIndex: 5, ChassisMac: macaddr.MustParse("78:55:36:02:58:BA"), Chassis: "ryzen-ai", Mgmt: "192.168.1.80", Caps: []string{"Wlan"}, PortDesc: "enp195s0"},
 		// Sin DisplayName para el ifIndex: cae al LocalPortNum si tiene nombre.
-		{LocalPortNum: 7, IfIndex: 70, ChassisMac: "D8:EC:5E:60:C7:82", Chassis: "LGS310C-2"},
+		{LocalPortNum: 7, IfIndex: 70, ChassisMac: macaddr.MustParse("D8:EC:5E:60:C7:82"), Chassis: "LGS310C-2"},
 		// Sin nombre en ninguno de los dos: nombre generado.
 		{LocalPortNum: 9, IfIndex: 90, Chassis: "otro"},
 	}

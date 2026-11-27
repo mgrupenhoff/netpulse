@@ -12,19 +12,25 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
+	"github.com/gnacho/netpulse/server-go/internal/logonce"
 	"github.com/gosnmp/gosnmp"
 )
+
+// snmpWarn avisa una sola vez por descarte de PDU: el sondeo repite el mismo
+// valor en cada ciclo.
+var snmpWarn = logonce.New("[snmp] ")
 
 // LldpRemEntry es un vecino LLDP anunciado en un puerto local del switch.
 // Todos los campos del anuncio son opcionales; vacío = no anunciado.
 type LldpRemEntry struct {
-	LocalPortNum int      // lldpRemLocalPortNum (puerto de bridge local)
-	IfIndex      int      // resuelto vía dot1dBasePortIfIndex (0 si no mapea)
-	ChassisMac   string   // MAYÚSCULAS si el id del chasis es MAC (subtype 4)
-	Chassis      string   // sysName si lo anuncia; si no, id del chasis no-MAC
-	Mgmt         string   // primera IPv4 de gestión anunciada para ese vecino
-	Caps         []string // capacidades enabled ("Bridge", "Router", "Wlan"...)
-	PortDesc     string   // descripción del puerto remoto (o su id si no hay)
+	LocalPortNum int         // lldpRemLocalPortNum (puerto de bridge local)
+	IfIndex      int         // resuelto vía dot1dBasePortIfIndex (0 si no mapea)
+	ChassisMac   macaddr.MAC // válido si el id del chasis es MAC (subtype 4)
+	Chassis      string      // sysName si lo anuncia; si no, id del chasis no-MAC
+	Mgmt         string      // primera IPv4 de gestión anunciada para ese vecino
+	Caps         []string    // capacidades enabled ("Bridge", "Router", "Wlan"...)
+	PortDesc     string      // descripción del puerto remoto (o su id si no hay)
 	// ChassisFromLocDesc: true cuando el Chassis vino de lldpLocPortDesc del
 	// puerto LOCAL (caso Omada #1279: la rem table no expone identidad y la
 	// descripción que el admin anotó en su propio puerto es lo único
@@ -114,7 +120,7 @@ func lldpRemEntries(pdus []gosnmp.SnmpPDU, portToIfIndex map[int]int, mgmt map[s
 			chassisSubtype[k] = int(uint64Val(pdu))
 		case 5: // lldpRemChassisId
 			if chassisSubtype[k] == 4 { // macAddress
-				e.ChassisMac = macFromOctets(octetsVal(pdu))
+				e.ChassisMac = macFromPDU(pdu)
 			} else if s := stringVal(pdu); s != "" {
 				e.Chassis = s
 			}
@@ -122,7 +128,7 @@ func lldpRemEntries(pdus []gosnmp.SnmpPDU, portToIfIndex map[int]int, mgmt map[s
 			portSubtype[k] = int(uint64Val(pdu))
 		case 7: // lldpRemPortId (fallback de PortDesc si no hay descripción)
 			if portSubtype[k] == 3 { // macAddress
-				e.PortDesc = macFromOctets(octetsVal(pdu))
+				e.PortDesc = macFromPDU(pdu).String()
 			} else {
 				e.PortDesc = stringVal(pdu)
 			}
@@ -217,7 +223,7 @@ func applyLocPortIdentity(entries []LldpRemEntry, loc map[int]locPortInfo) {
 	}
 	for i := range entries {
 		e := &entries[i]
-		if e.Chassis != "" || e.ChassisMac != "" || e.Mgmt != "" {
+		if e.Chassis != "" || e.ChassisMac.IsValid() || e.Mgmt != "" {
 			continue
 		}
 		info, ok := loc[e.LocalPortNum]
@@ -293,13 +299,22 @@ func octetsVal(v gosnmp.SnmpPDU) []byte {
 	return nil
 }
 
-// macFromOctets formatea una MAC MAYÚSCULA canónica (#960) de 6 bytes
-// ("" si el dato no es usable).
-func macFromOctets(b []byte) string {
-	if len(b) < 6 {
-		return ""
+// macFromPDU convierte el OCTET STRING de una PDU en una MAC canónica
+// (valor cero si el OID no existe o el dato no tiene exactamente 6 octetos).
+func macFromPDU(v gosnmp.SnmpPDU) macaddr.MAC {
+	if v.Type == gosnmp.NoSuchObject || v.Type == gosnmp.NoSuchInstance {
+		return macaddr.MAC{}
 	}
-	return fmt.Sprintf("%02X:%02X:%02X:%02X:%02X:%02X", b[0], b[1], b[2], b[3], b[4], b[5])
+	b := octetsVal(v)
+	if len(b) == 0 {
+		return macaddr.MAC{}
+	}
+	if len(b) != 6 {
+		what, detail := "snmp.lldp_rem", fmt.Sprintf("ignoring non-6-byte MAC PDU %s (len=%d)", v.Name, len(b))
+		snmpWarn.Printf(what+"\x00"+detail, "%s: %s", what, detail)
+		return macaddr.MAC{}
+	}
+	return macaddr.From6([6]byte(b))
 }
 
 // lldpCapsFromBits decodifica LldpSystemCapabilitiesMap (BITS, bit 0 = MSB

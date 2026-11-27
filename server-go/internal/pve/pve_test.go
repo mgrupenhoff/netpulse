@@ -8,9 +8,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 // Fixtures del formato REAL de las configs de Proxmox (verificado en
@@ -23,9 +25,8 @@ func TestMACsOfConfigLXC(t *testing.T) {
 		"memory":   float64(2048),
 	}
 	macs := MACsOfConfig(cfg)
-	sort.Strings(macs)
-	want := []string{"BC:24:11:00:00:01", "BC:24:11:A4:9E:BB"}
-	sort.Strings(want)
+	slices.SortFunc(macs, macaddr.MAC.Compare)
+	want := []macaddr.MAC{macaddr.MustParse("BC:24:11:00:00:01"), macaddr.MustParse("BC:24:11:A4:9E:BB")}
 	if !reflect.DeepEqual(macs, want) {
 		t.Fatalf("macs lxc: %v (want %v)", macs, want)
 	}
@@ -38,9 +39,8 @@ func TestMACsOfConfigQEMU(t *testing.T) {
 		"net1": "virtio=52:54:00:12:34:56,bridge=vmbr0",
 	}
 	macs := MACsOfConfig(cfg)
-	sort.Strings(macs)
-	want := []string{"52:54:00:12:34:56", "EE:D2:28:5F:B6:3E"}
-	sort.Strings(want)
+	slices.SortFunc(macs, macaddr.MAC.Compare)
+	want := []macaddr.MAC{macaddr.MustParse("52:54:00:12:34:56"), macaddr.MustParse("EE:D2:28:5F:B6:3E")}
 	if !reflect.DeepEqual(macs, want) {
 		t.Fatalf("macs qemu: %v (want %v)", macs, want)
 	}
@@ -55,7 +55,7 @@ func TestMACsOfConfigIgnoraCampos(t *testing.T) {
 		"netx":   "no es una NIC real", // prefijo net pero sin MAC
 	}
 	macs := MACsOfConfig(cfg)
-	want := []string{"00:11:22:33:44:55"}
+	want := []macaddr.MAC{macaddr.MustParse("00:11:22:33:44:55")}
 	if !reflect.DeepEqual(macs, want) {
 		t.Fatalf("macs: %v (want %v)", macs, want)
 	}
@@ -342,17 +342,22 @@ func TestNICsOfConfigReadsTag(t *testing.T) {
 	}
 	// net<N> en orden, no el orden aleatorio del map.
 	want := []NIC{
-		{MAC: "BC:24:11:00:00:01", Tag: 999, Bridge: "vmbr0"},
-		{MAC: "BC:24:11:00:00:02", Tag: 42, Bridge: "vmbr1"},
-		{MAC: "BC:24:11:00:00:03", Bridge: "vmbr0"},
-		{MAC: "BC:24:11:00:00:04", Bridge: "vmbr0"},
+		{MAC: macaddr.MustParse("BC:24:11:00:00:01"), Tag: 999, Bridge: "vmbr0"},
+		{MAC: macaddr.MustParse("BC:24:11:00:00:02"), Tag: 42, Bridge: "vmbr1"},
+		{MAC: macaddr.MustParse("BC:24:11:00:00:03"), Bridge: "vmbr0"},
+		{MAC: macaddr.MustParse("BC:24:11:00:00:04"), Bridge: "vmbr0"},
 	}
 	if !reflect.DeepEqual(nics, want) {
 		t.Fatalf("nics: %+v (want %+v)", nics, want)
 	}
 	// MACsOfConfig sigue devolviendo solo las MACs, en el mismo orden.
 	macs := MACsOfConfig(cfg)
-	wantMACs := []string{"BC:24:11:00:00:01", "BC:24:11:00:00:02", "BC:24:11:00:00:03", "BC:24:11:00:00:04"}
+	wantMACs := []macaddr.MAC{
+		macaddr.MustParse("BC:24:11:00:00:01"),
+		macaddr.MustParse("BC:24:11:00:00:02"),
+		macaddr.MustParse("BC:24:11:00:00:03"),
+		macaddr.MustParse("BC:24:11:00:00:04"),
+	}
 	if !reflect.DeepEqual(macs, wantMACs) {
 		t.Fatalf("macs: %v (want %v)", macs, wantMACs)
 	}

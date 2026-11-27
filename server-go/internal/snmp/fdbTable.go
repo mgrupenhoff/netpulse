@@ -2,13 +2,15 @@ package snmp
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gosnmp/gosnmp"
 )
 
 type FdbEntry struct {
-	MAC             string
+	MAC             macaddr.MAC
 	BridgePortIndex int
 	IfIndex         int
 }
@@ -89,13 +91,13 @@ func PollFdbTable(s *gosnmp.GoSNMP) (FdbPoll, error) {
 func fdbEntries(portToIfIndex map[int]int, pdus []gosnmp.SnmpPDU, dot1q bool) []FdbEntry {
 	var out []FdbEntry
 	for _, pdu := range pdus {
-		var mac string
+		var mac macaddr.MAC
 		if dot1q {
 			mac = extractMacFromOid(pdu.Name, OidDot1qTpFdbPort)
 		} else {
 			mac = extractMacFromOid(pdu.Name, OidDot1dTpFdbPort)
 		}
-		if mac == "" {
+		if !mac.IsValid() {
 			continue
 		}
 		bridgePort := int(uint64Val(pdu))
@@ -121,30 +123,21 @@ func fdbEntries(portToIfIndex map[int]int, pdus []gosnmp.SnmpPDU, dot1q bool) []
 // <vlan>.M.M.M.M.M.M como la tabla dot1q (RFC 4363). Regla común: la MAC son
 // los últimos 6 octetos; se aceptan 6 o más y se descarta cualquier índice
 // con menos.
-func extractMacFromOid(name, prefix string) string {
+func extractMacFromOid(name, prefix string) macaddr.MAC {
 	if !strings.HasPrefix(name, prefix+".") {
-		return ""
+		return macaddr.MAC{}
 	}
-	suffix := name[len(prefix)+1:]
-	parts := strings.Split(suffix, ".")
+	parts := strings.Split(name[len(prefix)+1:], ".")
 	if len(parts) < 6 {
-		return ""
+		return macaddr.MAC{}
 	}
-	return macFromParts(parts[len(parts)-6:])
-}
-
-// macFromParts construye la MAC en MAYÚSCULAS (#960): es la capitalización
-// canónica de todo el sistema (FDB del agente, wireless, leases,
-// device_attrib, device_seen). En minúscula, los mapas de merge indexados
-// por MAC duplicaban cada cliente SNMP (una entrada por capitalización).
-func macFromParts(parts []string) string {
-	out := make([]string, 6)
-	for i, p := range parts {
-		var n int
-		if _, err := fmt.Sscanf(p, "%d", &n); err != nil || n < 0 || n > 255 {
-			return ""
+	var b [6]byte
+	for i, p := range parts[len(parts)-6:] {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 || n > 255 {
+			return macaddr.MAC{}
 		}
-		out[i] = fmt.Sprintf("%02X", n)
+		b[i] = byte(n)
 	}
-	return strings.Join(out, ":")
+	return macaddr.From6(b)
 }
