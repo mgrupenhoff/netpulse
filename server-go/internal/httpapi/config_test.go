@@ -991,3 +991,99 @@ func TestConfigRoutersSNMPDefaultVersion(t *testing.T) {
 		t.Fatalf("community_set: %v", rt["snmp_community_set"])
 	}
 }
+
+func TestConfigRoutersDiscoveryOverrides(t *testing.T) {
+	srv := makeTestServer(t)
+	_, cookie, _ := loginCookie(t, srv.URL, "admin", "test123456")
+
+	res := doReq(t, "POST", srv.URL+"/api/config/routers", cookie,
+		`{"name":"travel","host":"192.168.8.70","type":"openwrt"}`)
+	if res.StatusCode != 201 {
+		t.Fatalf("POST router: %d", res.StatusCode)
+	}
+
+	// PUT con networks y devices ("auto" se descarta antes de guardar).
+	res = doReq(t, "PUT", srv.URL+"/api/config/routers/travel", cookie,
+		`{"discovery_overrides":{"networks":{"wwan":"on","lan":"auto"},"devices":{"eth3":"off","br-lan":"auto"}}}`)
+	if res.StatusCode != 200 {
+		t.Fatalf("PUT discovery_overrides: %d", res.StatusCode)
+	}
+	rt := readJSON(t, res)["router"].(map[string]any)
+	ov, ok := rt["discovery_overrides"].(map[string]any)
+	if !ok {
+		t.Fatalf("discovery_overrides tras PUT: %+v", rt["discovery_overrides"])
+	}
+	nets, ok := ov["networks"].(map[string]any)
+	if !ok || len(nets) != 1 || nets["wwan"] != "on" {
+		t.Fatalf("discovery_overrides.networks tras PUT: %+v", ov["networks"])
+	}
+	devs, ok := ov["devices"].(map[string]any)
+	if !ok || len(devs) != 1 || devs["eth3"] != "off" {
+		t.Fatalf("discovery_overrides.devices tras PUT: %+v", ov["devices"])
+	}
+
+	// GET /api/config/routers devuelve el objeto nuevo.
+	res = doReq(t, "GET", srv.URL+"/api/config/routers", cookie, "")
+	if res.StatusCode != 200 {
+		t.Fatalf("GET routers: %d", res.StatusCode)
+	}
+	routers := readJSON(t, res)["routers"].([]any)
+	item := routers[0].(map[string]any)
+	ov, ok = item["discovery_overrides"].(map[string]any)
+	if !ok {
+		t.Fatalf("discovery_overrides en GET: %+v", item["discovery_overrides"])
+	}
+	nets = ov["networks"].(map[string]any)
+	devs = ov["devices"].(map[string]any)
+	if len(nets) != 1 || nets["wwan"] != "on" || len(devs) != 1 || devs["eth3"] != "off" {
+		t.Fatalf("discovery_overrides en GET: %+v", ov)
+	}
+
+	// null no toca el ajuste guardado.
+	res = doReq(t, "PUT", srv.URL+"/api/config/routers/travel", cookie,
+		`{"name":"travel","discovery_overrides":null}`)
+	if res.StatusCode != 200 {
+		t.Fatalf("PUT null discovery_overrides: %d", res.StatusCode)
+	}
+	rt = readJSON(t, res)["router"].(map[string]any)
+	ov, ok = rt["discovery_overrides"].(map[string]any)
+	if !ok || len(ov["networks"].(map[string]any)) != 1 || len(ov["devices"].(map[string]any)) != 1 {
+		t.Fatalf("null no debía tocar discovery_overrides: %+v", rt["discovery_overrides"])
+	}
+
+	// Validaciones 400: valores inválidos y claves de red/dispositivo fuera de regla.
+	badPayloads := []struct {
+		name string
+		body string
+	}{
+		{"valor invalido en networks", `{"discovery_overrides":{"networks":{"wwan":"always"}}}`},
+		{"valor invalido en devices", `{"discovery_overrides":{"devices":{"eth0":"always"}}}`},
+		{"red vacia", `{"discovery_overrides":{"networks":{"":"on"}}}`},
+		{"red demasiado larga", `{"discovery_overrides":{"networks":{"a23456789012345678901234567890123":"on"}}}`},
+		{"red con guion", `{"discovery_overrides":{"networks":{"wan-1":"on"}}}`},
+		{"red con espacio", `{"discovery_overrides":{"networks":{"wan 1":"on"}}}`},
+		{"dispositivo vacio", `{"discovery_overrides":{"devices":{"":"on"}}}`},
+		{"dispositivo demasiado largo", `{"discovery_overrides":{"devices":{"0123456789abcdef":"on"}}}`},
+		{"dispositivo con espacio", `{"discovery_overrides":{"devices":{"eth 0":"on"}}}`},
+		{"dispositivo con caracter de control", `{"discovery_overrides":{"devices":{"eth0\u0000":"on"}}}`},
+		{"dispositivo con barra", `{"discovery_overrides":{"devices":{"eth/0":"on"}}}`},
+	}
+	for _, tc := range badPayloads {
+		res = doReq(t, "PUT", srv.URL+"/api/config/routers/travel", cookie, tc.body)
+		res.Body.Close()
+		if res.StatusCode != 400 {
+			t.Fatalf("%s: status %d, esperaba 400", tc.name, res.StatusCode)
+		}
+	}
+
+	// Limpiar con todo "auto" omite discovery_overrides en la respuesta.
+	res = doReq(t, "PUT", srv.URL+"/api/config/routers/travel", cookie,
+		`{"discovery_overrides":{"networks":{"wwan":"auto"},"devices":{"eth3":"auto"}}}`)
+	if res.StatusCode != 200 {
+		t.Fatalf("PUT limpiar discovery_overrides: %d", res.StatusCode)
+	}
+	rt = readJSON(t, res)["router"].(map[string]any)
+	if _, present := rt["discovery_overrides"]; present {
+		t.Fatalf("discovery_overrides vacío debía omitirse: %+v", rt["discovery_overrides"])
+	}
+}

@@ -1054,6 +1054,22 @@
       "vlan": "VLAN {{id}}",
       "showClients": "显示客户端",
       "hideClients": "隐藏客户端"
+    },
+    "discovery": {
+      "title": "客户端发现",
+      "toggleAria": "客户端发现网络（{{count}}）",
+      "description": "选择哪些网络上的邻居计为客户端。自动模式会忽略该设备用于连接互联网的网络。",
+      "network": "网络",
+      "deviceLabel": "设备",
+      "down": "已断开",
+      "neighbours": "已确认邻居",
+      "mode": "客户端发现",
+      "modeAria": "{{name}} 的客户端发现",
+      "autoOn": "自动（开启）",
+      "autoOff": "自动（关闭）",
+      "on": "开启",
+      "off": "关闭",
+      "saveError": "无法保存设置。"
     }
   },
   "alerts": {

@@ -67,6 +67,10 @@ type PayloadData struct {
 	// Networks: las redes logicas de OpenWrt tal como las declara UCI
 	// (#1889), con su device, subred, VLAN y miembros.
 	Networks []UciNetwork `json:"networks,omitempty"`
+	// NetIfaces: interfaces lógicas en ejecución de `ubus call
+	// network.interface dump` (lan, wan, wwan, wg0...) con sus dispositivos
+	// Linux asociados, para el descubrimiento de clientes por red.
+	NetIfaces []NetIface `json:"netIfaces,omitempty"`
 	// Vlans: VLANs del bridge (issue #315, bridge vlan show). nil = sonda
 	// fallida o router sin bridge vlan filtering.
 	Vlans []VlanPort `json:"vlans,omitempty"`

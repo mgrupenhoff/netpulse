@@ -771,3 +771,22 @@ export interface NetworkInfo {
   rxBps?: number
   txBps?: number
 }
+
+export type DiscoveryMode = 'auto' | 'on' | 'off'
+export type DiscoveryKind = 'network' | 'device'
+
+export interface DiscoveryOverrides {
+  networks?: Record<string, string>
+  devices?: Record<string, string>
+}
+
+export interface DiscoveryIface {
+  kind: DiscoveryKind
+  name: string
+  devices?: string[]
+  up?: boolean
+  mode: DiscoveryMode
+  auto: boolean
+  effective: boolean
+  neighbours: number
+}

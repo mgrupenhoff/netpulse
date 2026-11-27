@@ -146,3 +146,23 @@ func TestProbeArpIPv6SharesTheThrottle(t *testing.T) {
 		t.Fatalf("la segunda ronda no debe pingear: %d -> %d", first, second)
 	}
 }
+
+// Un vecino solo-IPv6 confirmado por el recheck aporta su interfaz a ArpDevs;
+// si la MAC ya tenía interfaz en IPv4, gana la de IPv4.
+func TestProbeArpReportsIPv6ConfirmedDev(t *testing.T) {
+	run := &staleArp6Runner{
+		v4: []string{v4Confirmada},
+		v6: []string{
+			"fe80::1 dev phy1-sta0 lladdr BB:BB:BB:00:00:77 STALE\nfe80::2 dev eth1 lladdr AA:AA:AA:AA:AA:03 STALE\n",
+			"fe80::1 dev phy1-sta0 lladdr BB:BB:BB:00:00:77 REACHABLE\nfe80::2 dev eth1 lladdr AA:AA:AA:AA:AA:03 REACHABLE\n",
+		},
+	}
+	p := NewProber(run, Options{})
+	_, _, devs := p.probeArp(context.Background())
+	if got := devs["BB:BB:BB:00:00:77"]; got != "phy1-sta0" {
+		t.Fatalf("interfaz de vecino solo-IPv6: %q, esperaba phy1-sta0 (devs=%+v)", got, devs)
+	}
+	if got := devs["AA:AA:AA:AA:AA:03"]; got != "br-lan" {
+		t.Fatalf("la interfaz IPv4 debe ganar sobre la IPv6: %q, esperaba br-lan (devs=%+v)", got, devs)
+	}
+}

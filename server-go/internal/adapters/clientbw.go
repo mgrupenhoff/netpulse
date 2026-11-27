@@ -25,7 +25,12 @@ import (
 	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 	"github.com/gnacho/netpulse/server-go/internal/clientbw"
+	"github.com/gnacho/netpulse/server-go/internal/logonce"
 )
+
+// bwWarn avisa una sola vez por valor de las muestras cuya MAC no es válida:
+// el router las vuelve a enviar en cada sondeo.
+var bwWarn = logonce.New("[clientbw] ")
 
 // clientBwCounter es el último contador absoluto observado de un cliente en
 // un router (para el delta entre polls) + el rate medio del último intervalo
@@ -76,6 +81,9 @@ func (l *Live) recordClientBwSamples(routerID string, now time.Time, samples []c
 	for _, s := range samples {
 		mac := canonBWMac(s.mac)
 		if mac == "" {
+			if s.mac != "" {
+				bwWarn.Printf(s.mac, "skipping sample with invalid MAC %q (source=%s router=%s)", s.mac, source, routerID)
+			}
 			continue
 		}
 		prev := last[mac]

@@ -1287,6 +1287,22 @@
       "showClients": "Mostrar clientes",
       "hideClients": "Ocultar clientes"
     },
+    "discovery": {
+      "title": "Descubrimiento de clientes",
+      "toggleAria": "Redes de descubrimiento de clientes ({{count}})",
+      "description": "Elige en qué redes los vecinos cuentan como clientes. Automático ignora la red por la que la unidad sale a Internet.",
+      "network": "Red",
+      "deviceLabel": "dispositivo",
+      "down": "caída",
+      "neighbours": "Vecinos confirmados",
+      "mode": "Descubrimiento",
+      "modeAria": "Descubrimiento de clientes en {{name}}",
+      "autoOn": "Automático (sí)",
+      "autoOff": "Automático (no)",
+      "on": "Activado",
+      "off": "Desactivado",
+      "saveError": "No se pudo guardar el ajuste."
+    },
     "wan": {
       "chartAria": "Tráfico WAN de la puerta de enlace. Descarga actual {{down}} Mbps, subida {{up}} Mbps.",
       "fiber": "Fibra {{plan}}",

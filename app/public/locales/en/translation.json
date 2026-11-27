@@ -1287,6 +1287,22 @@
       "showClients": "Show clients",
       "hideClients": "Hide clients"
     },
+    "discovery": {
+      "title": "Client discovery",
+      "toggleAria": "Client discovery networks ({{count}})",
+      "description": "Choose which networks' neighbors count as clients. Automatic ignores the network the unit uses to reach the internet.",
+      "network": "Network",
+      "deviceLabel": "device",
+      "down": "down",
+      "neighbours": "Confirmed neighbors",
+      "mode": "Client discovery",
+      "modeAria": "Client discovery for {{name}}",
+      "autoOn": "Automatic (on)",
+      "autoOff": "Automatic (off)",
+      "on": "On",
+      "off": "Off",
+      "saveError": "Could not save the setting."
+    },
     "wan": {
       "chartAria": "Gateway WAN traffic. Current download {{down}} Mbps, upload {{up}} Mbps.",
       "fiber": "Fiber {{plan}}",

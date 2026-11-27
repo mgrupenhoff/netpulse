@@ -35,7 +35,12 @@ import (
 	"time"
 
 	"github.com/gnacho/netpulse/agent/macaddr"
+	"github.com/gnacho/netpulse/server-go/internal/logonce"
 )
+
+// pveWarn avisa una sola vez por hwaddr inválida: el inventario se
+// vuelve a leer en cada sondeo del cluster.
+var pveWarn = logonce.New("[pve] ")
 
 // Config: datos de conexión al cluster (persistidos en kv por el server).
 type Config struct {
@@ -257,7 +262,11 @@ func NICsOfConfig(cfg map[string]any) []NIC {
 		for _, field := range strings.Split(s, ",") {
 			switch {
 			case strings.HasPrefix(field, "hwaddr="):
-				nic.MAC = normMAC(field[len("hwaddr="):])
+				raw := field[len("hwaddr="):]
+				nic.MAC = normMAC(raw)
+				if nic.MAC == "" && raw != "" {
+					pveWarn.Printf(raw, "skipping NIC %s with invalid hwaddr %q", k, raw)
+				}
 			case strings.HasPrefix(field, "bridge="):
 				nic.Bridge = field[len("bridge="):]
 			case strings.HasPrefix(field, "tag="):

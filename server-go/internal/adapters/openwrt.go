@@ -440,23 +440,23 @@ func (c *OpenWrtClient) GetDhcpLeases() []DhcpLease {
 	return parseDhcpLeasesFile(out)
 }
 
-// GetWanInfo: estado del uplink (issue #276). Via ubus network.interface
-// dump, que trae todas las interfaces y deja elegir la que lleva internet
-// por su ruta por defecto en vez de por llamarse "wan" (un PPPoE puede
-// llamarse de cualquier forma, y el nombre "wan" puede ser un módem ocioso).
-// Cae al status de la interfaz "wan" con los ubus antiguos; si el router no
-// tiene ninguna (AP), devuelve WanInfo vacío.
-func (c *OpenWrtClient) GetWanInfo() probe.WanInfo {
+// GetInterfaceDump devuelve el estado del uplink (issue #276) y la lista de
+// interfaces lógicas de OpenWrt en una única llamada a
+// `ubus call network.interface dump`, eligiendo el uplink por su ruta por
+// defecto en vez de por llamarse "wan". Si el dump no trae información WAN,
+// cae al status de la interfaz "wan" como fallback solo para Wan.
+func (c *OpenWrtClient) GetInterfaceDump() probe.InterfaceDump {
+	var dump probe.InterfaceDump
 	if raw, err := c.UbusCall("network.interface", "dump", nil); err == nil {
-		if info := probe.ParseWanStatus(raw); info.Proto != "" || info.IP != "" || info.Gateway != "" {
-			return info
+		dump = probe.ParseInterfaceDump(raw, "")
+		if dump.Wan.Proto != "" || dump.Wan.IP != "" || dump.Wan.Gateway != "" {
+			return dump
 		}
 	}
-	raw, err := c.UbusCall("network.interface.wan", "status", nil)
-	if err == nil {
-		return probe.ParseWanStatus(raw)
+	if raw, err := c.UbusCall("network.interface.wan", "status", nil); err == nil {
+		dump.Wan = probe.ParseWanStatus(raw)
 	}
-	return probe.WanInfo{}
+	return dump
 }
 
 // GetDhcpReservations: the `config host` entries of /etc/config/dhcp, for
@@ -785,15 +785,9 @@ func (c *OpenWrtClient) GetArp() (arp map[string]string, stale map[string]bool, 
 			}
 			// #2109: el mismo recheck sobre NDP. Un host solo-IPv6 no tiene
 			// entrada en `ip -4 neigh`, así que solo esta pasada lo confirma.
-			if v6, ok := c.recheckStaleNeighbours6(due); ok {
-				for mac, ip := range v6 {
-					if _, has := m[mac]; !has {
-						m[mac] = ip
-					}
-					delete(st, mac)
-				}
-			}
-			return m, st, probe.ParseIPNeighDevs(freshSrc)
+			devs = probe.ParseIPNeighDevs(freshSrc)
+			probe.MergeConfirmedNeighbours(m, st, devs, c.recheckStaleNeighbours6(due))
+			return m, st, devs
 		}
 	}
 	out, err := c.pool.Run(c.Host, probe.CmdProcArp, 0)
@@ -922,18 +916,18 @@ func (c *OpenWrtClient) scanPresence() {
 // recheckStaleNeighbours6 (#2109): la pasada NDP por SSH, desde la unidad.
 // Mismo tope y mismo throttle que la v4. `ip -6 neigh` declara la interfaz de
 // cada entrada, y una link-local necesita `-I` para alcanzarse. Devuelve
-// MAC → dirección confirmada; best effort.
-func (c *OpenWrtClient) recheckStaleNeighbours6(due bool) (map[string]string, bool) {
+// MAC → vecino confirmado (dirección e interfaz); best effort.
+func (c *OpenWrtClient) recheckStaleNeighbours6(due bool) map[string]probe.ConfirmedNeighbour {
 	if c.pool == nil || !due {
-		return nil, false
+		return nil
 	}
 	out, err := c.pool.Run(c.Host, probe.CmdIpNeigh6, 0)
 	if err != nil || out == "" {
-		return nil, false
+		return nil
 	}
 	arp, stale := probe.ParseIPNeigh(out)
 	if len(stale) == 0 {
-		return nil, false
+		return nil
 	}
 	devs := probe.ParseIPNeighDevsAll(out)
 	macs := make([]string, 0, len(stale))
@@ -956,27 +950,27 @@ func (c *OpenWrtClient) recheckStaleNeighbours6(due bool) (map[string]string, bo
 		}
 	}
 	if n == 0 {
-		return nil, false
+		return nil
 	}
 	cmd.WriteString("wait")
 	if _, err := c.pool.Run(c.Host, cmd.String(), probe.StalePingTimeout+2*time.Second); err != nil {
-		return nil, false
+		return nil
 	}
 	freshOut, err := c.pool.Run(c.Host, probe.CmdIpNeigh6, 0)
 	if err != nil || freshOut == "" {
-		return nil, false
+		return nil
 	}
 	fresh, stillStale := probe.ParseIPNeigh(freshOut)
-	confirmed := map[string]string{}
+	confirmed := map[string]probe.ConfirmedNeighbour{}
 	for _, mac := range macs {
 		if stillStale[mac] {
 			continue
 		}
 		if ip := fresh[mac]; ip != "" {
-			confirmed[mac] = ip
+			confirmed[mac] = probe.ConfirmedNeighbour{IP: ip, Dev: devs[mac]}
 		}
 	}
-	return confirmed, len(confirmed) > 0
+	return confirmed
 }
 
 // GetNetworks: redes logicas que la unidad declara en UCI (#1889). Es la
