@@ -3,6 +3,8 @@ package rack
 import (
 	"database/sql"
 	"testing"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 // escenarioImport monta un switch (con sfps) y dos servidores, con un cable
@@ -11,15 +13,15 @@ func escenarioImport(t *testing.T, db *sql.DB) (MountRow, MountRow, MountRow) {
 	t.Helper()
 	rack := createTestRack(t, db)
 
-	sw := "AA:BB:CC:00:01:00"
-	s1 := "AA:BB:CC:00:01:01"
-	s2 := "AA:BB:CC:00:01:02"
+	sw := macaddr.MustParse("AA:BB:CC:00:01:00")
+	s1 := macaddr.MustParse("AA:BB:CC:00:01:01")
+	s2 := macaddr.MustParse("AA:BB:CC:00:01:02")
 	if err := UpsertProfile(db, DeviceProfile{MAC: sw, FaceplateID: "switch", UHeight: 1, ColSpan: 12, Ports: []Port{
 		{ID: "lan1", Kind: PortRJ45}, {ID: "lan2", Kind: PortRJ45}, {ID: "sfp1", Kind: PortSFPPlus},
 	}}); err != nil {
 		t.Fatalf("UpsertProfile sw: %v", err)
 	}
-	for _, mac := range []string{s1, s2} {
+	for _, mac := range []macaddr.MAC{s1, s2} {
 		if err := UpsertProfile(db, DeviceProfile{MAC: mac, FaceplateID: "server-1u", UHeight: 1, ColSpan: 12, Ports: []Port{
 			{ID: "eth0", Kind: PortRJ45}, {ID: "sfp0", Kind: PortSFPPlus},
 		}}); err != nil {
@@ -38,7 +40,7 @@ func escenarioImport(t *testing.T, db *sql.DB) (MountRow, MountRow, MountRow) {
 	if err != nil || len(mounts) != 3 {
 		t.Fatalf("ListMountRows: %v n=%d", err, len(mounts))
 	}
-	byMac := map[string]MountRow{}
+	byMac := map[macaddr.MAC]MountRow{}
 	for _, m := range mounts {
 		byMac[m.DeviceMAC] = m
 	}
@@ -88,7 +90,7 @@ func TestImportCablesNoFreePortAndUnmounted(t *testing.T) {
 	sw, _, _ := escenarioImport(t, db)
 
 	// s3: un solo puerto, montado y agotado con un cable manual al switch.
-	s3 := "AA:BB:CC:00:01:03"
+	s3 := macaddr.MustParse("AA:BB:CC:00:01:03")
 	if err := UpsertProfile(db, DeviceProfile{MAC: s3, UHeight: 1, ColSpan: 12, Ports: []Port{{ID: "eth0", Kind: PortRJ45}}}); err != nil {
 		t.Fatalf("UpsertProfile s3: %v", err)
 	}
@@ -100,7 +102,7 @@ func TestImportCablesNoFreePortAndUnmounted(t *testing.T) {
 	if err := SaveLayout(db, LayoutChange{RackID: rackID, Upsert: []Mount{{DeviceMAC: s3, UStart: 4, ColStart: 0}}}); err != nil {
 		t.Fatalf("SaveLayout s3: %v", err)
 	}
-	mS1 := mustMount(t, db, "AA:BB:CC:00:01:01")
+	mS1 := mustMount(t, db, macaddr.MustParse("AA:BB:CC:00:01:01"))
 	mS3 := mustMount(t, db, s3)
 	// Agota el único puerto de s3 CONTRA OTRO PAR (s1): el par s3<->sw
 	// queda sin cable, pero s3 no tiene puerto libre -> NoFreePort.
@@ -109,8 +111,8 @@ func TestImportCablesNoFreePortAndUnmounted(t *testing.T) {
 	}
 
 	res, err := ImportCables(db, []CableHint{
-		{FromDeviceID: s3, ToDeviceID: sw.DeviceMAC, Source: "fdb"},                  // s3 sin puertos libres
-		{FromDeviceID: "cc:cc:cc:cc:cc:cc", ToDeviceID: sw.DeviceMAC, Source: "fdb"}, // no montado
+		{FromDeviceID: s3, ToDeviceID: sw.DeviceMAC, Source: "fdb"},                                     // s3 sin puertos libres
+		{FromDeviceID: macaddr.MustParse("cc:cc:cc:cc:cc:cc"), ToDeviceID: sw.DeviceMAC, Source: "fdb"}, // no montado
 	})
 	if err != nil {
 		t.Fatalf("ImportCables: %v", err)
@@ -120,7 +122,7 @@ func TestImportCablesNoFreePortAndUnmounted(t *testing.T) {
 	}
 }
 
-func mustMount(t *testing.T, db *sql.DB, mac string) MountRow {
+func mustMount(t *testing.T, db *sql.DB, mac macaddr.MAC) MountRow {
 	t.Helper()
 	mounts, err := ListMountRows(db)
 	if err != nil {

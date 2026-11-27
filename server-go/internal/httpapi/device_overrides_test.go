@@ -214,6 +214,28 @@ func TestDeviceDelete(t *testing.T) {
 	}
 }
 
+func TestDeviceDeleteLegacyNonMAC(t *testing.T) {
+	s := panelTestServer(t)
+	if _, err := s.db.Exec("INSERT INTO device_seen (mac, first_seen, last_seen, name) VALUES ('legacy-non-mac', 1, 2, 'legacy')"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	r := httptest.NewRequest(http.MethodDelete, "/api/devices/legacy-non-mac", nil)
+	r.SetPathValue("mac", "legacy-non-mac")
+	rec := httptest.NewRecorder()
+	s.handleDeviceDelete(rec, r)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204 (%s)", rec.Code, rec.Body.String())
+	}
+	var n int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM device_seen WHERE mac = 'legacy-non-mac'").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("rows = %d, want 0 (borrado)", n)
+	}
+}
+
 // #1151: link con validaciones (self 400, ok 200, ya enlazada 409, target
 // alias 409) y unlink (204 / 404).
 func TestDeviceLinkPutDelete(t *testing.T) {

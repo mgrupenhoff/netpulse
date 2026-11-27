@@ -8,6 +8,7 @@ package adapters
 import (
 	"testing"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/alerts"
 )
 
@@ -21,7 +22,7 @@ func TestEmitWeakRecoveredCollapsesPerDevice(t *testing.T) {
 	l := &Live{engine: eng}
 
 	sig := -58
-	d := &Device{MAC: "AA:BB:CC:DD:EE:01", Name: "dev-a", SignalDbm: &sig, RouterID: "rt1"}
+	d := &Device{MAC: macaddr.MustParse("AA:BB:CC:DD:EE:01"), Name: "dev-a", SignalDbm: &sig, RouterID: "rt1"}
 	l.emitWeakRecovered(d, "salon", "alert-weak-AA:BB:CC:DD:EE:01-1000", 1000, 61_000)
 	l.emitWeakRecovered(d, "salon", "alert-weak-AA:BB:CC:DD:EE:01-2000", 2000, 3_060_000)
 
@@ -45,7 +46,7 @@ func TestEmitWeakRecoveredCollapsesPerDevice(t *testing.T) {
 
 	// Un dispositivo distinto sigue teniendo su propia entrada.
 	sig2 := -62
-	d2 := &Device{MAC: "AA:BB:CC:DD:EE:02", Name: "dev-b", SignalDbm: &sig2, RouterID: "rt1"}
+	d2 := &Device{MAC: macaddr.MustParse("AA:BB:CC:DD:EE:02"), Name: "dev-b", SignalDbm: &sig2, RouterID: "rt1"}
 	l.emitWeakRecovered(d2, "salon", "alert-weak-AA:BB:CC:DD:EE:02-3000", 3000, 6_060_000)
 	if got := len(eng.List()); got != 2 {
 		t.Fatalf("cerrar un segundo dispositivo: esperaba 2 cierres (uno por MAC), hay %d", got)

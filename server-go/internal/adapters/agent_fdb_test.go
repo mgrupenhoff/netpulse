@@ -8,6 +8,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 )
 
@@ -31,11 +32,11 @@ func TestPolledFromAgentNormalizaFDBAPuertos(t *testing.T) {
 		}},
 	}
 	p := l.polledFromAgent(l.routers[0], payload)
-	want := map[string]string{
-		"AA:BB:CC:DD:EE:01": "lan1",
-		"AA:BB:CC:DD:EE:02": "lan8",
-		"AA:BB:CC:DD:EE:03": "wan",
-		"AA:BB:CC:DD:EE:04": "lan3",
+	want := map[macaddr.MAC]string{
+		macaddr.MustParse("AA:BB:CC:DD:EE:01"): "lan1",
+		macaddr.MustParse("AA:BB:CC:DD:EE:02"): "lan8",
+		macaddr.MustParse("AA:BB:CC:DD:EE:03"): "wan",
+		macaddr.MustParse("AA:BB:CC:DD:EE:04"): "lan3",
 	}
 	for mac, port := range want {
 		if got := p.fdb[mac]; got != port {
@@ -49,7 +50,7 @@ func TestPolledFromAgentNormalizaFDBAPuertos(t *testing.T) {
 			MACs: map[string]string{"AA:BB:CC:DD:EE:01": "1"},
 		}},
 	})
-	if p2.fdb["AA:BB:CC:DD:EE:01"] != "1" {
+	if p2.fdb[macaddr.MustParse("AA:BB:CC:DD:EE:01")] != "1" {
 		t.Fatalf("sin puertos el FDB no debe reescribirse: %v", p2.fdb)
 	}
 	_ = context.Background()

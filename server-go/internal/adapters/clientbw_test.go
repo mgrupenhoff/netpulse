@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 	"github.com/gnacho/netpulse/server-go/internal/db"
 )
@@ -14,41 +15,44 @@ import (
 // TestResolveClientBwSources: nlbwmon gana cuando está disponible con hosts;
 // si no, hostapd bytes por estación; sin datos → no ok.
 func TestResolveClientBwSources(t *testing.T) {
-	wireless := map[string]WirelessClient{
-		"AA:BB:CC:DD:EE:01": {SignalDbm: -50, RxBytes: 111, TxBytes: 222},
-		"AA:BB:CC:DD:EE:02": {SignalDbm: -60}, // sin bytes → no cuenta
+	mac1 := macaddr.MustParse("AA:BB:CC:DD:EE:01")
+	mac2 := macaddr.MustParse("AA:BB:CC:DD:EE:02")
+	macF := macaddr.MustParse("AA:BB:CC:DD:EE:0F")
+	wireless := map[macaddr.MAC]WirelessClient{
+		mac1: {SignalDbm: -50, RxBytes: 111, TxBytes: 222},
+		mac2: {SignalDbm: -60}, // sin bytes → no cuenta
 	}
 	nlbw := &probe.ClientBwData{Available: true, Hosts: map[string]probe.NlbwCounter{
 		"AA:BB:CC:DD:EE:0F": {RxBytes: 1000, TxBytes: 2000},
 	}}
 
 	// nlbwmon preferente: cubre hasta MACs que no están en wireless.
-	samples, source, ok := resolveClientBwSources(wireless, nlbw)
+	samples, source, ok := resolveClientBwSources("gw", wireless, nlbw)
 	if !ok || source != "nlbwmon" || len(samples) != 1 {
 		t.Fatalf("nlbwmon: ok=%v source=%s samples=%+v", ok, source, samples)
 	}
-	if samples[0].mac != "AA:BB:CC:DD:EE:0F" || samples[0].rx != 1000 {
+	if samples[0].mac != macF || samples[0].rx != 1000 {
 		t.Fatalf("muestra nlbwmon: %+v", samples[0])
 	}
 
 	// Sin nlbwmon → hostapd bytes (solo estaciones con contadores).
-	samples, source, ok = resolveClientBwSources(wireless, nil)
+	samples, source, ok = resolveClientBwSources("gw", wireless, nil)
 	if !ok || source != "hostapd" || len(samples) != 1 {
 		t.Fatalf("hostapd: ok=%v source=%s samples=%+v", ok, source, samples)
 	}
-	if samples[0].mac != "AA:BB:CC:DD:EE:01" || samples[0].rx != 111 || samples[0].tx != 222 {
+	if samples[0].mac != mac1 || samples[0].rx != 111 || samples[0].tx != 222 {
 		t.Fatalf("muestra hostapd: %+v", samples[0])
 	}
 
 	// nlbwmon instalado pero vacío (Available con Hosts {}) → cae a hostapd.
 	nlbwEmpty := &probe.ClientBwData{Available: true, Hosts: map[string]probe.NlbwCounter{}}
-	_, source, ok = resolveClientBwSources(wireless, nlbwEmpty)
+	_, source, ok = resolveClientBwSources("gw", wireless, nlbwEmpty)
 	if !ok || source != "hostapd" {
 		t.Fatalf("nlbwmon vacío: source=%s ok=%v", source, ok)
 	}
 
 	// Sin datos en ninguna fuente → no ok.
-	_, _, ok = resolveClientBwSources(map[string]WirelessClient{"AA:BB:CC:DD:EE:02": {SignalDbm: -60}}, nil)
+	_, _, ok = resolveClientBwSources("gw", map[macaddr.MAC]WirelessClient{mac2: {SignalDbm: -60}}, nil)
 	if ok {
 		t.Fatal("sin contadores debería dar ok=false")
 	}
@@ -61,10 +65,11 @@ func TestRecordClientBwSamplesDeltas(t *testing.T) {
 	d := openLiveTestDB(t)
 	l := &Live{db: d}
 	t0 := time.Now()
+	mac1 := macaddr.MustParse("AA:BB:CC:DD:EE:01")
 
 	// Primera observación: siembra, no escribe nada.
 	l.recordClientBwSamples("gw", t0, []clientBwSample{
-		{mac: "AA:BB:CC:DD:EE:01", rx: 10000, tx: 5000},
+		{mac: mac1, rx: 10000, tx: 5000},
 	}, "hostapd")
 	if n := countRawClientBW(t, d); n != 0 {
 		t.Fatalf("primera observación no debe escribir: %d filas", n)
@@ -74,7 +79,7 @@ func TestRecordClientBwSamplesDeltas(t *testing.T) {
 	// bps = bytes*8/dt = 800 y 400.
 	t1 := t0.Add(10 * time.Second)
 	l.recordClientBwSamples("gw", t1, []clientBwSample{
-		{mac: "AA:BB:CC:DD:EE:01", rx: 11000, tx: 5500},
+		{mac: mac1, rx: 11000, tx: 5500},
 	}, "hostapd")
 	if n := countRawClientBW(t, d); n != 1 {
 		t.Fatalf("segunda observación debe escribir 1 fila: %d", n)
@@ -92,7 +97,7 @@ func TestRecordClientBwSamplesDeltas(t *testing.T) {
 		t.Fatalf("bps: rx=%.0f tx=%.0f (want 800/400)", rxBps, txBps)
 	}
 	// El rate del último intervalo queda en memoria para el TrafficMbps.
-	if rrx, rtx := l.clientBwRateFor("AA:BB:CC:DD:EE:01"); rrx != 800 || rtx != 400 {
+	if rrx, rtx := l.clientBwRateFor(mac1); rrx != 800 || rtx != 400 {
 		t.Fatalf("rate en memoria: rx=%.0f tx=%.0f (want 800/400)", rrx, rtx)
 	}
 
@@ -100,7 +105,7 @@ func TestRecordClientBwSamplesDeltas(t *testing.T) {
 	// periodo): contador BAJA → re-siembra, no escribe delta gigante.
 	t2 := t1.Add(10 * time.Second)
 	l.recordClientBwSamples("gw", t2, []clientBwSample{
-		{mac: "AA:BB:CC:DD:EE:01", rx: 100, tx: 50},
+		{mac: mac1, rx: 100, tx: 50},
 	}, "hostapd")
 	if n := countRawClientBW(t, d); n != 1 {
 		t.Fatalf("reinicio no debe escribir: %d filas", n)
@@ -109,7 +114,7 @@ func TestRecordClientBwSamplesDeltas(t *testing.T) {
 	// Tras el reinicio, siguiente delta normal sí escribe (base re-sembrada).
 	t3 := t2.Add(10 * time.Second)
 	l.recordClientBwSamples("gw", t3, []clientBwSample{
-		{mac: "AA:BB:CC:DD:EE:01", rx: 600, tx: 300},
+		{mac: mac1, rx: 600, tx: 300},
 	}, "hostapd")
 	if n := countRawClientBW(t, d); n != 2 {
 		t.Fatalf("delta post-reinicio debe escribir: %d filas", n)
@@ -123,7 +128,7 @@ func TestRecordClientBwSamplesDeltas(t *testing.T) {
 	}
 
 	// Sin DB → no panic, no op.
-	(&Live{db: nil}).recordClientBwSamples("gw", t0, []clientBwSample{{mac: "x", rx: 1}}, "hostapd")
+	(&Live{db: nil}).recordClientBwSamples("gw", t0, []clientBwSample{{mac: mac1, rx: 1}}, "hostapd")
 }
 
 // TestRecordClientBwSamplesPorRouterYMac: los estados se segregan por router
@@ -133,11 +138,12 @@ func TestRecordClientBwSamplesPorRouterYMac(t *testing.T) {
 	l := &Live{db: d}
 	t0 := time.Now()
 	t1 := t0.Add(10 * time.Second)
+	mac1 := macaddr.MustParse("AA:BB:CC:DD:EE:01")
 
-	l.recordClientBwSamples("gw", t0, []clientBwSample{{mac: "AA:BB:CC:DD:EE:01", rx: 100}}, "hostapd")
-	l.recordClientBwSamples("ap1", t0, []clientBwSample{{mac: "AA:BB:CC:DD:EE:01", rx: 100}}, "hostapd")
-	l.recordClientBwSamples("gw", t1, []clientBwSample{{mac: "AA:BB:CC:DD:EE:01", rx: 200}}, "hostapd")
-	l.recordClientBwSamples("ap1", t1, []clientBwSample{{mac: "AA:BB:CC:DD:EE:01", rx: 300}}, "hostapd")
+	l.recordClientBwSamples("gw", t0, []clientBwSample{{mac: mac1, rx: 100}}, "hostapd")
+	l.recordClientBwSamples("ap1", t0, []clientBwSample{{mac: mac1, rx: 100}}, "hostapd")
+	l.recordClientBwSamples("gw", t1, []clientBwSample{{mac: mac1, rx: 200}}, "hostapd")
+	l.recordClientBwSamples("ap1", t1, []clientBwSample{{mac: mac1, rx: 300}}, "hostapd")
 
 	var n int
 	if err := d.QueryRow("SELECT COUNT(*) FROM client_bw_raw").Scan(&n); err != nil {
@@ -172,14 +178,15 @@ func TestClientBwRateForPriorizaFuente(t *testing.T) {
 	l := &Live{db: d}
 	t0 := time.Now()
 	t1 := t0.Add(10 * time.Second)
+	mac1 := macaddr.MustParse("AA:BB:CC:DD:EE:01")
 
 	// hostapd en ap1 y nlbwmon en gw reportan la misma MAC.
-	l.recordClientBwSamples("ap1", t0, []clientBwSample{{mac: "AA:BB:CC:DD:EE:01", rx: 10000}}, "hostapd")
-	l.recordClientBwSamples("gw", t0, []clientBwSample{{mac: "AA:BB:CC:DD:EE:01", rx: 20000}}, "nlbwmon")
-	l.recordClientBwSamples("ap1", t1, []clientBwSample{{mac: "AA:BB:CC:DD:EE:01", rx: 10100}}, "hostapd")
-	l.recordClientBwSamples("gw", t1, []clientBwSample{{mac: "AA:BB:CC:DD:EE:01", rx: 20200}}, "nlbwmon")
+	l.recordClientBwSamples("ap1", t0, []clientBwSample{{mac: mac1, rx: 10000}}, "hostapd")
+	l.recordClientBwSamples("gw", t0, []clientBwSample{{mac: mac1, rx: 20000}}, "nlbwmon")
+	l.recordClientBwSamples("ap1", t1, []clientBwSample{{mac: mac1, rx: 10100}}, "hostapd")
+	l.recordClientBwSamples("gw", t1, []clientBwSample{{mac: mac1, rx: 20200}}, "nlbwmon")
 
-	rx, tx := l.clientBwRateFor("AA:BB:CC:DD:EE:01")
+	rx, tx := l.clientBwRateFor(mac1)
 	// 200 bytes en 10 s → 160 bps (nlbwmon), no 80 del hostapd.
 	if rx != 160 {
 		t.Fatalf("rate rx: %.0f (want 160 del nlbwmon)", rx)
@@ -189,36 +196,39 @@ func TestClientBwRateForPriorizaFuente(t *testing.T) {
 	}
 }
 
-// TestCanonBWMacRejectsNonMAC comprueba que canonBWMac devuelve la forma
-// canónica en mayúsculas para MACs válidas y "" para cadenas que no son MAC
-// (p. ej. una IP como "192.168.1.1"), de modo que no se persistan en
-// client_bw_raw.
-func TestCanonBWMacRejectsNonMAC(t *testing.T) {
-	cases := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{name: "IPv4 no es MAC", in: "192.168.1.1", want: ""},
-		{name: "texto arbitrario", in: "no-es-mac", want: ""},
-		{name: "MAC en minúsculas", in: "aa:bb:cc:dd:ee:01", want: "AA:BB:CC:DD:EE:01"},
-		{name: "MAC con guiones", in: "aa-bb-cc-dd-ee-01", want: "AA:BB:CC:DD:EE:01"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := canonBWMac(tc.in); got != tc.want {
-				t.Errorf("canonBWMac(%q) = %q, esperaba %q", tc.in, got, tc.want)
-			}
-		})
-	}
-
+// TestRecordClientBwSamplesRejectsNonMAC comprueba que entradas cuya clave no
+// es una MAC (p. ej. una IP como "192.168.1.1") o la MAC cero se descartan y
+// no se persisten en client_bw_raw.
+func TestRecordClientBwSamplesRejectsNonMAC(t *testing.T) {
 	d := openLiveTestDB(t)
 	l := &Live{db: d}
 	t0 := time.Now()
 	t1 := t0.Add(10 * time.Second)
-	l.recordClientBwSamples("gw", t0, []clientBwSample{{mac: "192.168.1.1", rx: 100, tx: 100}}, "nlbwmon")
-	l.recordClientBwSamples("gw", t1, []clientBwSample{{mac: "192.168.1.1", rx: 500, tx: 500}}, "nlbwmon")
+
+	// resolveClientBwSources descarta claves no-MAC del payload nlbwmon.
+	nlbw0 := &probe.ClientBwData{Available: true, Hosts: map[string]probe.NlbwCounter{
+		"192.168.1.1": {RxBytes: 100, TxBytes: 100},
+		"no-es-mac":   {RxBytes: 100, TxBytes: 100},
+	}}
+	nlbw1 := &probe.ClientBwData{Available: true, Hosts: map[string]probe.NlbwCounter{
+		"192.168.1.1": {RxBytes: 500, TxBytes: 500},
+		"no-es-mac":   {RxBytes: 500, TxBytes: 500},
+	}}
+	if s0, _, _ := resolveClientBwSources("gw", nil, nlbw0); len(s0) != 0 {
+		t.Fatalf("resolveClientBwSources dejó pasar claves no-MAC: %+v", s0)
+	} else {
+		l.recordClientBwSamples("gw", t0, s0, "nlbwmon")
+	}
+	if s1, _, _ := resolveClientBwSources("gw", nil, nlbw1); len(s1) != 0 {
+		t.Fatalf("resolveClientBwSources dejó pasar claves no-MAC: %+v", s1)
+	} else {
+		l.recordClientBwSamples("gw", t1, s1, "nlbwmon")
+	}
+
+	// Y recordClientBwSamples descarta la MAC cero/inválida.
+	l.recordClientBwSamples("gw", t0, []clientBwSample{{mac: macaddr.MAC{}, rx: 100, tx: 100}}, "nlbwmon")
+	l.recordClientBwSamples("gw", t1, []clientBwSample{{mac: macaddr.MAC{}, rx: 500, tx: 500}}, "nlbwmon")
 	if n := countRawClientBW(t, d); n != 0 {
-		t.Fatalf("una IP no debe escribirse en client_bw_raw, hay %d filas", n)
+		t.Fatalf("una IP, texto no-MAC o MAC cero no debe escribirse en client_bw_raw, hay %d filas", n)
 	}
 }

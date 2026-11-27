@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/adapters"
 )
 
@@ -272,9 +273,9 @@ func (i *Ingestor) collect(ctx context.Context, src Source, cursor time.Time, fi
 }
 
 // aggregate convierte entradas en buckets horarios y primeras apariciones.
-func aggregate(queries []adapters.DNSQuery, macs map[string]string) ([]Bucket, []FirstSeen) {
+func aggregate(queries []adapters.DNSQuery, macs map[string]macaddr.MAC) ([]Bucket, []FirstSeen) {
 	type key struct {
-		mac    string
+		mac    macaddr.MAC
 		domain string
 		hour   int64
 	}

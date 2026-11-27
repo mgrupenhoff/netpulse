@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/alerts"
 )
 
@@ -180,15 +181,15 @@ func (d *Demo) Tick(context.Context) error {
 // Snapshotter
 // ---------------------------------------------------------------------------
 
-func (d *Demo) Mode() string                { return "demo" }
-func (d *Demo) SetRouters([]RouterConfig)   {} // la demo ignora la configuración
-func (d *Demo) Close() error                { return nil }
-func (d *Demo) DismissUnknownDevice(string) {}
+func (d *Demo) Mode() string                     { return "demo" }
+func (d *Demo) SetRouters([]RouterConfig)        {} // la demo ignora la configuración
+func (d *Demo) Close() error                     { return nil }
+func (d *Demo) DismissUnknownDevice(macaddr.MAC) {}
 
 func (d *Demo) GetUsteer(context.Context) (*Usteer, error) { return nil, nil }
 
 // KickUsteerClient no-op en demo.
-func (d *Demo) KickUsteerClient(context.Context, string) error {
+func (d *Demo) KickUsteerClient(context.Context, macaddr.MAC) error {
 	return errors.New("not available in demo")
 }
 

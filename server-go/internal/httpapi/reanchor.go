@@ -2,9 +2,9 @@ package httpapi
 
 import (
 	"net/http"
-	"strings"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/adapters"
 	"github.com/gnacho/netpulse/server-go/internal/auth"
 )
@@ -32,12 +32,11 @@ func (s *server) handleReanchorRecommendations(w http.ResponseWriter, r *http.Re
 // Ejecuta del_client + ban_time en el AP donde está asociada la MAC,
 // usando el daemon activo para decidir el target. Requiere admin.
 func (s *server) handleReanchorMove(w http.ResponseWriter, r *http.Request) {
-	mac, ok := validMAC(r.PathValue("mac"))
-	if !ok {
+	mac, err := macaddr.Parse(r.PathValue("mac"))
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_mac")
 		return
 	}
-	mac = strings.ToUpper(mac)
 
 	cfg := adapters.ReanchorConfig{
 		MinRecommendedSignal: -65,

@@ -3,6 +3,7 @@ package adapters
 import (
 	"testing"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 )
 
@@ -15,15 +16,15 @@ func TestBuildDevicesAbsorbsDefaultRoute(t *testing.T) {
 		"gw": {
 			cfg:     RouterConfig{ID: "gw", IsGateway: true},
 			wanInfo: probe.WanInfo{Gateway: "192.168.2.1"},
-			arp: map[string]string{
-				"04:F4:1C:F3:46:65": "192.168.2.1",  // siguiente salto WAN
-				"AA:BB:CC:00:00:09": "192.168.1.50", // cliente real
+			arp: map[macaddr.MAC]string{
+				macaddr.MustParse("04:F4:1C:F3:46:65"): "192.168.2.1",  // siguiente salto WAN
+				macaddr.MustParse("AA:BB:CC:00:00:09"): "192.168.1.50", // cliente real
 			},
-			arpStale: map[string]bool{},
+			arpStale: map[macaddr.MAC]bool{},
 		},
 	}
 	devs := l.buildDevices(polled, "")
-	if len(devs) != 1 || devs[0].MAC != "AA:BB:CC:00:00:09" {
+	if len(devs) != 1 || devs[0].MAC != macaddr.MustParse("AA:BB:CC:00:00:09") {
 		t.Fatalf("devices: %+v, want solo el cliente real", devs)
 	}
 }

@@ -357,8 +357,8 @@ func (s *server) handleDevices(w http.ResponseWriter, r *http.Request) {
 
 // loadDeviceLinks: mapa alias → canónico desde la tabla device_links (una
 // query; vacío si no hay BD o no hay enlaces).
-func loadDeviceLinks(d *db.DB) map[string]string {
-	out := map[string]string{}
+func loadDeviceLinks(d *db.DB) map[macaddr.MAC]macaddr.MAC {
+	out := map[macaddr.MAC]macaddr.MAC{}
 	if d == nil {
 		return out
 	}
@@ -368,23 +368,18 @@ func loadDeviceLinks(d *db.DB) map[string]string {
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var alias, canonical string
-		if err := rows.Scan(&alias, &canonical); err != nil {
+		var alias, canonical macaddr.MAC
+		if err := rows.Scan(&alias, &canonical); err != nil || !alias.IsValid() || !canonical.IsValid() {
 			continue
 		}
-		out[normalizeMACKey(alias)] = normalizeMACKey(canonical)
+		out[alias] = canonical
 	}
 	return out
 }
 
-// normalizeMACKey: identidad canónica de enlace (mayúsculas, ':').
-func normalizeMACKey(mac string) string {
-	return macaddr.NormalizeLenient(mac)
-}
-
 // deviceMatches: substring (minúsculas) sobre name|hostname|ip|mac|manufacturer.
 func deviceMatches(d adapters.Device, query string) bool {
-	for _, v := range []string{d.Name, d.Hostname, d.IP, d.MAC, d.Manufacturer} {
+	for _, v := range []string{d.Name, d.Hostname, d.IP, d.MAC.String(), d.Manufacturer} {
 		if v != "" && strings.Contains(strings.ToLower(v), query) {
 			return true
 		}
@@ -595,12 +590,17 @@ func (s *server) handleAlertsImpostorApprove(w http.ResponseWriter, r *http.Requ
 		writeBodyError(w, st, "invalid_body", "body JSON inválido")
 		return
 	}
-	ap, ok := s.adapter.(interface{ ApproveImpostorBssid(string) error })
+	ap, ok := s.adapter.(interface{ ApproveImpostorBssid(macaddr.MAC) error })
 	if !ok {
 		writeError(w, http.StatusNotImplemented, "not_supported", "adapter does not support impostor approval")
 		return
 	}
-	if err := ap.ApproveImpostorBssid(body.Bssid); err != nil {
+	bssid, err := macaddr.Parse(body.Bssid)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_input", "invalid bssid")
+		return
+	}
+	if err := ap.ApproveImpostorBssid(bssid); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_input", "invalid bssid")
 		return
 	}
@@ -617,20 +617,22 @@ func (s *server) handleAlertsImpostorRevoke(w http.ResponseWriter, r *http.Reque
 		writeBodyError(w, st, "invalid_body", "body JSON inválido")
 		return
 	}
-	ap, ok := s.adapter.(interface{ RevokeImpostorBssid(string) })
+	ap, ok := s.adapter.(interface{ RevokeImpostorBssid(macaddr.MAC) })
 	if !ok {
 		writeError(w, http.StatusNotImplemented, "not_supported", "adapter does not support impostor approval")
 		return
 	}
-	ap.RevokeImpostorBssid(body.Bssid)
+	if bssid, err := macaddr.Parse(body.Bssid); err == nil {
+		ap.RevokeImpostorBssid(bssid)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // handleAlertsImpostorApproved (GET): lista de BSSIDs aprobados (#1400).
 func (s *server) handleAlertsImpostorApproved(w http.ResponseWriter, _ *http.Request) {
-	ap, ok := s.adapter.(interface{ ImpostorApproved() []string })
+	ap, ok := s.adapter.(interface{ ImpostorApproved() []macaddr.MAC })
 	if !ok {
-		writeJSON(w, http.StatusOK, []string{})
+		writeJSON(w, http.StatusOK, []macaddr.MAC{})
 		return
 	}
 	writeJSON(w, http.StatusOK, ap.ImpostorApproved())
@@ -701,16 +703,12 @@ func (s *server) handleUsteer(w http.ResponseWriter, r *http.Request) {
 // handleUsteerKick: POST /api/usteer/{mac}/kick - expulsa un cliente de su AP
 // usteer actual para forzar la reconexión a otro AP.
 func (s *server) handleUsteerKick(w http.ResponseWriter, r *http.Request) {
-	mac := r.PathValue("mac")
-	if mac == "" {
-		writeError(w, http.StatusBadRequest, "invalid_input", "mac is required")
+	mac, err := macaddr.Parse(r.PathValue("mac"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_mac", "invalid MAC")
 		return
 	}
 	if err := s.adapter.KickUsteerClient(r.Context(), mac); err != nil {
-		if err.Error() == "invalid MAC" {
-			writeError(w, http.StatusBadRequest, "invalid_input", err.Error())
-			return
-		}
 		if strings.Contains(err.Error(), "client not found") {
 			writeError(w, http.StatusNotFound, "not_found", err.Error())
 			return
@@ -769,21 +767,20 @@ func (s *server) handleRoamEvents(w http.ResponseWriter, r *http.Request) {
 	routerID := r.URL.Query().Get("router")
 	eventType := r.URL.Query().Get("type")
 	// El filtro mac admite lista separada por comas (#1127): cada elemento se
-	// pasa a la forma canónica que usa la tabla (AA:BB:CC:DD:EE:FF).
-	var macs []string
+	// valida y normaliza al tipo canónico antes de consultar roam_events.
+	var macs []macaddr.MAC
 	for _, part := range strings.Split(r.URL.Query().Get("mac"), ",") {
 		if strings.TrimSpace(part) == "" {
 			continue
 		}
-		m := macaddr.Normalize(part)
-		if m == "" {
+		m, err := macaddr.Parse(part)
+		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_mac")
 			return
 		}
 		macs = append(macs, m)
 	}
-	mac := strings.Join(macs, ",")
-	events, err := roamevents.ListEvents(s.db.DB, limit, since, routerID, eventType, mac)
+	events, err := roamevents.ListEvents(s.db.DB, limit, since, routerID, eventType, macs)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error")
 		return
@@ -819,13 +816,15 @@ func (s *server) handleDeviceEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	routerID := r.URL.Query().Get("router")
-	mac := r.URL.Query().Get("mac")
-	if mac != "" {
+	var mac macaddr.MAC
+	if raw := r.URL.Query().Get("mac"); raw != "" {
 		// La tabla guarda MAC canónicas: ?mac=aa-bb-... debe encontrarlas.
-		if mac = macaddr.Normalize(mac); mac == "" {
+		parsed, err := macaddr.Parse(raw)
+		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_mac")
 			return
 		}
+		mac = parsed
 	}
 	state := r.URL.Query().Get("state")
 	events, err := deviceevents.ListEvents(s.db.DB, limit, since, routerID, mac, state)
@@ -909,8 +908,8 @@ func (s *server) handleDeviceTraffic(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "unavailable")
 		return
 	}
-	mac := macaddr.Normalize(r.PathValue("mac"))
-	if mac == "" {
+	mac, err := macaddr.Parse(r.PathValue("mac"))
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_mac")
 		return
 	}

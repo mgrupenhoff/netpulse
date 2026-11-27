@@ -1,14 +1,18 @@
 package adapters
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
+)
 
 // #1041: el vecino LLDP "sw1" debe identificar al fleet device enrolado como
 // "sw1.lan" (primer label DNS). Antes el match por nombre exigía igualdad
 // exacta y el uplink caía al gateway con el vecino duplicado como cliente.
 func TestNeighborIsRouterFirstDnsLabel(t *testing.T) {
 	routers := []routerIdentity{
-		{ID: "gw", Name: "gateway", Host: "192.168.1.1", BrMac: "AA:BB:CC:00:00:01"},
-		{ID: "sw1", Name: "sw1.lan", Host: "192.168.1.10", BrMac: "AA:BB:CC:00:00:02"},
+		{ID: "gw", Name: "gateway", Host: "192.168.1.1", BrMac: macaddr.MustParse("AA:BB:CC:00:00:01")},
+		{ID: "sw1", Name: "sw1.lan", Host: "192.168.1.10", BrMac: macaddr.MustParse("AA:BB:CC:00:00:02")},
 	}
 	cases := []struct {
 		name   string

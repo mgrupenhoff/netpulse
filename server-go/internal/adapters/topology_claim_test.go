@@ -1,6 +1,10 @@
 package adapters
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
+)
 
 // #1417: flota con switches gestionados sondeados por SNMP como "external"
 // (el montaje de #1137). El gateway los ve por LLDP en su puerto de uplink;
@@ -15,11 +19,11 @@ import "testing"
 // su puerto fisico. Los puertos con un solo cliente los sigue resolviendo
 // claim, que no re-ancla los clientes de una hoja ya creada.
 
-const (
-	claimGwMac   = "AA:BB:CC:00:00:01"
-	claimSw1Mac  = "22:22:22:22:22:01"
-	claimSw2Mac  = "22:22:22:22:22:02"
-	claimSw16Mac = "22:22:22:22:22:16"
+var (
+	claimGwMac   = macaddr.MustParse("AA:BB:CC:00:00:01")
+	claimSw1Mac  = macaddr.MustParse("22:22:22:22:22:01")
+	claimSw2Mac  = macaddr.MustParse("22:22:22:22:22:02")
+	claimSw16Mac = macaddr.MustParse("22:22:22:22:22:16")
 )
 
 func claimFlotaPolled() map[string]*routerPolled {
@@ -27,35 +31,35 @@ func claimFlotaPolled() map[string]*routerPolled {
 		"gateway": {
 			cfg:   RouterConfig{ID: "gateway", Type: "openwrt", IsGateway: true},
 			brMac: claimGwMac,
-			fdb: map[string]string{
-				"11:11:11:11:11:01": "lan1", // sonos1 (detrás de sw1)
-				"11:11:11:11:11:02": "lan1", // sonos2 (detrás de sw1)
-				"11:11:11:11:11:03": "lan1", // sonos3 (detrás de sw1)
-				"11:11:11:11:11:04": "lan1", // sonos4 (detrás de sw2)
-				"11:11:11:11:11:09": "lan4", // cableado directo del gateway
-				claimSw1Mac:         "lan1",
-				claimSw2Mac:         "lan1",
+			fdb: map[macaddr.MAC]string{
+				macaddr.MustParse("11:11:11:11:11:01"): "lan1", // sonos1 (detrás de sw1)
+				macaddr.MustParse("11:11:11:11:11:02"): "lan1", // sonos2 (detrás de sw1)
+				macaddr.MustParse("11:11:11:11:11:03"): "lan1", // sonos3 (detrás de sw1)
+				macaddr.MustParse("11:11:11:11:11:04"): "lan1", // sonos4 (detrás de sw2)
+				macaddr.MustParse("11:11:11:11:11:09"): "lan4", // cableado directo del gateway
+				claimSw1Mac:                            "lan1",
+				claimSw2Mac:                            "lan1",
 			},
 			lldp: []LldpNeighbor{{Port: "lan1", ChassisMac: claimSw1Mac, Chassis: "sw1", Mgmt: "192.168.1.2"}},
 		},
 		"sw1": {
 			cfg:   RouterConfig{ID: "sw1", Type: "external", SnmpEnabled: true, Host: "192.168.1.2"},
 			brMac: claimSw1Mac,
-			fdb: map[string]string{
-				claimGwMac:          "Port 1", // root port (hacia el gateway)
-				"11:11:11:11:11:01": "Port 5",
-				"11:11:11:11:11:02": "Port 5",
-				"11:11:11:11:11:03": "Port 6",
-				"11:11:11:11:11:04": "Port 2", // trunk hacia sw2
-				claimSw2Mac:         "Port 2",
+			fdb: map[macaddr.MAC]string{
+				claimGwMac:                             "Port 1", // root port (hacia el gateway)
+				macaddr.MustParse("11:11:11:11:11:01"): "Port 5",
+				macaddr.MustParse("11:11:11:11:11:02"): "Port 5",
+				macaddr.MustParse("11:11:11:11:11:03"): "Port 6",
+				macaddr.MustParse("11:11:11:11:11:04"): "Port 2", // trunk hacia sw2
+				claimSw2Mac:                            "Port 2",
 			},
 		},
 		"sw2": {
 			cfg:   RouterConfig{ID: "sw2", Type: "external", SnmpEnabled: true, Host: "192.168.1.3"},
 			brMac: claimSw2Mac,
-			fdb: map[string]string{
-				claimGwMac:          "Port 1", // root port
-				"11:11:11:11:11:04": "Port 3", // acceso
+			fdb: map[macaddr.MAC]string{
+				claimGwMac:                             "Port 1", // root port
+				macaddr.MustParse("11:11:11:11:11:04"): "Port 3", // acceso
 			},
 		},
 	}
@@ -122,21 +126,21 @@ func TestClaim1417RootPortNoReclama(t *testing.T) {
 		"flint2": {
 			cfg:   RouterConfig{ID: "flint2", Type: "glinet", IsGateway: true},
 			brMac: claimGwMac,
-			fdb: map[string]string{
-				"11:11:11:11:11:01": "lan1", // PC (switch tonto)
-				"11:11:11:11:11:02": "lan1", // marantz
-				"11:11:11:11:11:05": "lan1", // beelink (detrás de switch16)
-				claimSw16Mac:        "lan1",
+			fdb: map[macaddr.MAC]string{
+				macaddr.MustParse("11:11:11:11:11:01"): "lan1", // PC (switch tonto)
+				macaddr.MustParse("11:11:11:11:11:02"): "lan1", // marantz
+				macaddr.MustParse("11:11:11:11:11:05"): "lan1", // beelink (detrás de switch16)
+				claimSw16Mac:                           "lan1",
 			},
 		},
 		"switch16": {
 			cfg:   RouterConfig{ID: "switch16", Type: "managed-switch", AgentOnly: true},
 			brMac: claimSw16Mac,
-			fdb: map[string]string{
-				claimGwMac:          "lan7", // root port de switch16
-				"11:11:11:11:11:01": "lan7", // PC: upstream, NO reclamar
-				"11:11:11:11:11:02": "lan7", // marantz: upstream, NO reclamar
-				"11:11:11:11:11:05": "lan5", // beelink: acceso, SÍ
+			fdb: map[macaddr.MAC]string{
+				claimGwMac:                             "lan7", // root port de switch16
+				macaddr.MustParse("11:11:11:11:11:01"): "lan7", // PC: upstream, NO reclamar
+				macaddr.MustParse("11:11:11:11:11:02"): "lan7", // marantz: upstream, NO reclamar
+				macaddr.MustParse("11:11:11:11:11:05"): "lan5", // beelink: acceso, SÍ
 			},
 		},
 	}
@@ -173,18 +177,18 @@ func TestClaim1417Guardas(t *testing.T) {
 		"sw1": {
 			cfg:   RouterConfig{ID: "sw1", Type: "external", SnmpEnabled: true},
 			brMac: claimSw1Mac,
-			fdb: map[string]string{
+			fdb: map[macaddr.MAC]string{
 				// SIN la MAC del gateway: root port desconocido → no reclama.
-				"11:11:11:11:11:01": "Port 5",
-				"11:11:11:11:11:02": "Port 5",
-				"11:11:11:11:11:03": "Port 5",
+				macaddr.MustParse("11:11:11:11:11:01"): "Port 5",
+				macaddr.MustParse("11:11:11:11:11:02"): "Port 5",
+				macaddr.MustParse("11:11:11:11:11:03"): "Port 5",
 			},
 		},
 	}
 	devices := []Device{
 		dev("11:11:11:11:11:01", "gw", "cable"),
 		dev("11:11:11:11:11:02", "gw", "5GHz"),
-		{ID: "d-hub", MAC: "11:11:11:11:11:03", RouterID: "gw", Band: "cable", Online: true, AttachTo: "d-citadel-01"},
+		{ID: "d-hub", MAC: macaddr.MustParse("11:11:11:11:11:03"), RouterID: "gw", Band: "cable", Online: true, AttachTo: "d-citadel-01"},
 	}
 	dists := []DistributionNode{}
 	gwID := "gw"
@@ -207,19 +211,19 @@ func TestClaim1417LlenaHoja1325(t *testing.T) {
 		"gw": {
 			cfg:   RouterConfig{ID: "gw", Type: "openwrt", IsGateway: true},
 			brMac: claimGwMac,
-			fdb: map[string]string{
-				"11:11:11:11:11:01": "lan1", // tras el switch tonto de sw1
-				"11:11:11:11:11:02": "lan1",
-				claimSw1Mac:         "lan1",
+			fdb: map[macaddr.MAC]string{
+				macaddr.MustParse("11:11:11:11:11:01"): "lan1", // tras el switch tonto de sw1
+				macaddr.MustParse("11:11:11:11:11:02"): "lan1",
+				claimSw1Mac:                            "lan1",
 			},
 		},
 		"sw1": {
 			cfg:   RouterConfig{ID: "sw1", Type: "managed-switch"},
 			brMac: claimSw1Mac,
-			fdb: map[string]string{
-				claimGwMac:          "Port 1",
-				"11:11:11:11:11:01": "Port 5", // switch tonto (hoja #1325)
-				"11:11:11:11:11:02": "Port 5",
+			fdb: map[macaddr.MAC]string{
+				claimGwMac:                             "Port 1",
+				macaddr.MustParse("11:11:11:11:11:01"): "Port 5", // switch tonto (hoja #1325)
+				macaddr.MustParse("11:11:11:11:11:02"): "Port 5",
 			},
 		},
 	}

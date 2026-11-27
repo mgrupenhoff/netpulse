@@ -25,7 +25,12 @@ import (
 	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 	"github.com/gnacho/netpulse/server-go/internal/clientbw"
+	"github.com/gnacho/netpulse/server-go/internal/logonce"
 )
+
+// bwWarn avisa una sola vez por valor de las muestras cuya MAC no es válida:
+// el router las vuelve a enviar en cada sondeo.
+var bwWarn = logonce.New("[clientbw] ")
 
 // clientBwCounter es el último contador absoluto observado de un cliente en
 // un router (para el delta entre polls) + el rate medio del último intervalo
@@ -42,17 +47,11 @@ type clientBwCounter struct {
 }
 
 // clientBwSample es el par (MAC, contadores absolutos) que reporta una fuente
-// en un poll. MAC sin normalizar (viene de los parsers en mayúsculas).
+// en un poll.
 type clientBwSample struct {
-	mac string
+	mac macaddr.MAC
 	rx  uint64
 	tx  uint64
-}
-
-// canonBWMac devuelve la MAC en la forma canónica (AA:BB:CC:DD:EE:FF), o ""
-// si mac no es una MAC válida de 6 octetos.
-func canonBWMac(mac string) string {
-	return macaddr.Normalize(mac)
 }
 
 // recordClientBwSamples persiste el delta de cada cliente desde el último
@@ -66,16 +65,16 @@ func (l *Live) recordClientBwSamples(routerID string, now time.Time, samples []c
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.lastClientBw == nil {
-		l.lastClientBw = map[string]map[string]*clientBwCounter{}
+		l.lastClientBw = map[string]map[macaddr.MAC]*clientBwCounter{}
 	}
 	last := l.lastClientBw[routerID]
 	if last == nil {
-		last = map[string]*clientBwCounter{}
+		last = map[macaddr.MAC]*clientBwCounter{}
 		l.lastClientBw[routerID] = last
 	}
 	for _, s := range samples {
-		mac := canonBWMac(s.mac)
-		if mac == "" {
+		mac := s.mac
+		if !mac.IsValid() {
 			continue
 		}
 		prev := last[mac]
@@ -119,11 +118,7 @@ func (l *Live) recordClientBwSamples(routerID string, now time.Time, samples []c
 // Protegido por mu. Sin datos → 0,0. Prioriza nlbwmon sobre hostapd cuando
 // una MAC es reportada por varias fuentes (el nlbwmon del router que enruta
 // ya contabiliza todo el tráfico de la MAC; sumar hostapd doblaría).
-func (l *Live) clientBwRateFor(mac string) (rxBps, txBps float64) {
-	mac = canonBWMac(mac)
-	if mac == "" {
-		return 0, 0
-	}
+func (l *Live) clientBwRateFor(mac macaddr.MAC) (rxBps, txBps float64) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if c := l.findClientBwRate(mac, "nlbwmon"); c != nil {
@@ -135,7 +130,7 @@ func (l *Live) clientBwRateFor(mac string) (rxBps, txBps float64) {
 	return 0, 0
 }
 
-func (l *Live) findClientBwRate(mac, source string) *clientBwCounter {
+func (l *Live) findClientBwRate(mac macaddr.MAC, source string) *clientBwCounter {
 	for _, byMac := range l.lastClientBw {
 		if c := byMac[mac]; c != nil && c.source == source {
 			return c
@@ -149,11 +144,15 @@ func (l *Live) findClientBwRate(mac, source string) *clientBwCounter {
 // Available=true y hosts (cubre cableados + todo lo que enruta el router); si
 // no, hostapd bytes por estación (clientes wifi asociados). Devuelve las
 // muestras y la fuente usada; ok=false si no hay datos de tráfico por cliente.
-func resolveClientBwSources(wireless map[string]WirelessClient, clientBw *probe.ClientBwData) (samples []clientBwSample, source string, ok bool) {
+func resolveClientBwSources(routerID string, wireless map[macaddr.MAC]WirelessClient, clientBw *probe.ClientBwData) (samples []clientBwSample, source string, ok bool) {
 	// Fuente 1: nlbwmon (solo routers que enrutan; ver cabecera).
 	if clientBw != nil && clientBw.Available && len(clientBw.Hosts) > 0 {
 		out := make([]clientBwSample, 0, len(clientBw.Hosts))
-		for mac, h := range clientBw.Hosts {
+		for rawMac, h := range clientBw.Hosts {
+			mac, ok := macaddr.ParseOrWarn(bwWarn, "clientbw.nlbwmon router="+routerID, rawMac)
+			if !ok {
+				continue
+			}
 			out = append(out, clientBwSample{mac: mac, rx: h.RxBytes, tx: h.TxBytes})
 		}
 		return out, "nlbwmon", true

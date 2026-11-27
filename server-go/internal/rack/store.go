@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 
 	"github.com/gnacho/netpulse/agent/macaddr"
 )
@@ -140,7 +141,17 @@ func ListProfiles(db *sql.DB) ([]DeviceProfile, error) {
 		var p DeviceProfile
 		var ports string
 		if err := rows.Scan(&p.MAC, &p.FaceplateID, &p.UHeight, &p.ColSpan, &p.Color, &ports); err != nil {
+			// Tolerante con filas legadas corruptas: un perfil con MAC inválida se
+			// registra y se omite en vez de tumbar GET /api/racks con 500.
+			if errors.Is(err, macaddr.ErrSyntax) {
+				log.Printf("[netpulse:rack] skipping profile: %v", err)
+				continue
+			}
 			return nil, err
+		}
+		// MAC.Scan devuelve MAC{} sin error para NULL/""; un perfil requiere MAC.
+		if !p.MAC.IsValid() {
+			continue
 		}
 		p.Ports = parsePorts(ports)
 		out = append(out, p)
@@ -149,8 +160,10 @@ func ListProfiles(db *sql.DB) ([]DeviceProfile, error) {
 }
 
 // GetProfile devuelve el perfil de una MAC; sql.ErrNoRows si no existe.
-func GetProfile(db *sql.DB, mac string) (DeviceProfile, error) {
-	mac = macaddr.Normalize(mac)
+func GetProfile(db *sql.DB, mac macaddr.MAC) (DeviceProfile, error) {
+	if !mac.IsValid() {
+		return DeviceProfile{}, sql.ErrNoRows
+	}
 	var p DeviceProfile
 	var ports string
 	err := db.QueryRow(`SELECT mac, faceplate_id, u_height, col_span, color, ports_json FROM device_rack_profile WHERE mac = ?`, mac).
@@ -164,8 +177,7 @@ func GetProfile(db *sql.DB, mac string) (DeviceProfile, error) {
 
 // UpsertProfile crea o actualiza el modelo físico del dispositivo.
 func UpsertProfile(db *sql.DB, p DeviceProfile) error {
-	p.MAC = macaddr.Normalize(p.MAC)
-	if p.MAC == "" {
+	if !p.MAC.IsValid() {
 		return fmt.Errorf("rack: mac requerida")
 	}
 	if p.UHeight < 1 {
@@ -251,9 +263,17 @@ func scanMountRows(rows *sql.Rows) ([]MountRow, error) {
 		if err := rows.Scan(&m.ID, &m.RackID, &devMAC, &m.FaceplateID, &m.UStart, &m.ColStart, &label, &m.StatusPin, &m.PortVisibility, &profU, &profC); err != nil {
 			return nil, err
 		}
-		m.DeviceMAC = devMAC.String
+		if devMAC.Valid && devMAC.String != "" {
+			if parsed, err := macaddr.Parse(devMAC.String); err != nil {
+				// Una fila legada corrupta se degrada a montaje sin MAC antes
+				// que tumbar la vista entera del rack.
+				log.Printf("[netpulse:rack] mount %s has invalid device_mac %q: %v", m.ID, devMAC.String, err)
+			} else {
+				m.DeviceMAC = parsed
+			}
+		}
 		m.Label = label.String
-		if m.DeviceMAC != "" {
+		if m.DeviceMAC.IsValid() {
 			// Dispositivo: la huella la pone su perfil (la FK garantiza la
 			// fila; el COALESCE es defensa ante bajas directas).
 			m.UHeight, m.ColSpan = 1, RackColumns
@@ -315,11 +335,7 @@ func SaveLayout(db *sql.DB, change LayoutChange) error {
 		if m.PortVisibility == "" {
 			m.PortVisibility = "auto"
 		}
-		if m.DeviceMAC != "" {
-			m.DeviceMAC = macaddr.Normalize(m.DeviceMAC)
-			if m.DeviceMAC == "" {
-				return ErrInvalidMAC
-			}
+		if m.DeviceMAC.IsValid() {
 			// Perfil por defecto si el dispositivo aún no tiene: la FK lo exige.
 			if _, err := tx.Exec(`INSERT INTO device_rack_profile (mac) VALUES (?) ON CONFLICT(mac) DO NOTHING`, m.DeviceMAC); err != nil {
 				return err

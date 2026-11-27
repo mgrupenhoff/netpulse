@@ -6,6 +6,8 @@ package httpapi_test
 import (
 	"net/http"
 	"testing"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 // TestKnownMacsRoundtrip: GET vacío → PUT → GET lo devuelve → DELETE.
@@ -63,10 +65,11 @@ func TestKnownMacsPutLiftsTombstone(t *testing.T) {
 	srv := makeTestServer(t)
 	_, cookie, _ := loginCookie(t, srv.URL, "admin", "test123456")
 	const mac = "38:B8:00:0A:24:37"
-	if err := srv.db.AddDeletedClient(mac); err != nil {
+	parsed := macaddr.MustParse(mac)
+	if err := srv.db.AddDeletedClient(parsed); err != nil {
 		t.Fatalf("AddDeletedClient: %v", err)
 	}
-	if tomb, _ := srv.db.DeletedClients(); !tomb[mac] {
+	if tomb, _ := srv.db.DeletedClients(); !tomb[parsed] {
 		t.Fatal("prepara: la lápida no quedó registrada")
 	}
 	res, _ := wanSpeedRequest(t, "PUT", srv.URL, "/api/settings/known-macs", cookie,
@@ -74,12 +77,12 @@ func TestKnownMacsPutLiftsTombstone(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("PUT: status %d, esperado 200", res.StatusCode)
 	}
-	if tomb, _ := srv.db.DeletedClients(); tomb[mac] {
+	if tomb, _ := srv.db.DeletedClients(); tomb[parsed] {
 		t.Fatal("PUT conocido no levantó la lápida (#1278)")
 	}
 }
 
-// TestKnownMacsInvalidInput: MAC mal formada → 400; PUT sin admin → 401.
+// TestKnownMacsInvalidInput: MAC mal formada → 400 invalid_input; PUT sin admin → 401.
 func TestKnownMacsInvalidInput(t *testing.T) {
 	srv := makeTestServer(t)
 	_, cookie, _ := loginCookie(t, srv.URL, "admin", "test123456")
@@ -88,16 +91,26 @@ func TestKnownMacsInvalidInput(t *testing.T) {
 		`{"mac":"A4:7E:FA:65:0C","name":"x"}`,    // corta
 		`{"mac":"A4:7E-FA:65:0C:AA","name":"x"}`, // separador mal
 		`{"mac":"G4:7E:FA:65:0C:AA","name":"x"}`, // hex inválido
-		`not-json`,                               // body roto
 	} {
-		res, _ := wanSpeedRequest(t, "PUT", srv.URL, "/api/settings/known-macs", cookie, body)
+		res, respBody := wanSpeedRequest(t, "PUT", srv.URL, "/api/settings/known-macs", cookie, body)
 		if res.StatusCode != http.StatusBadRequest {
 			t.Errorf("PUT %s: status %d, esperado 400", body, res.StatusCode)
 		}
+		if respBody["error"] != "invalid_input" {
+			t.Errorf("PUT %s: error %v, esperado invalid_input", body, respBody["error"])
+		}
+	}
+	res, _ := wanSpeedRequest(t, "PUT", srv.URL, "/api/settings/known-macs", cookie, `not-json`)
+	if res.StatusCode != http.StatusBadRequest {
+		t.Errorf("PUT not-json: status %d, esperado 400", res.StatusCode)
+	}
+	res, respBody := wanSpeedRequest(t, "DELETE", srv.URL, "/api/settings/known-macs/not-a-mac", cookie, "")
+	if res.StatusCode != http.StatusBadRequest || respBody["error"] != "invalid_input" {
+		t.Errorf("DELETE invalid mac: status %d body %v, esperado 400 invalid_input", res.StatusCode, respBody)
 	}
 
 	// Sin sesión admin → 401 (PUT y DELETE)
-	res, _ := wanSpeedRequest(t, "PUT", srv.URL, "/api/settings/known-macs", "", `{"mac":"AA:BB:CC:DD:EE:FF","name":"x"}`)
+	res, _ = wanSpeedRequest(t, "PUT", srv.URL, "/api/settings/known-macs", "", `{"mac":"AA:BB:CC:DD:EE:FF","name":"x"}`)
 	if res.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("PUT sin auth: status %d, esperado 401", res.StatusCode)
 	}

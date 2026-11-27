@@ -41,8 +41,8 @@ const pveInventoryTTL = 5 * time.Minute
 // igual que ese device ("citadel-01"): el sellado cruza por NOMBRE del device
 // == nombre del nodo como fallback, y por MAC de VM para los CTs.
 type pveInventory struct {
-	// ctByMAC: MAC (upper ':') → datos del CT/VM que la usa.
-	ctByMAC map[string]pveVM
+	// ctByMAC: MAC → datos del CT/VM que la usa.
+	ctByMAC map[macaddr.MAC]pveVM
 	// nodes: nodos de todas las instancias (#764 multi-endpoint). La clave
 	// interna de los mapas es "instancia|nodo" para que dos clusters con
 	// nodos homónimos no se pisen.
@@ -172,7 +172,7 @@ func (l *Live) fetchPveInventory(clients []pveInstClient) *pveInventory {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	inv := &pveInventory{
-		ctByMAC: map[string]pveVM{},
+		ctByMAC: map[macaddr.MAC]pveVM{},
 		nodes:   map[string]pveNode{},
 		nodeIPs: map[string][]string{},
 	}
@@ -343,8 +343,9 @@ func applyPVEInfra(devices []Device, dists []DistributionNode, inv *pveInventory
 		nodeByKey[matched] = inv.nodes[matched]
 	}
 	// Casar cada CT por MAC.
+	idxByMAC := deviceIndexByMAC(devices)
 	for mac, vm := range inv.ctByMAC {
-		idx, ok := hostIdxByID[macToDeviceID(mac)]
+		idx, ok := idxByMAC[mac]
 		if !ok {
 			continue // el CT no es un device conocido (apagado o sin tráfico)
 		}
@@ -406,7 +407,7 @@ func applyPVEInfra(devices []Device, dists []DistributionNode, inv *pveInventory
 	// CTs por host (para el macCount informativo del distnode).
 	ctCountByHost := map[string]int{}
 	for mac := range inv.ctByMAC {
-		if idx, ok := hostIdxByID[macToDeviceID(mac)]; ok {
+		if idx, ok := idxByMAC[mac]; ok {
 			if h := devices[idx].AttachTo; h != "" {
 				ctCountByHost[h]++
 			}
@@ -499,12 +500,8 @@ func applyPVEInfra(devices []Device, dists []DistributionNode, inv *pveInventory
 // real asignado por lease/alias). Formato "AA:BB:CC:DD:EE:FF" o con guiones.
 // También 12 dígitos hex sin separadores, como antes.
 func looksLikeMACName(name string) bool {
-	return macaddr.Normalize(name) != ""
-}
-
-// macToDeviceID: el ID de device es la MAC en minúsculas con guiones.
-func macToDeviceID(mac string) string {
-	return strings.ToLower(strings.ReplaceAll(mac, ":", "-"))
+	_, err := macaddr.Parse(name)
+	return err == nil
 }
 
 // singleNodeOf: true si el inventario tiene exactamente un nodo. Solo

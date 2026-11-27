@@ -999,18 +999,18 @@ func ParseGlClients(raw []byte) ([]DhcpLease, error) {
 	for key, c := range data.Clients {
 		// El firmware puede emitir MAC con guiones ("AA-BB-...", #1145): se
 		// guarda siempre la forma canónica para que el servidor la encuentre.
-		mac := macaddr.Normalize(c.MAC)
-		if mac == "" {
-			mac = macaddr.Normalize(key)
+		mac, err := macaddr.Parse(c.MAC)
+		if err != nil {
+			mac, err = macaddr.Parse(key)
 		}
-		if mac == "" || c.IP == "" || !c.Online {
+		if err != nil || c.IP == "" || !c.Online {
 			continue
 		}
 		hostname := c.Hostname
 		if hostname == "" {
 			hostname = c.Name
 		}
-		out = append(out, DhcpLease{MAC: mac, IP: c.IP, Hostname: hostname})
+		out = append(out, DhcpLease{MAC: mac.String(), IP: c.IP, Hostname: hostname})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].MAC < out[j].MAC })
 	return out, nil
@@ -2284,7 +2284,8 @@ func appendUnique(slice []string, s string) []string {
 // bit set (bit 1 of byte 0). Apple, Google, and Samsung use this for WiFi
 // privacy features — the device appears as a new MAC periodically.
 func IsRandomizedMAC(mac string) bool {
-	return macaddr.IsLocallyAdministered(mac)
+	m, err := macaddr.Parse(mac)
+	return err == nil && m.IsLocallyAdministered()
 }
 
 // ParseArp parsea /proc/net/arp (#377): cabecera + líneas

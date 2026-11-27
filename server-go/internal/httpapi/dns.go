@@ -38,7 +38,7 @@ type dnsResponse struct {
 	StatusTs     int64                   `json:"status_ts"`
 	Window       string                  `json:"window"`
 	GapTs        int64                   `json:"gap_ts"`
-	MAC          string                  `json:"mac,omitempty"`
+	MAC          macaddr.MAC             `json:"mac,omitzero"`
 	TotalQueries int64                   `json:"total_queries"`
 	TotalBlocked int64                   `json:"total_blocked"`
 	Top          []dnsactivity.DomainRow `json:"top"`
@@ -51,8 +51,8 @@ func (s *server) handleDeviceDNS(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "unavailable")
 		return
 	}
-	mac := macaddr.Normalize(r.PathValue("mac"))
-	if mac == "" {
+	mac, err := macaddr.Parse(r.PathValue("mac"))
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_mac")
 		return
 	}

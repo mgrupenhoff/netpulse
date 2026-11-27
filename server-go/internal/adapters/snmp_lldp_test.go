@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	npsnmp "github.com/gnacho/netpulse/server-go/internal/snmp"
 )
 
@@ -15,9 +16,9 @@ import (
 // (paridad con snmpFdbMap, #661).
 func TestSnmpLldpNeighborsNaming(t *testing.T) {
 	rem := []npsnmp.LldpRemEntry{
-		{LocalPortNum: 5, IfIndex: 5, ChassisMac: "78:55:36:02:58:BA", Chassis: "ryzen-ai", Mgmt: "192.168.1.80", Caps: []string{"Wlan"}, PortDesc: "enp195s0"},
+		{LocalPortNum: 5, IfIndex: 5, ChassisMac: macaddr.MustParse("78:55:36:02:58:BA"), Chassis: "ryzen-ai", Mgmt: "192.168.1.80", Caps: []string{"Wlan"}, PortDesc: "enp195s0"},
 		// Sin DisplayName para el ifIndex: cae al LocalPortNum si tiene nombre.
-		{LocalPortNum: 7, IfIndex: 70, ChassisMac: "D8:EC:5E:60:C7:82", Chassis: "LGS310C-2"},
+		{LocalPortNum: 7, IfIndex: 70, ChassisMac: macaddr.MustParse("D8:EC:5E:60:C7:82"), Chassis: "LGS310C-2"},
 		// Sin nombre en ninguno de los dos: nombre generado.
 		{LocalPortNum: 9, IfIndex: 90, Chassis: "otro"},
 	}
@@ -26,7 +27,7 @@ func TestSnmpLldpNeighborsNaming(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("esperaba 3 vecinos, obtuve %d", len(got))
 	}
-	want0 := LldpNeighbor{Port: "Slot0/5", ChassisMac: "78:55:36:02:58:BA", Chassis: "ryzen-ai", Mgmt: "192.168.1.80", Caps: []string{"Wlan"}, PortDesc: "enp195s0"}
+	want0 := LldpNeighbor{Port: "Slot0/5", ChassisMac: macaddr.MustParse("78:55:36:02:58:BA"), Chassis: "ryzen-ai", Mgmt: "192.168.1.80", Caps: []string{"Wlan"}, PortDesc: "enp195s0"}
 	if !reflect.DeepEqual(got[0], want0) {
 		t.Fatalf("vecino 0 inesperado:\n got %+v\nwant %+v", got[0], want0)
 	}
@@ -74,12 +75,12 @@ func TestGetRouterDetailLldpNombraEquipoSolitario(t *testing.T) {
 			{ID: "snmp-5", Label: "Slot0/5", Iface: "Slot0/5", Up: true, Snmp: true},
 			{ID: "snmp-6", Label: "Slot0/6", Iface: "Slot0/6", Up: true, Snmp: true},
 		},
-		fdb: map[string]string{
-			"78:55:36:02:58:BA": "Slot0/5",
-			"AA:BB:CC:DD:EE:FF": "Slot0/6",
+		fdb: map[macaddr.MAC]string{
+			macaddr.MustParse("78:55:36:02:58:BA"): "Slot0/5",
+			macaddr.MustParse("AA:BB:CC:DD:EE:FF"): "Slot0/6",
 		},
 		lldp: []LldpNeighbor{
-			{Port: "Slot0/5", Chassis: "ryzen-ai", ChassisMac: "78:55:36:02:58:BA", Mgmt: "192.168.1.80", Caps: []string{"Wlan"}},
+			{Port: "Slot0/5", Chassis: "ryzen-ai", ChassisMac: macaddr.MustParse("78:55:36:02:58:BA"), Mgmt: "192.168.1.80", Caps: []string{"Wlan"}},
 		},
 		polledAt: time.Now().UnixMilli(),
 	}
@@ -99,7 +100,7 @@ func TestGetRouterDetailLldpNombraEquipoSolitario(t *testing.T) {
 	if p5.Detail != "192.168.1.80 · LLDP" {
 		t.Fatalf("snmp-5 detail: %q, esperaba mgmt-ip · LLDP", p5.Detail)
 	}
-	if p5.DeviceMac != "78:55:36:02:58:BA" {
+	if p5.DeviceMac != macaddr.MustParse("78:55:36:02:58:BA") {
 		t.Fatalf("snmp-5 deviceMac: %q", p5.DeviceMac)
 	}
 	// Puerto sin LLDP: comportamiento previo intacto (cae a la label).
@@ -120,9 +121,9 @@ func TestGetRouterDetailLldpNoPisaHostnameDhcp(t *testing.T) {
 		ports: []EthPort{
 			{ID: "snmp-5", Label: "Slot0/5", Iface: "Slot0/5", Up: true, Snmp: true},
 		},
-		fdb:      map[string]string{"78:55:36:02:58:BA": "Slot0/5"},
+		fdb:      map[macaddr.MAC]string{macaddr.MustParse("78:55:36:02:58:BA"): "Slot0/5"},
 		lldp:     []LldpNeighbor{{Port: "Slot0/5", Chassis: "ryzen-ai", Mgmt: "192.168.1.80"}},
-		leases:   []DhcpLease{{MAC: "78:55:36:02:58:BA", Hostname: "ryzen9AI", IP: "192.168.1.80"}},
+		leases:   []DhcpLease{{MAC: macaddr.MustParse("78:55:36:02:58:BA"), Hostname: "ryzen9AI", IP: "192.168.1.80"}},
 		polledAt: time.Now().UnixMilli(),
 	}
 

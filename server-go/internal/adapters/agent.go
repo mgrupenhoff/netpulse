@@ -12,13 +12,13 @@ package adapters
 
 import (
 	"fmt"
-	"maps"
 	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 	"github.com/gnacho/netpulse/server-go/internal/alerts"
 	"github.com/gnacho/netpulse/server-go/internal/vercmp"
@@ -46,7 +46,7 @@ type AgentState struct {
 	// push completo y cada roam de un cliente provocaría un "sin cliente"
 	// transitorio en routers agent-only emparejados por hostname/MAC.
 	Host      string
-	BridgeMAC string
+	BridgeMAC macaddr.MAC
 }
 
 // effectiveTTL devuelve la ventana de frescura del estado: el TTL base, o
@@ -100,7 +100,7 @@ func (r *AgentRegistry) Ingest(p *probe.Payload) {
 		if sd.Board != nil {
 			st.Host = sd.Board.Hostname
 		}
-		st.BridgeMAC = sd.BridgeMAC
+		st.BridgeMAC, _ = macaddr.ParseOrWarn(macWarn, "agent.bridge_mac", sd.BridgeMAC)
 	}
 	// #852: un push wireless-only no trae identidad; hereda la última
 	// conocida para que MatchRouter siga emparejando al agente.
@@ -108,7 +108,7 @@ func (r *AgentRegistry) Ingest(p *probe.Payload) {
 		if st.Host == "" {
 			st.Host = prev.Host
 		}
-		if st.BridgeMAC == "" {
+		if !st.BridgeMAC.IsValid() {
 			st.BridgeMAC = prev.BridgeMAC
 		}
 	}
@@ -132,12 +132,12 @@ func (r *AgentRegistry) Info(slug string) (lastSeen time.Time, version, kind str
 // system (#852 los conserva en AgentState). La usa GET /api/agents para
 // asociar el agente con su router cuando el payload actual no lleva identidad
 // (#1874).
-func (r *AgentRegistry) Identity(slug string) (host, bridgeMAC string, ok bool) {
+func (r *AgentRegistry) Identity(slug string) (host string, bridgeMAC macaddr.MAC, ok bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	st, found := r.states[slug]
 	if !found {
-		return "", "", false
+		return "", macaddr.MAC{}, false
 	}
 	return st.Host, st.BridgeMAC, true
 }
@@ -176,14 +176,14 @@ func (r *AgentRegistry) ExternalDownConfirm(slug string, base time.Duration) tim
 // (AP local=true en sus datos dawn/usteer). El channel-plan los usa de
 // semilla exacta para la detección de redes propias (#1082): casos como el
 // guest de un GL.iNet, cuya MAC no comparte prefijo con routers.mac.
-func (r *AgentRegistry) LocalBssids() []string {
+func (r *AgentRegistry) LocalBssids() []macaddr.MAC {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	seen := map[string]bool{}
-	var out []string
-	add := func(mac string) {
-		mac = strings.ToUpper(strings.TrimSpace(mac))
-		if mac == "" || seen[mac] {
+	seen := map[macaddr.MAC]bool{}
+	var out []macaddr.MAC
+	add := func(raw string) {
+		mac, ok := macaddr.ParseOrWarn(macWarn, "agent.local_bssid", raw)
+		if !ok || seen[mac] {
 			return
 		}
 		seen[mac] = true
@@ -350,8 +350,8 @@ func (r *AgentRegistry) Restore(slug string, st *AgentState) {
 			if st.Host == "" && sd.Board != nil {
 				st.Host = sd.Board.Hostname
 			}
-			if st.BridgeMAC == "" {
-				st.BridgeMAC = sd.BridgeMAC
+			if !st.BridgeMAC.IsValid() {
+				st.BridgeMAC, _ = macaddr.ParseOrWarn(macWarn, "agent.bridge_mac", sd.BridgeMAC)
 			}
 		}
 	}
@@ -378,7 +378,7 @@ func (r *AgentRegistry) Snapshot(slug string) *AgentState {
 // agente, su payload y si está fresco. Permite que un agente emparejado con
 // un slug elegido por el usuario alimente un router cuyo id autogenerado no
 // coincide con ese slug.
-func (r *AgentRegistry) MatchRouter(cfg RouterConfig, macs map[string]string) (string, *probe.Payload, bool) {
+func (r *AgentRegistry) MatchRouter(cfg RouterConfig, macs map[string]macaddr.MAC) (string, *probe.Payload, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -400,9 +400,9 @@ func (r *AgentRegistry) MatchRouter(cfg RouterConfig, macs map[string]string) (s
 	// (los hostnames se duplican en APs puente idénticos). Se recogen TODOS
 	// los candidatos por nivel y solo un match ÚNICO asocia: la ambigüedad no
 	// inventa asociaciones (antes: primer match en orden aleatorio de mapa).
-	targetMac := ""
+	var targetMac macaddr.MAC
 	if macs != nil {
-		targetMac = strings.ToUpper(strings.TrimSpace(macs[cfg.ID]))
+		targetMac = macs[cfg.ID]
 	}
 	var macMatch *AgentState
 	var macMatchSlug string
@@ -422,7 +422,7 @@ func (r *AgentRegistry) MatchRouter(cfg RouterConfig, macs map[string]string) (s
 		if st.Payload == nil {
 			continue
 		}
-		if targetMac != "" && strings.EqualFold(st.BridgeMAC, targetMac) {
+		if targetMac.IsValid() && st.BridgeMAC == targetMac {
 			macMatchCount++
 			macMatch = st
 			macMatchSlug = slug
@@ -509,7 +509,7 @@ func agentName(cfg RouterConfig) string {
 func (l *Live) pollRouterAgent(cfg RouterConfig) (bool, *routerPolled) {
 	l.mu.Lock()
 	reg := l.agents
-	macs := make(map[string]string, len(l.routerMacs))
+	macs := make(map[string]macaddr.MAC, len(l.routerMacs))
 	for k, v := range l.routerMacs {
 		macs[k] = v
 	}
@@ -868,12 +868,12 @@ func (l *Live) polledFromAgent(cfg RouterConfig, p *probe.Payload) *routerPolled
 		out.latencyMs = sd.LatencyMs
 		out.lossPct = sd.LossPct
 		out.backhaul = sd.Backhaul
-		out.brMac = sd.BridgeMAC
+		out.brMac, _ = macaddr.ParseOrWarn(macWarn, "agent.bridge_mac", sd.BridgeMAC)
 		// #1765: identidades propias del equipo. El agente manda las MACs de
 		// todas sus interfaces; sin esto solo se absorbía la del bridge y el
 		// resto (VLANs, puerto CPU de un switch DSA, radios) aparecía como
 		// cliente desconocido cuando un vecino las aprendía en su FDB.
-		out.selfMacs = sd.IfaceMACs
+		out.selfMacs = parseMACSlice("agent.self_mac", sd.IfaceMACs)
 		out.flash = sd.Flash
 		out.firmwareAvailable = sd.FirmwareAvailable
 	} else if cached != nil && cached.system != nil && cached.systemKind == agentSourceClass(p.Kind) {
@@ -917,26 +917,28 @@ func (l *Live) polledFromAgent(cfg RouterConfig, p *probe.Payload) *routerPolled
 	// Secciones con anti-parpadeo (nil en el payload = sonda fallida).
 	if wd := p.Data.Wireless; wd != nil {
 		if wd.Clients != nil {
-			out.wireless = wd.Clients
+			out.wireless = parseMACMap("agent.wireless", wd.Clients)
 		}
 		if len(wd.Radios) > 0 {
 			out.radios = radiosToAdapter(wd.Radios)
 		}
 	}
 	if dd := p.Data.DHCP; dd != nil {
-		out.leases = dd.Leases
+		out.leases = leasesFromProbe("agent.dhcp_lease", dd.Leases)
 		// gl-clients del agente (GL.iNet): enriquece IPs igual que en la
 		// ruta SSH (issue #5 bug 1).
-		out.glClients = dd.GlClients
+		out.glClients = leasesFromProbe("agent.gl_client", dd.GlClients)
 	}
 	if p.Data.Arp != nil {
-		out.arp = p.Data.Arp
-		out.arpDevs = p.Data.ArpDevs
+		out.arp = parseMACMap("agent.arp", p.Data.Arp)
+		out.arpDevs = parseMACMap("agent.arp_devs", p.Data.ArpDevs)
 		// An agent old enough not to send arpStale leaves this empty, and
 		// the whole table counts as presence, exactly as it used to.
-		out.arpStale = make(map[string]bool, len(p.Data.ArpStale))
-		for _, mac := range p.Data.ArpStale {
-			out.arpStale[strings.ToUpper(mac)] = true
+		out.arpStale = make(map[macaddr.MAC]bool, len(p.Data.ArpStale))
+		for _, raw := range p.Data.ArpStale {
+			if m, ok := macaddr.ParseOrWarn(macWarn, "agent.arp_stale", raw); ok {
+				out.arpStale[m] = true
+			}
 		}
 	}
 	// Wan (#276): el agente lo trae en el payload desde 2.28.24+. Antes solo
@@ -944,6 +946,11 @@ func (l *Live) polledFromAgent(cfg RouterConfig, p *probe.Payload) *routerPolled
 	// nunca -- y su panel de conexión se quedaba vacío.
 	if w := p.Data.Wan; w != nil {
 		out.wanInfo = *w
+		out.uplinkDevs = []string{w.Device, w.Port}
+	} else if cached != nil {
+		// Push event-driven (solo wireless + ARP): sin las interfaces del
+		// uplink, sus vecinos volverían a salir como clientes cableados.
+		out.uplinkDevs = cached.uplinkDevs
 	}
 	// MultiWan: the several internet connections and which one carries
 	// traffic. Only a router whose own panel manages them reports it; an
@@ -967,6 +974,14 @@ func (l *Live) polledFromAgent(cfg RouterConfig, p *probe.Payload) *routerPolled
 	} else if cached != nil {
 		out.networks = cached.networks
 	}
+	// Interfaces lógicas en ejecución (`ubus call network.interface dump`):
+	// mismo anti-parpadeo que networks para que un push event-driven no
+	// pierda las filas por red del panel de descubrimiento.
+	if len(p.Data.NetIfaces) > 0 {
+		out.netIfaces = p.Data.NetIfaces
+	} else if cached != nil {
+		out.netIfaces = cached.netIfaces
+	}
 	// #1942: el mapa ifname -> red viaja en la seccion wireless del payload.
 	if wm := wifiNetworkMap(dot11rIfacesFromPayload(p)); wm != nil {
 		out.wifiNet = wm
@@ -974,45 +989,38 @@ func (l *Live) polledFromAgent(cfg RouterConfig, p *probe.Payload) *routerPolled
 		out.wifiNet = cached.wifiNet
 	}
 	if dh := p.Data.DHCP; dh != nil && len(dh.Reservations) > 0 {
-		out.reservations = dh.Reservations
+		out.reservations = reservationsFromProbe(dh.Reservations)
 	}
 	if fd := p.Data.FDB; fd != nil {
 		if fd.MACs != nil {
-			out.fdb = fd.MACs
+			out.fdb = parseMACMap("agent.fdb", fd.MACs)
 		}
 		// Sección FDB fresca: el hint wireless-side se pisa tal cual, incluso
 		// vacío (nadie lo refresca ya: agente caído o pasado a SSH). Solo un
 		// push SIN sección FDB (event-driven) recicla el cache, mismo contrato
 		// anti-parpadeo que fdb.
-		out.wirelessSide = fd.WirelessSide
+		out.wirelessSide = parseMACMap("agent.wireless_side", fd.WirelessSide)
 		// #1757: VLAN real de cada cliente cableado, tal como el bridge la
 		// aprendió. Se pisa tal cual (incluso vacío) por la misma razón que el
 		// hint wireless-side: una sección fresca es la verdad del equipo.
-		out.fdbVlans = fd.VLANs
+		out.fdbVlans = parseMACMap("agent.fdb_vlans", fd.VLANs)
 		if len(fd.Ports) > 0 {
 			out.ports = ethPortsToAdapter(fd.Ports)
 			// #291: los pushers externos declaran el puerto del FDB como
 			// número ("1") mientras sus bocas usan id "lan1". Normalizar
 			// para que el enriquecimiento del detalle (MAC→nombre por boca)
-			// y la topología casen ambas claves.
-			// fd.MACs es el mapa del payload publicado en AgentRegistry, que
-			// otras goroutines leen (persistAgentState, el beacon periódico):
-			// se reescribe sobre una copia, hecha solo si hay algo que cambiar.
+			// y la topología casen ambas claves. out.fdb es una copia nueva
+			// propiedad de este routerPolled (nunca muta fd.MACs).
 			ids := map[string]bool{}
 			for _, ep := range out.ports {
 				ids[ep.ID] = true
 			}
 			if len(ids) > 0 {
-				copied := false
-				for mac, port := range fd.MACs {
+				for mac, port := range out.fdb {
 					if port == "wan" || ids[port] {
 						continue
 					}
 					if lan := "lan" + port; ids[lan] {
-						if !copied {
-							out.fdb = maps.Clone(fd.MACs)
-							copied = true
-						}
 						out.fdb[mac] = lan
 					}
 				}
@@ -1068,13 +1076,13 @@ func (l *Live) polledFromAgent(cfg RouterConfig, p *probe.Payload) *routerPolled
 	out.clientBw = resolveClientBw()
 	// Discovery (#338): mDNS services + randomized MACs. Best-effort.
 	if p.Data.Discovery != nil {
-		out.discovery = p.Data.Discovery
+		out.discovery = discoveryFromProbe(p.Data.Discovery)
 	}
 	out.dawnDetected = p.Data.Dawn != nil
 
 	if cached == nil {
 		cached = &extrasSnapshot{ports: []EthPort{}, radios: []Radio{},
-			wireless: map[string]WirelessClient{}, fdb: map[string]string{}}
+			wireless: map[macaddr.MAC]WirelessClient{}, fdb: map[macaddr.MAC]string{}}
 	}
 	if out.ports == nil {
 		// Copia: cached.ports es el slice de un routerPolled ya publicado en
@@ -1146,8 +1154,8 @@ func (l *Live) polledFromAgent(cfg RouterConfig, p *probe.Payload) *routerPolled
 		lldpSnap = cached.lldp // conserva la última sección buena (#489)
 	}
 	l.extrasCache[cfg.ID] = &extrasSnapshot{ports: out.ports, radios: out.radios,
-		wireless: out.wireless, fdb: out.fdb, fdbVlans: out.fdbVlans, networks: out.networks, wifiNet: out.wifiNet, wirelessSide: out.wirelessSide, luci: out.luci, system: sysSnap, systemKind: sysSnapKind, lldp: lldpSnap,
-		clientBw: out.clientBw, vlans: out.vlans, multiWan: out.multiWan}
+		wireless: out.wireless, fdb: out.fdb, fdbVlans: out.fdbVlans, networks: out.networks, netIfaces: out.netIfaces, wifiNet: out.wifiNet, wirelessSide: out.wirelessSide, luci: out.luci, system: sysSnap, systemKind: sysSnapKind, lldp: lldpSnap,
+		clientBw: out.clientBw, vlans: out.vlans, multiWan: out.multiWan, uplinkDevs: out.uplinkDevs}
 	l.mu.Unlock()
 
 	// Solo con un payload NUEVO alimentamos las series y el monitor de
@@ -1170,7 +1178,7 @@ func (l *Live) polledFromAgent(cfg RouterConfig, p *probe.Payload) *routerPolled
 		// #551: tráfico por cliente (nlbwmon preferente, hostapd fallback).
 		// now = ts del payload (no el reloj del server) para que el dt del
 		// delta sea el intervalo real entre pushes del agente.
-		if samples, source, ok := resolveClientBwSources(out.wireless, out.clientBw); ok {
+		if samples, source, ok := resolveClientBwSources(cfg.ID, out.wireless, out.clientBw); ok {
 			l.recordClientBwSamples(cfg.ID, time.Unix(p.Ts, 0), samples, source)
 		}
 		l.portMon.Observe(cfg.ID, linkPorts(out.ports), l.engine)

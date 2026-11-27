@@ -16,10 +16,14 @@ package dnsactivity
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"log"
 	"net"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 // State describe por qué la ingesta puede estar parada. Se persiste en kv y se
@@ -36,7 +40,7 @@ const (
 
 // Bucket es una fila del agregado horario.
 type Bucket struct {
-	MAC       string // vacía = sin atribuir
+	MAC       macaddr.MAC // !IsValid() = sin atribuir (se persiste como "")
 	Domain    string
 	Hour      time.Time
 	Queries   int64
@@ -56,9 +60,9 @@ type DomainRow struct {
 
 // FirstSeen es una fila de "dominio nuevo en la ventana".
 type FirstSeen struct {
-	Domain      string `json:"domain"`
-	MAC         string `json:"mac"`
-	FirstSeenMS int64  `json:"first_seen_ms"`
+	Domain      string      `json:"domain"`
+	MAC         macaddr.MAC `json:"mac"` // !IsValid() = sin atribuir (se persiste como "")
+	FirstSeenMS int64       `json:"first_seen_ms"`
 }
 
 // Store es el acceso SQL del agregado.
@@ -118,16 +122,16 @@ ON CONFLICT(domain) DO NOTHING`)
 }
 
 // queryTop agrupa el agregado por dominio en una ventana.
-func (s *Store) queryTop(ctx context.Context, mac string, from, to time.Time, limit int) ([]DomainRow, error) {
+func (s *Store) queryTop(ctx context.Context, mac macaddr.MAC, from, to time.Time, limit int) ([]DomainRow, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 20
 	}
 	q := `SELECT domain, SUM(queries), SUM(blocked), MIN(first_seen), MAX(last_seen)
 FROM dns_activity WHERE hour_ts >= ? AND hour_ts <= ?`
 	args := []any{from.Truncate(time.Hour).UnixMilli(), to.UnixMilli()}
-	if mac != "" {
+	if mac.IsValid() {
 		q += " AND mac = ?"
-		args = append(args, macKey(mac))
+		args = append(args, mac)
 	}
 	q += " GROUP BY domain ORDER BY SUM(queries) DESC, domain ASC LIMIT ?"
 	args = append(args, limit)
@@ -148,31 +152,24 @@ FROM dns_activity WHERE hour_ts >= ? AND hour_ts <= ?`
 	return out, rows.Err()
 }
 
-// macKey pasa la MAC pedida a la forma con la que se guarda: la de
-// device_seen (mayúsculas, ':'), de donde la ingesta toma la atribución. La
-// API la recibe en minúsculas y SQLite compara con distinción de mayúsculas.
-func macKey(mac string) string {
-	return strings.ToUpper(mac)
-}
-
 // TopForMAC devuelve los dominios más consultados por un dispositivo.
-func (s *Store) TopForMAC(ctx context.Context, mac string, from, to time.Time, limit int) ([]DomainRow, error) {
+func (s *Store) TopForMAC(ctx context.Context, mac macaddr.MAC, from, to time.Time, limit int) ([]DomainRow, error) {
 	return s.queryTop(ctx, mac, from, to, limit)
 }
 
 // TopAll devuelve los dominios más consultados de toda la red.
 func (s *Store) TopAll(ctx context.Context, from, to time.Time, limit int) ([]DomainRow, error) {
-	return s.queryTop(ctx, "", from, to, limit)
+	return s.queryTop(ctx, macaddr.MAC{}, from, to, limit)
 }
 
-// totals suma consultas y bloqueos de una ventana (mac vacía = toda la red).
-func (s *Store) totals(ctx context.Context, mac string, from, to time.Time) (int64, int64, error) {
+// totals suma consultas y bloqueos de una ventana (mac inválida = toda la red).
+func (s *Store) totals(ctx context.Context, mac macaddr.MAC, from, to time.Time) (int64, int64, error) {
 	q := `SELECT COALESCE(SUM(queries),0), COALESCE(SUM(blocked),0)
 FROM dns_activity WHERE hour_ts >= ? AND hour_ts <= ?`
 	args := []any{from.Truncate(time.Hour).UnixMilli(), to.UnixMilli()}
-	if mac != "" {
+	if mac.IsValid() {
 		q += " AND mac = ?"
-		args = append(args, macKey(mac))
+		args = append(args, mac)
 	}
 	var queries, blocked int64
 	err := s.db.QueryRowContext(ctx, q, args...).Scan(&queries, &blocked)
@@ -180,13 +177,13 @@ FROM dns_activity WHERE hour_ts >= ? AND hour_ts <= ?`
 }
 
 // TotalsForMAC suma la ventana de un dispositivo.
-func (s *Store) TotalsForMAC(ctx context.Context, mac string, from, to time.Time) (int64, int64, error) {
+func (s *Store) TotalsForMAC(ctx context.Context, mac macaddr.MAC, from, to time.Time) (int64, int64, error) {
 	return s.totals(ctx, mac, from, to)
 }
 
 // TotalsAll suma la ventana de toda la red.
 func (s *Store) TotalsAll(ctx context.Context, from, to time.Time) (int64, int64, error) {
-	return s.totals(ctx, "", from, to)
+	return s.totals(ctx, macaddr.MAC{}, from, to)
 }
 
 // NewDomains lista los dominios vistos por primera vez en la ventana.
@@ -207,6 +204,10 @@ ORDER BY first_seen DESC LIMIT ?`,
 	for rows.Next() {
 		var f FirstSeen
 		if err := rows.Scan(&f.Domain, &f.MAC, &f.FirstSeenMS); err != nil {
+			if errors.Is(err, macaddr.ErrSyntax) {
+				log.Printf("[netpulse:dnsactivity] skipping new domain %q: %v", f.Domain, err)
+				continue
+			}
 			return nil, err
 		}
 		out = append(out, f)
@@ -215,17 +216,27 @@ ORDER BY first_seen DESC LIMIT ?`,
 }
 
 // resolveMACs construye el mapa IP→MAC con la evidencia de device_seen.
-func resolveMACs(ctx context.Context, d *sql.DB) (map[string]string, error) {
+func resolveMACs(ctx context.Context, d *sql.DB) (map[string]macaddr.MAC, error) {
 	rows, err := d.QueryContext(ctx, `SELECT mac, ip FROM device_seen WHERE ip <> ''`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[string]string{}
+	out := map[string]macaddr.MAC{}
 	for rows.Next() {
-		var mac, ip string
+		var mac macaddr.MAC
+		var ip string
 		if err := rows.Scan(&mac, &ip); err != nil {
+			if errors.Is(err, macaddr.ErrSyntax) {
+				log.Printf("[netpulse:dnsactivity] skipping device_seen row: %v", err)
+				continue
+			}
 			return nil, err
+		}
+		// MAC.Scan devuelve MAC{} sin error para NULL/""; omitimos para no
+		// pisar una atribución válida de la misma IP con una MAC vacía.
+		if !mac.IsValid() {
+			continue
 		}
 		if k := canonicalIP(ip); k != "" {
 			out[k] = mac

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 type fakeKickRunner struct {
@@ -30,7 +32,7 @@ func TestKickUsteerClient_Success(t *testing.T) {
 		},
 	}
 	routers := []RouterConfig{{ID: "rt2", Name: "rt2", Host: "192.168.1.2"}}
-	if err := kickUsteerClient("38:C6:CE:2F:06:5A", routers, runner); err != nil {
+	if err := kickUsteerClient(macaddr.MustParse("38:C6:CE:2F:06:5A"), routers, runner); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(runner.calls) != 2 {
@@ -45,7 +47,7 @@ func TestKickUsteerClient_ClientNotFound(t *testing.T) {
 		},
 	}
 	routers := []RouterConfig{{ID: "rt2", Name: "rt2", Host: "192.168.1.2"}}
-	err := kickUsteerClient("38:C6:CE:2F:06:5A", routers, runner)
+	err := kickUsteerClient(macaddr.MustParse("38:C6:CE:2F:06:5A"), routers, runner)
 	if err == nil || err.Error() != "client not found" {
 		t.Fatalf("expected 'client not found', got: %v", err)
 	}
@@ -66,7 +68,7 @@ func TestKickUsteerClient_ContinuesAfterFailure(t *testing.T) {
 		{ID: "rt2", Name: "rt2", Host: "192.168.1.2"},
 		{ID: "rt3", Name: "rt3", Host: "192.168.1.3"},
 	}
-	if err := kickUsteerClient("38:C6:CE:2F:06:5A", routers, runner); err != nil {
+	if err := kickUsteerClient(macaddr.MustParse("38:C6:CE:2F:06:5A"), routers, runner); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(runner.calls) != 4 {
@@ -84,7 +86,7 @@ func TestKickUsteerClient_AllRoutersFail(t *testing.T) {
 		},
 	}
 	routers := []RouterConfig{{ID: "rt2", Name: "rt2", Host: "192.168.1.2"}}
-	err := kickUsteerClient("38:C6:CE:2F:06:5A", routers, runner)
+	err := kickUsteerClient(macaddr.MustParse("38:C6:CE:2F:06:5A"), routers, runner)
 	if err == nil {
 		t.Fatalf("expected error")
 	}
@@ -108,7 +110,7 @@ func TestKickUsteerClient_ConnectedClientsFails(t *testing.T) {
 		{ID: "rt2", Name: "rt2", Host: "192.168.1.2"},
 		{ID: "rt3", Name: "rt3", Host: "192.168.1.3"},
 	}
-	if err := kickUsteerClient("38:C6:CE:2F:06:5A", routers, runner); err != nil {
+	if err := kickUsteerClient(macaddr.MustParse("38:C6:CE:2F:06:5A"), routers, runner); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(runner.calls) != 3 {

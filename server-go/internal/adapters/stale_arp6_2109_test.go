@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 )
 
@@ -77,10 +78,10 @@ func TestGetArpConfirmsStaleIPv6FromTheUnit(t *testing.T) {
 	c := &OpenWrtClient{Host: "192.168.2.11", pool: pool}
 
 	arp, stale, _ := c.GetArp()
-	if arp["CC:CC:CC:00:00:77"] != "fe80::1" {
+	if arp[macaddr.MustParse("CC:CC:CC:00:00:77")] != "fe80::1" {
 		t.Fatalf("pareja IPv6 no confirmada: %+v", arp)
 	}
-	if stale["CC:CC:CC:00:00:77"] {
+	if stale[macaddr.MustParse("CC:CC:CC:00:00:77")] {
 		t.Fatalf("una entrada confirmada no puede quedar stale: %v", stale)
 	}
 	pings := pool.ping6Calls()
@@ -104,5 +105,26 @@ func TestGetArpNoStaleIPv6NoPing(t *testing.T) {
 	_, _, _ = c.GetArp()
 	if pings := pool.ping6Calls(); len(pings) != 0 {
 		t.Fatalf("no debe pingear sin STALE v6: %v", pings)
+	}
+}
+
+// Un vecino solo-IPv6 confirmado por SSH aporta su interfaz al mapa devs; si
+// la MAC ya tenía interfaz en IPv4, gana la de IPv4.
+func TestGetArpReportsIPv6ConfirmedDev(t *testing.T) {
+	pool := &staleArp6Pool{
+		v4: []string{"192.168.2.12 dev br-lan lladdr AA:AA:AA:AA:AA:03 REACHABLE\n"},
+		v6: []string{
+			"fe80::1 dev phy1-sta0 lladdr CC:CC:CC:00:00:77 STALE\nfe80::2 dev eth1 lladdr AA:AA:AA:AA:AA:03 STALE\n",
+			"fe80::1 dev phy1-sta0 lladdr CC:CC:CC:00:00:77 REACHABLE\nfe80::2 dev eth1 lladdr AA:AA:AA:AA:AA:03 REACHABLE\n",
+		},
+	}
+	c := &OpenWrtClient{Host: "192.168.2.11", pool: pool}
+
+	_, _, devs := c.GetArp()
+	if got := devs[macaddr.MustParse("CC:CC:CC:00:00:77")]; got != "phy1-sta0" {
+		t.Fatalf("interfaz de vecino solo-IPv6: %q, esperaba phy1-sta0 (devs=%+v)", got, devs)
+	}
+	if got := devs[macaddr.MustParse("AA:AA:AA:AA:AA:03")]; got != "br-lan" {
+		t.Fatalf("la interfaz IPv4 debe ganar sobre la IPv6: %q, esperaba br-lan (devs=%+v)", got, devs)
 	}
 }

@@ -13,8 +13,6 @@
 // existing figure are left untouched.
 package adapters
 
-import "strings"
-
 // applySnmpSwitchPortTraffic raises each online client attributed to an
 // SNMP-enabled router to its FDB port's rate (Mbps), split across the online
 // clients sharing that port. It runs at the end of buildDevices, before
@@ -57,7 +55,7 @@ func (l *Live) applySnmpSwitchPortTraffic(polled map[string]*routerPolled, devic
 		if p == nil || !p.cfg.SnmpEnabled || len(p.fdb) == 0 {
 			return portKey{}, false
 		}
-		port, ok := p.fdb[strings.ToUpper(d.MAC)]
+		port, ok := p.fdb[d.MAC]
 		if !ok {
 			return portKey{}, false
 		}

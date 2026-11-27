@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 	"github.com/gnacho/netpulse/server-go/internal/channelplan"
 	"github.com/gnacho/netpulse/server-go/internal/db"
@@ -31,8 +32,64 @@ func TestSaveAndRecentScans(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("esperaba 1 scan, got %d", len(got))
 	}
-	if got[0].BSSID != "00:11:22:33:44:55" || got[0].Signal != -62 {
+	if got[0].BSSID != macaddr.MustParse("00:11:22:33:44:55") || got[0].Signal != -62 {
 		t.Errorf("scan incorrecto: %+v", got[0])
+	}
+}
+
+func TestRecentScansSkipsCorruptBSSID(t *testing.T) {
+	d, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("db: %v", err)
+	}
+	defer d.Close()
+
+	now := time.Now().Unix()
+	if _, err := d.Exec(
+		`INSERT INTO wifi_scans (router_id, iface, bssid, ssid, channel, freq, signal_dbm, width_mhz, ts) VALUES
+		 ('rt1', 'wlan0', 'not-a-bssid', 'basura', 6, 2437, -50, 20, ?),
+		 ('rt1', 'wlan0', '00:11:22:33:44:55', 'vecino', 6, 2437, -62, 20, ?)`,
+		now, now,
+	); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	st := channelplan.NewStore(d.DB)
+	got, err := st.RecentScans("rt1", time.Hour)
+	if err != nil {
+		t.Fatalf("una fila corrupta no debe tumbar RecentScans: %v", err)
+	}
+	if len(got) != 1 || got[0].BSSID != macaddr.MustParse("00:11:22:33:44:55") {
+		t.Fatalf("esperaba solo la fila válida, got %+v", got)
+	}
+}
+
+func TestSaveScanDropsInvalidBSSID(t *testing.T) {
+	d, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("db: %v", err)
+	}
+	defer d.Close()
+
+	st := channelplan.NewStore(d.DB)
+	scans := []probe.ScanResult{
+		{Iface: "wlan0", BSSID: "aa-bb-cc-dd-ee-ff", SSID: "valido", Channel: 1, Freq: 2412, Signal: -55},
+		{Iface: "wlan0", BSSID: "", SSID: "vacio", Channel: 6, Freq: 2437, Signal: -60},
+		{Iface: "wlan0", BSSID: "no-es-bssid", SSID: "invalido", Channel: 11, Freq: 2462, Signal: -65},
+	}
+	if err := st.SaveScan("rt1", time.Now().Unix(), scans); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	got, err := st.RecentScans("rt1", time.Hour)
+	if err != nil {
+		t.Fatalf("recent: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("esperaba 1 scan válido, got %d: %+v", len(got), got)
+	}
+	if got[0].BSSID != macaddr.MustParse("AA:BB:CC:DD:EE:FF") || got[0].SSID != "valido" {
+		t.Errorf("esperaba BSSID normalizado AA:BB:CC:DD:EE:FF, got %+v", got[0])
 	}
 }
 
@@ -117,7 +174,7 @@ func TestRecentScansOwnPorSemillaExacta(t *testing.T) {
 	defer d.Close()
 
 	st := channelplan.NewStore(d.DB)
-	st.SetOwnSeeds(func() []string { return []string{"1e:bf:ce:02:7f:48"} })
+	st.SetOwnSeeds(func() []macaddr.MAC { return []macaddr.MAC{macaddr.MustParse("1e:bf:ce:02:7f:48")} })
 	now := time.Now().Unix()
 	scans := []probe.ScanResult{
 		{Iface: "wlan0", BSSID: "1E:BF:CE:02:7F:48", SSID: "Casa-2.4", Channel: 1, Freq: 2412, Signal: -53},
@@ -338,7 +395,7 @@ func TestRecentScansDedupBSSID(t *testing.T) {
 		t.Fatalf("esperaba 2 vecinos dedup, got %d: %+v", len(got), got)
 	}
 	for _, r := range got {
-		if r.BSSID == "AA:AA:AA:AA:AA:01" && r.Signal != -55 {
+		if r.BSSID == macaddr.MustParse("AA:AA:AA:AA:AA:01") && r.Signal != -55 {
 			t.Errorf("el vecino A debe reportar la señal MÁS RECIENTE (-55), got %d", r.Signal)
 		}
 	}

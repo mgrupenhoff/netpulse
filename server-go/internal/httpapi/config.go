@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/gnacho/netpulse/server-go/internal/adapters"
 	"github.com/gnacho/netpulse/server-go/internal/auth"
@@ -101,13 +102,14 @@ type routerListItem struct {
 	IsGateway bool   `json:"is_gateway"`
 	AgentOnly bool   `json:"agent_only"`
 	// InventoryMode (#1917): "auto" | "agent" | "ssh".
-	InventoryMode    string `json:"inventory_mode,omitempty"`
-	CreatedAt        int64  `json:"created_at"`
-	FirmwareTarget   string `json:"firmware_target,omitempty"`
-	SnmpEnabled      bool   `json:"snmp_enabled"`
-	SnmpCommunitySet bool   `json:"snmp_community_set"`
-	SnmpPort         int    `json:"snmp_port,omitempty"`
-	SnmpPollInterval int    `json:"snmp_poll_interval,omitempty"`
+	InventoryMode      string                      `json:"inventory_mode,omitempty"`
+	DiscoveryOverrides adapters.DiscoveryOverrides `json:"discovery_overrides,omitzero"`
+	CreatedAt          int64                       `json:"created_at"`
+	FirmwareTarget     string                      `json:"firmware_target,omitempty"`
+	SnmpEnabled        bool                        `json:"snmp_enabled"`
+	SnmpCommunitySet   bool                        `json:"snmp_community_set"`
+	SnmpPort           int                         `json:"snmp_port,omitempty"`
+	SnmpPollInterval   int                         `json:"snmp_poll_interval,omitempty"`
 	// SNMPv3 (#2042). Las passphrases nunca salen: solo si están guardadas.
 	SnmpVersion         string `json:"snmp_version"`
 	SnmpV3User          string `json:"snmp_v3_user,omitempty"`
@@ -124,21 +126,22 @@ type routerListItem struct {
 
 func newRouterListItem(rt adapters.RouterConfig) routerListItem {
 	return routerListItem{
-		ID:               rt.ID,
-		Name:             rt.Name,
-		Host:             rt.Host,
-		Type:             rt.Type,
-		IsGateway:        rt.IsGateway,
-		AgentOnly:        rt.AgentOnly,
-		InventoryMode:    rt.InventoryMode,
-		CreatedAt:        rt.CreatedAt,
-		FirmwareTarget:   rt.FirmwareTarget,
-		SnmpEnabled:      rt.SnmpEnabled,
-		SnmpCommunitySet: rt.SnmpCommunity != "",
-		SnmpPort:         rt.SnmpPort,
-		SnmpPollInterval: rt.SnmpPollInterval,
-		SnmpVersion:      normalizeSnmpVersion(rt.SnmpVersion),
-		SnmpV3User:       rt.SnmpV3User,
+		ID:                 rt.ID,
+		Name:               rt.Name,
+		Host:               rt.Host,
+		Type:               rt.Type,
+		IsGateway:          rt.IsGateway,
+		AgentOnly:          rt.AgentOnly,
+		InventoryMode:      rt.InventoryMode,
+		DiscoveryOverrides: rt.DiscoveryOverrides,
+		CreatedAt:          rt.CreatedAt,
+		FirmwareTarget:     rt.FirmwareTarget,
+		SnmpEnabled:        rt.SnmpEnabled,
+		SnmpCommunitySet:   rt.SnmpCommunity != "",
+		SnmpPort:           rt.SnmpPort,
+		SnmpPollInterval:   rt.SnmpPollInterval,
+		SnmpVersion:        normalizeSnmpVersion(rt.SnmpVersion),
+		SnmpV3User:         rt.SnmpV3User,
 		// Los protocolos y el nivel se devuelven porque no son secretos: la UI
 		// los necesita para pintar el formulario al editar.
 		SnmpV3SecurityLevel: defaultIfEmpty(rt.SnmpV3SecurityLevel, "authPriv"),
@@ -201,6 +204,10 @@ type routerInput struct {
 	AgentOnly *bool `json:"agent_only"`
 	// InventoryMode (#1917): "auto" | "agent" | "ssh". Manda sobre agent_only.
 	InventoryMode *string `json:"inventory_mode"`
+	// DiscoveryOverrides: overrides por red lógica y por dispositivo Linux
+	// ("on"|"off"|"auto"). nil = no tocar; un objeto reemplaza todo el ajuste
+	// ("auto" y mapas vacíos se descartan antes de guardar).
+	DiscoveryOverrides *adapters.DiscoveryOverrides `json:"discovery_overrides"`
 	// Disabled (issue #1085): pausa la unidad (nil = no tocar).
 	Disabled *bool `json:"disabled"`
 	// FirmwareTarget: versión objetivo del firmware (issue #241; opcional).
@@ -258,6 +265,86 @@ func validateInventoryMode(v *string) (string, string) {
 		return m, ""
 	}
 	return "", "Invalid enum value. Expected 'auto' | 'agent' | 'ssh'"
+}
+
+// isValidNetworkKey comprueba que el nombre de una red lógica de OpenWrt
+// tenga entre 1 y 32 bytes de [A-Za-z0-9_].
+func isValidNetworkKey(k string) bool {
+	if len(k) < 1 || len(k) > 32 {
+		return false
+	}
+	for i := 0; i < len(k); i++ {
+		b := k[i]
+		ok := (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// isValidDeviceKey comprueba que el nombre de un dispositivo Linux tenga entre
+// 1 y 15 bytes sin espacios, caracteres de control ni '/'.
+func isValidDeviceKey(k string) bool {
+	if k == "" || len(k) > 15 {
+		return false
+	}
+	for _, r := range k {
+		if unicode.IsSpace(r) || unicode.IsControl(r) || r == '/' {
+			return false
+		}
+	}
+	return true
+}
+
+// validateOverrideMap valida un mapa de overrides (redes o dispositivos):
+// descarta "auto" (comportamiento por defecto) y rechaza claves o modos fuera
+// de regla. Devuelve nil si no queda ningún override explícito.
+func validateOverrideMap(m map[string]adapters.DiscoveryMode, validKey func(string) bool, keyErr string) (map[string]adapters.DiscoveryMode, string) {
+	if len(m) == 0 {
+		return nil, ""
+	}
+	if len(m) > 64 {
+		return nil, "discovery_overrides must contain at most 64 entries per map"
+	}
+	out := make(map[string]adapters.DiscoveryMode, len(m))
+	for k, mode := range m {
+		if !validKey(k) {
+			return nil, keyErr
+		}
+		switch mode {
+		case adapters.DiscoveryOn, adapters.DiscoveryOff:
+			out[k] = mode
+		case adapters.DiscoveryAuto:
+			// "auto" es el comportamiento por defecto: no se persiste.
+		default:
+			return nil, "Invalid enum value. Expected 'auto' | 'on' | 'off'"
+		}
+	}
+	if len(out) == 0 {
+		return nil, ""
+	}
+	return out, ""
+}
+
+// validateDiscoveryOverrides valida los overrides de descubrimiento por red
+// lógica y por dispositivo Linux: como mucho 64 entradas por mapa, nombres de
+// red de 1..32 bytes en [A-Za-z0-9_], nombres de dispositivo de 1..15 bytes
+// sin espacios, caracteres de control ni '/', y valores "on", "off" o "auto"
+// ("auto" y mapas vacíos se descartan antes de guardar).
+func validateDiscoveryOverrides(v *adapters.DiscoveryOverrides) (*adapters.DiscoveryOverrides, string) {
+	if v == nil {
+		return nil, ""
+	}
+	nets, msg := validateOverrideMap(v.Networks, isValidNetworkKey, "invalid network name in discovery_overrides")
+	if msg != "" {
+		return nil, msg
+	}
+	devs, msg := validateOverrideMap(v.Devices, isValidDeviceKey, "invalid interface name in discovery_overrides")
+	if msg != "" {
+		return nil, msg
+	}
+	return &adapters.DiscoveryOverrides{Networks: nets, Devices: devs}, ""
 }
 
 // snmpV3Input es el bloque SNMPv3 (#2042) ya normalizado y validado. Los
@@ -589,6 +676,11 @@ func (s *server) handleUpdateConfigRouter(w http.ResponseWriter, r *http.Request
 		}
 		invMode = &m
 	}
+	discOverrides, discMsg := validateDiscoveryOverrides(in.DiscoveryOverrides)
+	if discMsg != "" {
+		writeError(w, http.StatusBadRequest, "invalid_input", discMsg)
+		return
+	}
 	var firmwareTarget *string
 	if in.FirmwareTarget != nil {
 		v := strings.TrimSpace(*in.FirmwareTarget)
@@ -648,10 +740,11 @@ func (s *server) handleUpdateConfigRouter(w http.ResponseWriter, r *http.Request
 	updated, ok := routerstore.UpdateRouter(s.db.DB, id, routerstore.UpdateInput{
 		Name: name, Host: host, Type: typ,
 		IsGateway: in.Gateway, AgentOnly: in.AgentOnly,
-		InventoryMode:  invMode,
-		Disabled:       in.Disabled,
-		FirmwareTarget: firmwareTarget,
-		SnmpEnabled:    in.SnmpEnabled, SnmpCommunity: snmpCommunity, SnmpPort: snmpPort, SnmpPollInterval: snmpPollInterval,
+		InventoryMode:      invMode,
+		DiscoveryOverrides: discOverrides,
+		Disabled:           in.Disabled,
+		FirmwareTarget:     firmwareTarget,
+		SnmpEnabled:        in.SnmpEnabled, SnmpCommunity: snmpCommunity, SnmpPort: snmpPort, SnmpPollInterval: snmpPollInterval,
 		SnmpVersion: v3.Version, SnmpV3User: v3.User, SnmpV3SecurityLevel: v3.SecurityLevel,
 		SnmpV3AuthProto: v3.AuthProto, SnmpV3AuthPass: v3.AuthPass,
 		SnmpV3PrivProto: v3.PrivProto, SnmpV3PrivPass: v3.PrivPass,

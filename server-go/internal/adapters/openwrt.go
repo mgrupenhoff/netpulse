@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 )
 
@@ -113,18 +114,108 @@ type netIfSample struct {
 // LOCALMENTE con el mismo package (misma fuente de verdad) y empuja esos
 // shapes al endpoint de ingesta (SPEC-AGENTE-PILOTO §1-2).
 type (
-	SysInfo         = probe.SysInfo
-	BoardInfo       = probe.BoardInfo
-	DhcpLease       = probe.DhcpLease
-	WirelessClient  = probe.WirelessClient
-	PortState       = probe.PortState
-	PortLayout      = probe.PortLayout
-	VlanPort        = probe.VlanPort
-	MultiWanInfo    = probe.MultiWanInfo
-	WanUplink       = probe.WanUplink
-	VlanEntry       = probe.VlanEntry
-	DhcpReservation = probe.DhcpReservation
+	SysInfo        = probe.SysInfo
+	BoardInfo      = probe.BoardInfo
+	WirelessClient = probe.WirelessClient
+	PortState      = probe.PortState
+	PortLayout     = probe.PortLayout
+	VlanPort       = probe.VlanPort
+	MultiWanInfo   = probe.MultiWanInfo
+	WanUplink      = probe.WanUplink
+	VlanEntry      = probe.VlanEntry
 )
+
+// DhcpLease es un lease DHCP (o cliente GL.iNet) con la MAC ya validada y
+// parseada en la frontera de adapters.
+type DhcpLease struct {
+	MAC            macaddr.MAC `json:"mac"`
+	IP             string      `json:"ip"`
+	Hostname       string      `json:"hostname"`
+	VendorClass    string      `json:"vendorClass,omitempty"`
+	ClientID       string      `json:"clientId,omitempty"`
+	LeaseExpiresAt *int64      `json:"leaseExpiresAt,omitempty"`
+}
+
+// DhcpReservation es una entrada `config host` de /etc/config/dhcp con la MAC
+// ya parseada en la frontera de adapters.
+type DhcpReservation struct {
+	MAC  macaddr.MAC `json:"mac"`
+	Name string      `json:"name,omitempty"`
+	IP   string      `json:"ip,omitempty"`
+}
+
+// discoverySnapshot es la vista interna de probe.DiscoveryData con las MACs
+// aleatorias ya parseadas a macaddr.MAC en la frontera de adapters (#338).
+type discoverySnapshot struct {
+	Services      map[string][]string
+	HostByIP      map[string]string
+	Models        map[string]string
+	Manufacturers map[string]string
+	RandomMACs    []macaddr.MAC
+}
+
+func leasesFromProbe(src string, in []probe.DhcpLease) []DhcpLease {
+	if in == nil {
+		return nil
+	}
+	out := make([]DhcpLease, 0, len(in))
+	for _, le := range in {
+		m, ok := macaddr.ParseOrWarn(macWarn, src, le.MAC)
+		if !ok {
+			continue
+		}
+		out = append(out, DhcpLease{
+			MAC:            m,
+			IP:             le.IP,
+			Hostname:       le.Hostname,
+			VendorClass:    le.VendorClass,
+			ClientID:       le.ClientID,
+			LeaseExpiresAt: le.LeaseExpiresAt,
+		})
+	}
+	return out
+}
+
+func reservationsFromProbe(in []probe.DhcpReservation) []DhcpReservation {
+	if in == nil {
+		return nil
+	}
+	out := make([]DhcpReservation, 0, len(in))
+	for _, r := range in {
+		m, ok := macaddr.ParseOrWarn(macWarn, "dhcp.reservation", r.MAC)
+		if !ok {
+			continue
+		}
+		out = append(out, DhcpReservation{
+			MAC:  m,
+			Name: r.Name,
+			IP:   r.IP,
+		})
+	}
+	return out
+}
+
+func discoveryFromProbe(in *probe.DiscoveryData) *discoverySnapshot {
+	if in == nil {
+		return nil
+	}
+	var randomMACs []macaddr.MAC
+	if len(in.RandomMACs) > 0 {
+		randomMACs = make([]macaddr.MAC, 0, len(in.RandomMACs))
+		for _, raw := range in.RandomMACs {
+			if m, ok := macaddr.ParseOrWarn(macWarn, "discovery.random_mac", raw); ok {
+				randomMACs = append(randomMACs, m)
+			}
+		}
+	}
+	return &discoverySnapshot{
+		Services:      in.Services,
+		HostByIP:      in.HostByIP,
+		Models:        in.Models,
+		Manufacturers: in.Manufacturers,
+		RandomMACs:    randomMACs,
+	}
+}
 
 // NewOpenWrtClient crea el cliente de un router.
 func NewOpenWrtClient(cfg RouterConfig, pool poolRunner, user, password string) *OpenWrtClient {
@@ -430,7 +521,7 @@ func (c *OpenWrtClient) GetDhcpLeases() []DhcpLease {
 	raw, err := c.UbusCall("dhcp", "ipv4leases", nil)
 	if err == nil {
 		if leases, perr := probe.ParseDhcpUbus(raw); perr == nil {
-			return leases
+			return leasesFromProbe("openwrt.dhcp_ubus", leases)
 		}
 	}
 	out, serr := c.pool.Run(c.Host, probe.CmdDhcpFile, 0)
@@ -440,23 +531,23 @@ func (c *OpenWrtClient) GetDhcpLeases() []DhcpLease {
 	return parseDhcpLeasesFile(out)
 }
 
-// GetWanInfo: estado del uplink (issue #276). Via ubus network.interface
-// dump, que trae todas las interfaces y deja elegir la que lleva internet
-// por su ruta por defecto en vez de por llamarse "wan" (un PPPoE puede
-// llamarse de cualquier forma, y el nombre "wan" puede ser un módem ocioso).
-// Cae al status de la interfaz "wan" con los ubus antiguos; si el router no
-// tiene ninguna (AP), devuelve WanInfo vacío.
-func (c *OpenWrtClient) GetWanInfo() probe.WanInfo {
+// GetInterfaceDump devuelve el estado del uplink (issue #276) y la lista de
+// interfaces lógicas de OpenWrt en una única llamada a
+// `ubus call network.interface dump`, eligiendo el uplink por su ruta por
+// defecto en vez de por llamarse "wan". Si el dump no trae información WAN,
+// cae al status de la interfaz "wan" como fallback solo para Wan.
+func (c *OpenWrtClient) GetInterfaceDump() probe.InterfaceDump {
+	var dump probe.InterfaceDump
 	if raw, err := c.UbusCall("network.interface", "dump", nil); err == nil {
-		if info := probe.ParseWanStatus(raw); info.Proto != "" || info.IP != "" || info.Gateway != "" {
-			return info
+		dump = probe.ParseInterfaceDump(raw, "")
+		if dump.Wan.Proto != "" || dump.Wan.IP != "" || dump.Wan.Gateway != "" {
+			return dump
 		}
 	}
-	raw, err := c.UbusCall("network.interface.wan", "status", nil)
-	if err == nil {
-		return probe.ParseWanStatus(raw)
+	if raw, err := c.UbusCall("network.interface.wan", "status", nil); err == nil {
+		dump.Wan = probe.ParseWanStatus(raw)
 	}
-	return probe.WanInfo{}
+	return dump
 }
 
 // GetDhcpReservations: the `config host` entries of /etc/config/dhcp, for
@@ -467,7 +558,7 @@ func (c *OpenWrtClient) GetDhcpReservations() []DhcpReservation {
 	if err != nil {
 		return nil
 	}
-	return probe.ParseDhcpReservations(out)
+	return reservationsFromProbe(probe.ParseDhcpReservations(out))
 }
 
 // GetGlClients: base de clientes del firmware GL.iNet (`ubus call gl-clients
@@ -485,13 +576,43 @@ func (c *OpenWrtClient) GetGlClients() []DhcpLease {
 	if perr != nil {
 		return []DhcpLease{}
 	}
-	return leases
+	return leasesFromProbe("openwrt.gl_client", leases)
 }
 
 // parseDhcpLeasesFile parsea /tmp/dhcp.leases:
 // <expiry> <mac> <ip> <hostname> <clientid>
 func parseDhcpLeasesFile(out string) []DhcpLease {
-	return probe.ParseDhcpLeasesFile(out)
+	return leasesFromProbe("openwrt.dhcp_file", probe.ParseDhcpLeasesFile(out))
+}
+
+// parseMACMap convierte un mapa de wire (clave string) a map[macaddr.MAC]V,
+// preservando nil frente a {} (nil = sonda fallida, {} = tabla vacía).
+func parseMACMap[V any](src string, in map[string]V) map[macaddr.MAC]V {
+	if in == nil {
+		return nil
+	}
+	out := make(map[macaddr.MAC]V, len(in))
+	for raw, v := range in {
+		if m, ok := macaddr.ParseOrWarn(macWarn, src, raw); ok {
+			out[m] = v
+		}
+	}
+	return out
+}
+
+// parseMACSlice convierte un slice de wire ([]string) a []macaddr.MAC,
+// descartando entradas inválidas.
+func parseMACSlice(src string, in []string) []macaddr.MAC {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]macaddr.MAC, 0, len(in))
+	for _, raw := range in {
+		if m, ok := macaddr.ParseOrWarn(macWarn, src, raw); ok {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // GetWirelessClients: clientes wifi asociados (MAC → señal/banda). Port del
@@ -499,13 +620,13 @@ func parseDhcpLeasesFile(out string) []DhcpLease {
 // llamada ubus barata por AP, sin ucode/iwinfo), fallback de iwinfo combinado
 // en UNA pasada por interfaz, y como último recurso el par legacy. Vacío si
 // el router no expone ninguna fuente wireless.
-func (c *OpenWrtClient) GetWirelessClients() map[string]WirelessClient {
+func (c *OpenWrtClient) GetWirelessClients() map[macaddr.MAC]WirelessClient {
 	// 1. ubus hostapd get_clients (barato; APs con hostapd ubus moderno).
 	// Autoritativo cuando hay objetos hostapd.* (incluso con 0 clientes: un
 	// AP vacío no debe caer al fallback iwinfo en cada poll de 5 s del
 	// server). Solo si ubus no expone objetos se baja al fallback.
 	if out, err := c.pool.Run(c.Host, probe.CmdHostapdClients, iwinfoTimeout); err == nil && strings.Contains(out, "==AP==") {
-		return probe.ParseHostapdClients(out)
+		return parseMACMap("openwrt.wireless", probe.ParseHostapdClients(out))
 	}
 	// 2. iwinfo combinado en UNA pasada (info + assoclist juntos por interfaz;
 	// emite clientes y radios). Mitad de spawns que el par legacy de abajo.
@@ -516,15 +637,15 @@ func (c *OpenWrtClient) GetWirelessClients() map[string]WirelessClient {
 			c.setRadiosCache(radiosToAdapter(radios))
 		}
 		if len(clients) > 0 {
-			return clients
+			return parseMACMap("openwrt.wireless", clients)
 		}
 	}
 	// 3. Último recurso: par legacy (equipos donde el combinado no aplica).
 	out, err := c.pool.Run(c.Host, probe.CmdIwinfoAssoc, iwinfoTimeout)
 	if err != nil {
-		return map[string]WirelessClient{}
+		return map[macaddr.MAC]WirelessClient{}
 	}
-	return parseWirelessClients(out)
+	return parseMACMap("openwrt.wireless", parseWirelessClients(out))
 }
 
 // parseWirelessClients parsea líneas "<mac> <sig> <freq>" del bucle iwinfo.
@@ -685,12 +806,12 @@ func naturalLess(a, b string) bool {
 // GetBridgeFdb: MAC aprendida → puerto (brctl showmacs + port_no).
 // Devuelve nil en error para que el anti-parpadeo de pollRouter conserve la
 // última lista buena en vez de sustituirla por un FDB vacío (#694).
-func (c *OpenWrtClient) GetBridgeFdb() map[string]string {
+func (c *OpenWrtClient) GetBridgeFdb() map[macaddr.MAC]string {
 	out, err := c.pool.Run(c.Host, probe.CmdBridgeFDB, 0)
 	if err != nil {
 		return nil
 	}
-	return parseBridgeFdb(out)
+	return parseMACMap("openwrt.fdb", parseBridgeFdb(out))
 }
 
 // parseBridgeFdb parsea la salida ==PORTS==/==MACS== del JS.
@@ -699,12 +820,13 @@ func parseBridgeFdb(out string) map[string]string {
 }
 
 // GetBridgeMac: MAC del bridge br-lan (para reconocer uplinks).
-func (c *OpenWrtClient) GetBridgeMac() string {
+func (c *OpenWrtClient) GetBridgeMac() macaddr.MAC {
 	out, err := c.pool.Run(c.Host, probe.CmdBridgeMAC, 0)
 	if err != nil {
-		return ""
+		return macaddr.MAC{}
 	}
-	return strings.ToUpper(strings.TrimSpace(out))
+	m, _ := macaddr.ParseOrWarn(macWarn, "openwrt.bridge_mac", strings.TrimSpace(out))
+	return m
 }
 
 // GetLuCILabels: etiquetas de puertos/VLANs de LuCI (issue #258), si el
@@ -752,9 +874,10 @@ func parseRadios(out string) []Radio {
 func radiosToAdapter(in []probe.Radio) []Radio {
 	out := make([]Radio, 0, len(in))
 	for _, r := range in {
+		bssid, _ := macaddr.ParseOrWarn(macWarn, "openwrt.radio_bssid", r.BSSID)
 		out = append(out, Radio{Name: r.Name, Channel: r.Channel,
 			WidthMhz: r.WidthMhz, PowerDbm: r.PowerDbm, Clients: r.Clients,
-			NoiseDbm: r.NoiseDbm, BSSID: r.BSSID})
+			NoiseDbm: r.NoiseDbm, BSSID: bssid})
 	}
 	return out
 }
@@ -768,7 +891,7 @@ func radiosToAdapter(in []probe.Radio) []Radio {
 // back to /proc/net/arp, where no state is available and nothing is stale.
 // GetArp devuelve además MAC -> interfaz (#1485): con esa columna el poller
 // distingue el ARP del puerto WAN (primer salto del enlace) del de la LAN.
-func (c *OpenWrtClient) GetArp() (arp map[string]string, stale map[string]bool, devs map[string]string) {
+func (c *OpenWrtClient) GetArp() (arp map[macaddr.MAC]string, stale map[macaddr.MAC]bool, devs map[macaddr.MAC]string) {
 	// #2110: despertar las subredes que la unidad enruta antes de leer la
 	// tabla, para que la misma lectura vea lo que el barrido confirmó.
 	c.scanPresence()
@@ -785,22 +908,16 @@ func (c *OpenWrtClient) GetArp() (arp map[string]string, stale map[string]bool, 
 			}
 			// #2109: el mismo recheck sobre NDP. Un host solo-IPv6 no tiene
 			// entrada en `ip -4 neigh`, así que solo esta pasada lo confirma.
-			if v6, ok := c.recheckStaleNeighbours6(due); ok {
-				for mac, ip := range v6 {
-					if _, has := m[mac]; !has {
-						m[mac] = ip
-					}
-					delete(st, mac)
-				}
-			}
-			return m, st, probe.ParseIPNeighDevs(freshSrc)
+			rawDevs := probe.ParseIPNeighDevs(freshSrc)
+			probe.MergeConfirmedNeighbours(m, st, rawDevs, c.recheckStaleNeighbours6(due))
+			return parseMACMap("openwrt.arp", m), parseMACMap("openwrt.arp_stale", st), parseMACMap("openwrt.arp_devs", rawDevs)
 		}
 	}
 	out, err := c.pool.Run(c.Host, probe.CmdProcArp, 0)
 	if err != nil {
 		return nil, nil, nil
 	}
-	return probe.ParseArp(out), nil, probe.ParseArpDevs(out)
+	return parseMACMap("openwrt.arp", probe.ParseArp(out)), nil, parseMACMap("openwrt.arp_devs", probe.ParseArpDevs(out))
 }
 
 // recheckStaleNeighbours (#2073): un ping corto por cada vecino STALE, en
@@ -922,18 +1039,18 @@ func (c *OpenWrtClient) scanPresence() {
 // recheckStaleNeighbours6 (#2109): la pasada NDP por SSH, desde la unidad.
 // Mismo tope y mismo throttle que la v4. `ip -6 neigh` declara la interfaz de
 // cada entrada, y una link-local necesita `-I` para alcanzarse. Devuelve
-// MAC → dirección confirmada; best effort.
-func (c *OpenWrtClient) recheckStaleNeighbours6(due bool) (map[string]string, bool) {
+// MAC → vecino confirmado (dirección e interfaz); best effort.
+func (c *OpenWrtClient) recheckStaleNeighbours6(due bool) map[string]probe.ConfirmedNeighbour {
 	if c.pool == nil || !due {
-		return nil, false
+		return nil
 	}
 	out, err := c.pool.Run(c.Host, probe.CmdIpNeigh6, 0)
 	if err != nil || out == "" {
-		return nil, false
+		return nil
 	}
 	arp, stale := probe.ParseIPNeigh(out)
 	if len(stale) == 0 {
-		return nil, false
+		return nil
 	}
 	devs := probe.ParseIPNeighDevsAll(out)
 	macs := make([]string, 0, len(stale))
@@ -956,27 +1073,27 @@ func (c *OpenWrtClient) recheckStaleNeighbours6(due bool) (map[string]string, bo
 		}
 	}
 	if n == 0 {
-		return nil, false
+		return nil
 	}
 	cmd.WriteString("wait")
 	if _, err := c.pool.Run(c.Host, cmd.String(), probe.StalePingTimeout+2*time.Second); err != nil {
-		return nil, false
+		return nil
 	}
 	freshOut, err := c.pool.Run(c.Host, probe.CmdIpNeigh6, 0)
 	if err != nil || freshOut == "" {
-		return nil, false
+		return nil
 	}
 	fresh, stillStale := probe.ParseIPNeigh(freshOut)
-	confirmed := map[string]string{}
+	confirmed := map[string]probe.ConfirmedNeighbour{}
 	for _, mac := range macs {
 		if stillStale[mac] {
 			continue
 		}
 		if ip := fresh[mac]; ip != "" {
-			confirmed[mac] = ip
+			confirmed[mac] = probe.ConfirmedNeighbour{IP: ip, Dev: devs[mac]}
 		}
 	}
-	return confirmed, len(confirmed) > 0
+	return confirmed
 }
 
 // GetNetworks: redes logicas que la unidad declara en UCI (#1889). Es la

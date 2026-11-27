@@ -21,6 +21,7 @@ import { MultiWanPanel } from '@/components/routers/MultiWanPanel'
 import { WanLatency } from '@/components/routers/WanLatency'
 import { VlanPanel } from '@/components/routers/VlanPanel'
 import { NetworksPanel } from '@/components/routers/NetworksPanel'
+import { ClientDiscoveryPanel } from '@/components/routers/ClientDiscoveryPanel'
 import { WireGuardPanel } from '@/components/routers/WireGuardPanel'
 
 /** Página `/routers/:id` — plantilla de detalle (router-detail.md) */
@@ -31,7 +32,7 @@ export default function RouterDetail() {
   const reduce = useReducedMotion()
   const auth = useAuth()
   const isAdmin = auth?.role === 'admin'
-  const { routers, alerts, getRouterDetail, isDemo } = useNetPulse()
+  const { routers, alerts, getRouterDetail, refresh, isDemo } = useNetPulse()
   const [tempUnit] = useTempUnit()
   const router = routers.find((r) => r.id === id)
   const isGateway = router?.roleBadge === 'Principal'
@@ -287,6 +288,21 @@ export default function RouterDetail() {
       {/* #1889: la unidad como redes de OpenWrt, no solo como chasis */}
       {detail?.networks && detail.networks.length > 0 && (
         <NetworksPanel networks={detail.networks} clients={detail.clients ?? []} />
+      )}
+
+      {/* Descubrimiento de clientes por red lógica de OpenWrt (o dispositivo Linux de respaldo) */}
+      {detail?.discovery && detail.discovery.length > 0 && (
+        <ClientDiscoveryPanel
+          routerId={router.id}
+          discovery={detail.discovery}
+          isAdmin={isAdmin}
+          onUpdated={() => {
+            void getRouterDetail(id).then((d) => {
+              if (d) setDetail(d)
+            })
+            refresh()
+          }}
+        />
       )}
 
       {/* VLANs del bridge (issue #315, read-only) */}

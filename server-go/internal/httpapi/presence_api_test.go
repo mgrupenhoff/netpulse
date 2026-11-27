@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/deviceevents"
 	"github.com/gnacho/netpulse/server-go/internal/httpapi"
 )
@@ -18,7 +19,7 @@ func TestDevicePresence(t *testing.T) {
 	ts := makeDeviceActionsTestServer(t, nil)
 	defer ts.Server.Close()
 
-	mac := "AA:BB:CC:DD:EE:07"
+	mac := macaddr.MustParse("AA:BB:CC:DD:EE:07")
 	base := time.Now().Add(-2 * time.Hour).UnixMilli()
 	if err := deviceevents.Insert(ts.db.DB, deviceevents.Event{TsMs: base, MAC: mac, RouterID: "gw", State: deviceevents.StateOnline}); err != nil {
 		t.Fatalf("insert online: %v", err)
@@ -30,7 +31,7 @@ func TestDevicePresence(t *testing.T) {
 		t.Fatalf("insert online 2: %v", err)
 	}
 
-	resp := deviceReq(t, "GET", ts.Server.URL, "/api/devices/"+mac+"/presence?days=7", ts.cookie, "")
+	resp := deviceReq(t, "GET", ts.Server.URL, "/api/devices/"+mac.String()+"/presence?days=7", ts.cookie, "")
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Fatalf("GET presence: %d, want 200", resp.StatusCode)

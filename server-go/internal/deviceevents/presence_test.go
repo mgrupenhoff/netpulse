@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"testing"
 	"time"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 // openTestDB crea SQLite en memoria con el schema mínimo de eventos.
@@ -26,14 +28,14 @@ func openTestDB(t *testing.T) *sql.DB {
 	return d
 }
 
-func insertDev(t *testing.T, db *sql.DB, ts int64, mac, router, state string) {
+func insertDev(t *testing.T, db *sql.DB, ts int64, mac macaddr.MAC, router, state string) {
 	t.Helper()
 	if _, err := db.Exec("INSERT INTO device_events (ts_ms, mac, router_id, state) VALUES (?,?,?,?)", ts, mac, router, state); err != nil {
 		t.Fatalf("insert device_event: %v", err)
 	}
 }
 
-func insertRoam(t *testing.T, db *sql.DB, ts int64, mac, router, typ string) {
+func insertRoam(t *testing.T, db *sql.DB, ts int64, mac macaddr.MAC, router, typ string) {
 	t.Helper()
 	if _, err := db.Exec("INSERT INTO roam_events (ts_ms, router_id, type, mac, content_hash) VALUES (?,?,?,?,?)", ts, router, typ, mac, typ+router); err != nil {
 		t.Fatalf("insert roam_event: %v", err)
@@ -43,7 +45,7 @@ func insertRoam(t *testing.T, db *sql.DB, ts int64, mac, router, typ string) {
 func TestIntervalsOnlineOffline(t *testing.T) {
 	db := openTestDB(t)
 	base := time.Now().Add(-time.Hour).UnixMilli()
-	mac := "AA:BB:CC:DD:EE:01"
+	mac := macaddr.MustParse("AA:BB:CC:DD:EE:01")
 	insertDev(t, db, base, mac, "rt1", StateOnline)
 	end := base + 30*60*1000
 	insertDev(t, db, end, mac, "rt1", StateOffline)
@@ -65,7 +67,7 @@ func TestIntervalsOnlineOffline(t *testing.T) {
 
 func TestIntervalsOpenEndsNil(t *testing.T) {
 	db := openTestDB(t)
-	mac := "AA:BB:CC:DD:EE:02"
+	mac := macaddr.MustParse("AA:BB:CC:DD:EE:02")
 	insertDev(t, db, 1000, mac, "rt1", StateOnline)
 	ivs, err := Intervals(db, mac, 0)
 	if err != nil {
@@ -78,7 +80,7 @@ func TestIntervalsOpenEndsNil(t *testing.T) {
 
 func TestIntervalsRoamSplitsInterval(t *testing.T) {
 	db := openTestDB(t)
-	mac := "AA:BB:CC:DD:EE:03"
+	mac := macaddr.MustParse("AA:BB:CC:DD:EE:03")
 	base := int64(1000000)
 	insertDev(t, db, base, mac, "rt1", StateOnline)
 	// El cliente salta a rt2: CONNECTED en rt2 cierra el tramo y abre otro.
@@ -104,7 +106,7 @@ func TestIntervalsRoamSplitsInterval(t *testing.T) {
 
 func TestIntervalsSameRouterOnlineIsNoop(t *testing.T) {
 	db := openTestDB(t)
-	mac := "AA:BB:CC:DD:EE:04"
+	mac := macaddr.MustParse("AA:BB:CC:DD:EE:04")
 	insertDev(t, db, 1000, mac, "rt1", StateOnline)
 	insertDev(t, db, 2000, mac, "rt1", StateOnline) // reconexión rápida: no-op
 	ivs, err := Intervals(db, mac, 0)
@@ -120,12 +122,14 @@ func TestRoamCountsAndPrune(t *testing.T) {
 	db := openTestDB(t)
 	now := time.Now().UnixMilli()
 	old := now - 40*24*3600*1000
+	m5 := macaddr.MustParse("AA:BB:CC:DD:EE:05")
+	m6 := macaddr.MustParse("AA:BB:CC:DD:EE:06")
 	// MAC flap: 5 connects recientes; MAC estable: 1 (no entra, HAVING > 1).
 	for i := 0; i < 5; i++ {
-		insertRoam(t, db, now-int64(i)*3600*1000, "AA:BB:CC:DD:EE:05", "rt1", "connected")
+		insertRoam(t, db, now-int64(i)*3600*1000, m5, "rt1", "connected")
 	}
-	insertRoam(t, db, now, "AA:BB:CC:DD:EE:06", "rt1", "connected")
-	insertRoam(t, db, old, "AA:BB:CC:DD:EE:05", "rt1", "connected") // viejo: se poda
+	insertRoam(t, db, now, m6, "rt1", "connected")
+	insertRoam(t, db, old, m5, "rt1", "connected") // viejo: se poda
 
 	rc, err := RoamCounts(db, now-24*3600*1000, 20)
 	if err != nil {
@@ -134,7 +138,7 @@ func TestRoamCountsAndPrune(t *testing.T) {
 	if len(rc) != 1 || rc[0].Connects != 5 {
 		t.Fatalf("RoamCounts = %+v, want 1 entrada con 5", rc)
 	}
-	n, err := CountConnects(db, "AA:BB:CC:DD:EE:05", now-24*3600*1000)
+	n, err := CountConnects(db, m5, now-24*3600*1000)
 	if err != nil || n != 5 {
 		t.Fatalf("CountConnects = %d, %v; want 5", n, err)
 	}
@@ -159,7 +163,7 @@ func TestRoamCountsAndPrune(t *testing.T) {
 func TestIntervalsCarriesOpenSpanFromBeforeWindow(t *testing.T) {
 	db := openTestDB(t)
 	now := time.Now()
-	mac := "AA:BB:CC:00:00:01"
+	mac := macaddr.MustParse("AA:BB:CC:00:00:01")
 	// Se conectó hace 3 días y siguió online; la ventana es de 1 día.
 	insertDev(t, db, now.Add(-72*time.Hour).UnixMilli(), mac, "gw", StateOnline)
 	since := now.Add(-24 * time.Hour).UnixMilli()
@@ -178,7 +182,7 @@ func TestIntervalsCarriesOpenSpanFromBeforeWindow(t *testing.T) {
 		t.Fatalf("tramos tras offline %+v, want cerrado en %d", got, off)
 	}
 	// Si el último estado previo era offline, no se arrastra nada.
-	mac2 := "AA:BB:CC:00:00:02"
+	mac2 := macaddr.MustParse("AA:BB:CC:00:00:02")
 	insertDev(t, db, now.Add(-72*time.Hour).UnixMilli(), mac2, "gw", StateOffline)
 	if got, _ := Intervals(db, mac2, since); len(got) != 0 {
 		t.Fatalf("tramos %+v, want vacío (venía offline)", got)

@@ -7,6 +7,8 @@ package httpapi
 import (
 	"net/http"
 	"strings"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 // handleDeviceLinkPut: body {"target": "<mac>"} — enlaza la MAC {mac} como
@@ -21,10 +23,14 @@ func (s *server) handleDeviceLinkPut(w http.ResponseWriter, r *http.Request) {
 		writeBodyError(w, st, "invalid_body", "body JSON inválido")
 		return
 	}
-	alias := normalizeMACKey(r.PathValue("mac"))
-	target := normalizeMACKey(body.Target)
-	if alias == "" || target == "" {
-		writeError(w, http.StatusBadRequest, "invalid_input", "missing mac")
+	alias, err := macaddr.Parse(r.PathValue("mac"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_mac", "invalid mac")
+		return
+	}
+	target, err := macaddr.Parse(body.Target)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_mac", "invalid target mac")
 		return
 	}
 	if alias == target {
@@ -51,12 +57,25 @@ func (s *server) handleDeviceLinkPut(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleDeviceLinkDelete: desenlaza la alias {mac} (vuelve a ser un cliente
-// independiente en la siguiente construcción de la lista).
+// independiente en la siguiente construcción de la lista). A diferencia del
+// PUT, tolera claves que no son MAC: una fila heredada con basura en la tabla
+// tiene que poder desenlazarse.
 func (s *server) handleDeviceLinkDelete(w http.ResponseWriter, r *http.Request) {
-	alias := normalizeMACKey(r.PathValue("mac"))
-	if alias == "" {
-		writeError(w, http.StatusBadRequest, "invalid_input", "missing mac")
-		return
+	raw := r.PathValue("mac")
+	var alias any
+	if m, err := macaddr.Parse(raw); err == nil {
+		alias = m
+	} else {
+		// Una fila heredada puede tener como clave algo que no es una MAC
+		// (la tabla es texto libre). Se borra por esa clave cruda, con la
+		// misma normalización laxa que DELETE /api/devices/{mac}, para que
+		// siga siendo posible desenlazarla.
+		key := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(raw), "-", ":"))
+		if key == "" {
+			writeError(w, http.StatusBadRequest, "invalid_mac", "invalid mac")
+			return
+		}
+		alias = key
 	}
 	res, err := s.db.Exec("DELETE FROM device_links WHERE mac = ?", alias)
 	if err != nil {

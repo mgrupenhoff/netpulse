@@ -1,10 +1,14 @@
 package adapters
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
+)
 
 // devOverride crea un Device mínimo para tests de overrides (cable, con puerto).
 func devOverride(id, mac, router, port string) Device {
-	return Device{ID: id, MAC: mac, RouterID: router, Port: port, Band: "cable"}
+	return Device{ID: id, MAC: macaddr.MustParse(mac), RouterID: router, Port: port, Band: "cable"}
 }
 
 // TestApplyHypervisorOverridePuertoMezclado: el caso real del usuario — un
@@ -82,7 +86,7 @@ func TestApplySwitchOverride(t *testing.T) {
 	if byID["switch-manual"].Infra != "managed-switch" {
 		t.Errorf("switch sin Infra=managed-switch: %+v", byID["switch-manual"])
 	}
-	if len(dists) != 1 || dists[0].Kind != "managed" || dists[0].Mac != "aa:bb:cc:00:00:01" || dists[0].Name != "switch-manual" {
+	if len(dists) != 1 || dists[0].Kind != "managed" || dists[0].Mac != macaddr.MustParse("aa:bb:cc:00:00:01") || dists[0].Name != "switch-manual" {
 		t.Fatalf("distnode managed inesperado: %+v", dists)
 	}
 	id := dists[0].ID
@@ -218,9 +222,9 @@ func TestApplyAttachOverrideParentInvalido(t *testing.T) {
 // su uplink por encima de toda inferencia, en los tres formatos de parent.
 func TestFleetOverrideEvidence(t *testing.T) {
 	routers := []Router{
-		{ID: "gw", Name: "gateway", MAC: "AA:BB:CC:00:00:01"},
-		{ID: "sw1", Name: "sw1", MAC: "AA:BB:CC:00:00:02"},
-		{ID: "ap1", Name: "ap1", MAC: "AA:BB:CC:00:00:03"},
+		{ID: "gw", Name: "gateway", MAC: macaddr.MustParse("AA:BB:CC:00:00:01")},
+		{ID: "sw1", Name: "sw1", MAC: macaddr.MustParse("AA:BB:CC:00:00:02")},
+		{ID: "ap1", Name: "ap1", MAC: macaddr.MustParse("AA:BB:CC:00:00:03")},
 	}
 	overrides := []TopologyOverride{
 		// Target por MAC del switch (el caso de pl-komuch: AP etiquetado
@@ -360,8 +364,8 @@ func TestFillWiredSpeeds(t *testing.T) {
 // (la comparación es insensible a mayúsculas, como el resto de MACs).
 func TestFleetOverrideEvidenceTargetByRouterID(t *testing.T) {
 	routers := []Router{
-		{ID: "gw", Name: "gateway", MAC: "AA:BB:CC:00:00:01"},
-		{ID: "g7615v2", Name: "ONT", MAC: ""}, // sin MAC de bridge
+		{ID: "gw", Name: "gateway", MAC: macaddr.MustParse("AA:BB:CC:00:00:01")},
+		{ID: "g7615v2", Name: "ONT"}, // sin MAC de bridge
 	}
 	overrides := []TopologyOverride{
 		{Kind: "attach", MAC: "G7615V2", Parent: "gw:eth2", Enabled: true},
@@ -398,9 +402,9 @@ func TestParseParentRefMACOnlyWithColons(t *testing.T) {
 		{" Rtr1:LAN4 ", parentRefPort, "rtr1", "lan4", ""},
 	}
 	for _, c := range cases {
-		kind, routerID, port, mac := parseParentRef(c.in)
-		if kind != c.kind || routerID != c.routerID || port != c.port || mac != c.mac {
-			t.Errorf("parseParentRef(%q) = %v %q %q %q, esperaba %v %q %q %q", c.in, kind, routerID, port, mac, c.kind, c.routerID, c.port, c.mac)
+		ref := parseParentRef(c.in)
+		if ref.kind != c.kind || ref.routerID != c.routerID || ref.port != c.port || ref.mac.String() != c.mac {
+			t.Errorf("parseParentRef(%q) = %+v, esperaba %v %q %q %q", c.in, ref, c.kind, c.routerID, c.port, c.mac)
 		}
 	}
 

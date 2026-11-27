@@ -6,6 +6,7 @@ package adapters
 import (
 	"testing"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/db"
 )
 
@@ -25,17 +26,17 @@ func tombstoned(t *testing.T, d *db.DB, mac string) bool {
 	if err != nil {
 		t.Fatalf("DeletedClients: %v", err)
 	}
-	return tomb[mac]
+	return tomb[macaddr.MustParse(mac)]
 }
 
 func TestDeletedClientComesBackWithIP(t *testing.T) {
 	l, d := newSeenLive(t)
 	mac := "EC:71:DB:44:12:8A"
-	if err := d.AddDeletedClient(mac); err != nil {
+	if err := d.AddDeletedClient(macaddr.MustParse(mac)); err != nil {
 		t.Fatalf("AddDeletedClient: %v", err)
 	}
 
-	dev := Device{MAC: mac, IP: "192.168.8.71", Online: true, Hostname: "movil"}
+	dev := Device{MAC: macaddr.MustParse(mac), IP: "192.168.8.71", Online: true, Hostname: "movil"}
 	l.noteDevicesSeen([]Device{dev}, 1000)
 
 	if tombstoned(t, d, mac) {
@@ -53,12 +54,12 @@ func TestDeletedClientComesBackWithIP(t *testing.T) {
 func TestDeletedClientStaysBuriedWithoutIP(t *testing.T) {
 	l, d := newSeenLive(t)
 	mac := "EC:71:DB:44:12:8B"
-	if err := d.AddDeletedClient(mac); err != nil {
+	if err := d.AddDeletedClient(macaddr.MustParse(mac)); err != nil {
 		t.Fatalf("AddDeletedClient: %v", err)
 	}
 
 	// Estacion cacheada en el AP: online y con banda, pero sin IP.
-	dev := Device{MAC: mac, Online: true, Band: "5 GHz"}
+	dev := Device{MAC: macaddr.MustParse(mac), Online: true, Band: "5 GHz"}
 	l.noteDevicesSeen([]Device{dev}, 1000)
 
 	if !tombstoned(t, d, mac) {
@@ -78,16 +79,16 @@ func TestFilterTombstonedLetsTheRevivedClientThrough(t *testing.T) {
 	mac := "EC:71:DB:44:12:8C"
 	buried := "EC:71:DB:44:12:8D"
 	for _, m := range []string{mac, buried} {
-		if err := d.AddDeletedClient(m); err != nil {
+		if err := d.AddDeletedClient(macaddr.MustParse(m)); err != nil {
 			t.Fatalf("AddDeletedClient: %v", err)
 		}
 	}
 
 	out := l.filterTombstoned([]Device{
-		{MAC: mac, IP: "192.168.8.72", Online: true}, // vuelve con IP
-		{MAC: buried, Band: "5 GHz", Online: true},   // cacheada, sin IP
+		{MAC: macaddr.MustParse(mac), IP: "192.168.8.72", Online: true}, // vuelve con IP
+		{MAC: macaddr.MustParse(buried), Band: "5 GHz", Online: true},   // cacheada, sin IP
 	})
-	if len(out) != 1 || out[0].MAC != mac {
+	if len(out) != 1 || out[0].MAC != macaddr.MustParse(mac) {
 		t.Fatalf("lista filtrada = %+v", out)
 	}
 	if tombstoned(t, d, mac) {

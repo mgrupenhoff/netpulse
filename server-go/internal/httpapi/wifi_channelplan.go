@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 	"github.com/gnacho/netpulse/server-go/internal/auth"
 )
@@ -30,8 +31,9 @@ func (s *server) registerChannelPlanRoutes(mux *http.ServeMux) {
 		if s.db != nil {
 			if rows, err := s.db.Query("SELECT id, type, name, host, COALESCE(mac,'') FROM routers"); err == nil {
 				for rows.Next() {
-					var id, typ, name, host, mac string
-					if rows.Scan(&id, &typ, &name, &host, &mac) == nil {
+					var id, typ, name, host, rawMac string
+					if rows.Scan(&id, &typ, &name, &host, &rawMac) == nil {
+						mac, _ := macaddr.ParseOrWarn(macWarn, "channelplan.routers_mac router="+id, rawMac)
 						routerByID[id] = routerIdentity{ID: id, Type: typ, Name: name, Host: host, Mac: mac}
 					}
 				}
@@ -53,7 +55,8 @@ func (s *server) registerChannelPlanRoutes(mux *http.ServeMux) {
 				return slug
 			}
 			var payload *probe.Payload
-			host, bridgeMAC := "", ""
+			host := ""
+			var bridgeMAC macaddr.MAC
 			if s.agents != nil {
 				if st := s.agents.Snapshot(slug); st != nil {
 					payload = st.Payload
@@ -68,8 +71,8 @@ func (s *server) registerChannelPlanRoutes(mux *http.ServeMux) {
 						host = h
 					}
 				}
-				if bridgeMAC == "" {
-					bridgeMAC = payload.Data.System.BridgeMAC
+				if !bridgeMAC.IsValid() {
+					bridgeMAC, _ = macaddr.ParseOrWarn(macWarn, "channelplan.bridge_mac router="+slug, payload.Data.System.BridgeMAC)
 				}
 			}
 			if norm(host) == want {

@@ -20,6 +20,7 @@ import { Switch } from '@/components/ui/switch'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { InfoTip } from '@/components/InfoTip'
 import { useNetPulse } from '@/data/DataProvider'
+import type { DiscoveryOverrides } from '@/data/types'
 import { fmtEs } from '@/data/mock'
 import { useAuth } from '@/data/AuthContext'
 import { getVapidKey, postPushSubscribe, postPushTest, postPushUnsubscribe, pushContext, unsubscribeCurrentDevice, urlBase64ToUint8Array } from '@/data/push'
@@ -333,6 +334,7 @@ interface ConfigRouter {
   agent_only: boolean
   /** #1917: "auto" | "agent" | "ssh". El servidor deriva agent_only de aqui. */
   inventory_mode?: string
+  discovery_overrides?: DiscoveryOverrides
   disabled: boolean
   firmware_target: string
   snmp_enabled: boolean

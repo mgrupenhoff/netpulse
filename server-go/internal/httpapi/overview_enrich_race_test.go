@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/adapters"
 	"github.com/gnacho/netpulse/server-go/internal/db"
 	"github.com/gnacho/netpulse/server-go/internal/rack"
@@ -40,7 +41,7 @@ func TestBuildRackHintsRaceWithHandleOverviewEnrich(t *testing.T) {
 
 	sharedOv := &adapters.Overview{
 		Routers: []adapters.Router{
-			{ID: "ext1", MAC: "AA:BB:CC:DD:EE:01", Status: "offline"},
+			{ID: "ext1", MAC: macaddr.MustParse("AA:BB:CC:DD:EE:01"), Status: "offline"},
 		},
 	}
 	s := &server{
@@ -52,7 +53,7 @@ func TestBuildRackHintsRaceWithHandleOverviewEnrich(t *testing.T) {
 	}
 
 	mounts := []rack.MountRow{
-		{Mount: rack.Mount{ID: "m1", DeviceMAC: "AA:BB:CC:DD:EE:01"}},
+		{Mount: rack.Mount{ID: "m1", DeviceMAC: macaddr.MustParse("AA:BB:CC:DD:EE:01")}},
 	}
 
 	stop := make(chan struct{})

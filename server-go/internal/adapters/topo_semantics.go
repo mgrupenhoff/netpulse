@@ -20,7 +20,8 @@ import (
 	"maps"
 	"slices"
 	"sort"
-	"strings"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 // Capacidad de los anillos canónicos de model.ts (GATEWAY_RINGS 8+12+16+24,
@@ -60,34 +61,36 @@ type topoParent struct {
 // del switch=2). Devuelve también el puerto del lado del hijo (en qué puerto
 // de la propia unidad se aprende la MAC del padre), para cablear ambos
 // extremos. Orden determinista: ids ordenados.
-func fleetFdbEvidence(polled map[string]*routerPolled, gatewayID string, registered map[string]string, seedDepth map[string]int) map[string]topoParent {
-	macs := map[string]string{}    // MAC bridge (upper) → router propietario
-	idToMac := map[string]string{} // router id → MAC bridge (upper)
-	// learned[sid] = qué MACs (upper) aprende sid y en qué puerto propio.
-	learned := map[string]map[string]string{}
+func fleetFdbEvidence(polled map[string]*routerPolled, gatewayID string, registered map[string]macaddr.MAC, seedDepth map[string]int) map[string]topoParent {
+	macs := map[macaddr.MAC]string{}    // MAC bridge → router propietario
+	idToMac := map[string]macaddr.MAC{} // router id → MAC bridge
+	// learned[sid] = qué MACs aprende sid y en qué puerto propio.
+	learned := map[string]map[macaddr.MAC]string{}
 	ids := make([]string, 0, len(polled))
 	for id, p := range polled {
 		if p == nil {
 			continue
 		}
 		ids = append(ids, id)
-		lm := map[string]string{}
-		for mac, port := range p.fdb {
-			lm[strings.ToUpper(mac)] = port
+		// Se copia el FDB del sondeo: la evidencia no comparte con él el mapa
+		// (ni puede modificarlo) y el valor nunca es nil.
+		lm := make(map[macaddr.MAC]string, len(p.fdb))
+		for m, port := range p.fdb {
+			lm[m] = port
 		}
 		learned[id] = lm
 		// MAC registrada (routers.mac): unidades sin bridge MAC utilizable
 		// (DSM: bridgeDetect cae en docker0 y no corre lldpd) eran invisibles
 		// para la evidencia FDB y su único anclaje era un override manual.
 		// La MAC de bridge manda si ambas existen y difieren en propietario.
-		if m := strings.ToUpper(strings.TrimSpace(registered[id])); m != "" {
+		if m := registered[id]; m.IsValid() {
 			if _, ok := macs[m]; !ok {
 				macs[m] = id
 			}
 		}
-		if p.brMac != "" {
-			macs[strings.ToUpper(p.brMac)] = id
-			idToMac[id] = strings.ToUpper(p.brMac)
+		if p.brMac.IsValid() {
+			macs[p.brMac] = id
+			idToMac[id] = p.brMac
 		}
 	}
 	sort.Strings(ids)
@@ -135,16 +138,11 @@ func fleetFdbEvidence(polled map[string]*routerPolled, gatewayID string, registe
 			return ""
 		}
 		if p, ok := parent[sid]; ok {
-			if m := idToMac[p.parent]; m != "" {
-				if port := lm[m]; port != "" {
-					return port
-				}
+			if port := lm[idToMac[p.parent]]; port != "" {
+				return port
 			}
 		}
-		if gwMac := idToMac[gatewayID]; gwMac != "" {
-			return lm[gwMac]
-		}
-		return ""
+		return lm[idToMac[gatewayID]]
 	}
 	isDescendant := func(rid, c string) bool {
 		cur := c
@@ -246,9 +244,9 @@ func fleetFdbEvidence(polled map[string]*routerPolled, gatewayID string, registe
 // cálculo de velocidad cuando el padre no reporta la suya (#1471).
 func fleetLldpEvidence(polled map[string]*routerPolled, gatewayID string) map[string]topoParent {
 	routers := routerIdentities(polled)
-	gwMac := ""
-	if gw := polled[gatewayID]; gw != nil && gw.brMac != "" {
-		gwMac = strings.ToUpper(gw.brMac)
+	var gwMac macaddr.MAC
+	if gw := polled[gatewayID]; gw != nil {
+		gwMac = gw.brMac
 	}
 	ids := slices.Sorted(maps.Keys(polled))
 
@@ -257,7 +255,7 @@ func fleetLldpEvidence(polled map[string]*routerPolled, gatewayID string) map[st
 		port      string // lado padre (anunciado por él)
 		localPort string // puerto local del poller hacia él
 		isSwitch  bool
-		brMac     string // #1372: bridge MAC del candidato (corroboración FDB)
+		brMac     macaddr.MAC // #1372: bridge MAC del candidato (corroboración FDB)
 	}
 	out := map[string]topoParent{}
 	for _, rid := range ids {
@@ -288,59 +286,53 @@ func fleetLldpEvidence(polled map[string]*routerPolled, gatewayID string) map[st
 			}
 			cands = append(cands, lldpCand{
 				parentID: ri.ID, port: nb.PortDesc, localPort: nb.Port,
-				isSwitch: ri.Type == "managed-switch", brMac: strings.ToUpper(ri.BrMac),
+				isSwitch: ri.Type == "managed-switch", brMac: ri.BrMac,
 			})
 		}
 		if len(cands) == 0 {
 			continue
 		}
 		chosen := -1
-		if gwMac != "" {
-			rootPort, ok := p.fdb[gwMac]
-			if ok {
-				// #1372 (phantom guard): un switch que inunda la multicast
-				// reservada 01:80:c2:00:00:0e (no 802.1AB-compliant) mete
-				// vecinos de SEGUNDO salto por el MISMO puerto raíz, así que
-				// "el primer candidato del root port" puede ser un phantom.
-				// Corroboración FDB por MAC: el peer verdadero intercambia
-				// tráfico real con nosotros y su bridge MAC está aprendida
-				// en la FDB de ese puerto; un phantom puro (sin tráfico
-				// directo) no. Solo se exige al desempatar varios candidatos
-				// en el mismo puerto: con uno solo, la LLDP basta (la FDB
-				// puede ir vacía o aún sin aprendizaje).
-				var onRoot []int
-				for i := range cands {
-					if cands[i].localPort == rootPort {
-						onRoot = append(onRoot, i)
+		if rootPort, ok := p.fdb[gwMac]; ok {
+			// #1372 (phantom guard): un switch que inunda la multicast
+			// reservada 01:80:c2:00:00:0e (no 802.1AB-compliant) mete
+			// vecinos de SEGUNDO salto por el MISMO puerto raíz, así que
+			// "el primer candidato del root port" puede ser un phantom.
+			// Corroboración FDB por MAC: el peer verdadero intercambia
+			// tráfico real con nosotros y su bridge MAC está aprendida
+			// en la FDB de ese puerto; un phantom puro (sin tráfico
+			// directo) no. Solo se exige al desempatar varios candidatos
+			// en el mismo puerto: con uno solo, la LLDP basta (la FDB
+			// puede ir vacía o aún sin aprendizaje).
+			var onRoot []int
+			for i := range cands {
+				if cands[i].localPort == rootPort {
+					onRoot = append(onRoot, i)
+				}
+			}
+			if len(onRoot) == 1 {
+				chosen = onRoot[0]
+			} else if len(onRoot) > 1 {
+				var corr []int
+				for _, i := range onRoot {
+					if port, ok2 := p.fdb[cands[i].brMac]; ok2 && port == cands[i].localPort {
+						corr = append(corr, i)
 					}
 				}
-				if len(onRoot) == 1 {
-					chosen = onRoot[0]
-				} else if len(onRoot) > 1 {
-					var corr []int
-					for _, i := range onRoot {
-						if cands[i].brMac == "" {
-							continue
-						}
-						if port, ok2 := p.fdb[cands[i].brMac]; ok2 && port == cands[i].localPort {
-							corr = append(corr, i)
-						}
+				if len(corr) == 1 {
+					chosen = corr[0]
+				} else {
+					// Varios corroborados (LAN plana: todos hablan con
+					// todos) o ninguno (FDB sin datos): switch gestionado
+					// preferido entre los del root port (hacia el core).
+					pool := corr
+					if len(pool) == 0 {
+						pool = onRoot
 					}
-					if len(corr) == 1 {
-						chosen = corr[0]
-					} else {
-						// Varios corroborados (LAN plana: todos hablan con
-						// todos) o ninguno (FDB sin datos): switch gestionado
-						// preferido entre los del root port (hacia el core).
-						pool := corr
-						if len(pool) == 0 {
-							pool = onRoot
-						}
-						for _, i := range pool {
-							if cands[i].isSwitch {
-								chosen = i
-								break
-							}
+					for _, i := range pool {
+						if cands[i].isSwitch {
+							chosen = i
+							break
 						}
 					}
 				}
@@ -480,15 +472,15 @@ func BuildTopoSemantics(routers []Router, devices []Device, wg WireGuardStats, d
 
 	// D1: los Devices cuya MAC es la chassis-MAC de un distnode managed se
 	// representan SOLO como nodo managed (sin chip ni enlaces propios).
-	managedMacs := map[string]bool{}
+	managedMacs := map[macaddr.MAC]bool{}
 	for _, n := range dists {
-		if n.Kind == "managed" && n.Mac != "" {
-			managedMacs[strings.ToUpper(n.Mac)] = true
+		if n.Kind == "managed" && n.Mac.IsValid() {
+			managedMacs[n.Mac] = true
 		}
 	}
 	online := make([]Device, 0, len(devices))
 	for _, d := range devices {
-		if !d.Online || managedMacs[strings.ToUpper(d.MAC)] {
+		if !d.Online || managedMacs[d.MAC] {
 			continue
 		}
 		online = append(online, d)
@@ -499,10 +491,10 @@ func BuildTopoSemantics(routers []Router, devices []Device, wg WireGuardStats, d
 	// FDB (dónde se vio la MAC y en qué puerto) queda como evidencia para
 	// anclar el uplink al padre REAL (p. ej. ap1 cuelga de sw1, no del
 	// gateway) aunque no haya LLDP.
-	routerMacs := map[string]string{} // MAC(upper) → router id
+	routerMacs := map[macaddr.MAC]string{} // MAC → router id
 	for _, r := range routers {
-		if r.MAC != "" {
-			routerMacs[strings.ToUpper(r.MAC)] = r.ID
+		if r.MAC.IsValid() {
+			routerMacs[r.MAC] = r.ID
 		}
 	}
 	uplinkEvidence := map[string]topoParent{}
@@ -513,7 +505,7 @@ func BuildTopoSemantics(routers []Router, devices []Device, wg WireGuardStats, d
 	uplinkSource := map[string]string{}
 	filtered := online[:0]
 	for _, d := range online {
-		if rid, ok := routerMacs[strings.ToUpper(d.MAC)]; ok {
+		if rid, ok := routerMacs[d.MAC]; ok {
 			if rid != d.RouterID {
 				if _, seen := uplinkEvidence[rid]; !seen {
 					uplinkEvidence[rid] = topoParent{parent: d.RouterID, port: d.Port}
@@ -628,14 +620,13 @@ func BuildTopoSemantics(routers []Router, devices []Device, wg WireGuardStats, d
 		// ONT/módem del primer salto nunca casa por IP. Su evidencia es el ARP
 		// aprendido en el puerto WAN del gateway (Device.WanSide); si hay
 		// varios, gana la MAC más baja para que el resultado sea estable.
-		bestMac := ""
+		var bestMac macaddr.MAC
 		for _, d := range online {
 			if !d.WanSide {
 				continue
 			}
-			m := strings.ToLower(d.MAC)
-			if wanPeerID == "" || m < bestMac {
-				wanPeerID, bestMac = d.ID, m
+			if wanPeerID == "" || d.MAC.Compare(bestMac) < 0 {
+				wanPeerID, bestMac = d.ID, d.MAC
 			}
 		}
 	}

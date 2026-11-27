@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 )
 
@@ -28,12 +29,12 @@ var ErrLldpUnavailable = errors.New("lldpd unavailable")
 // LldpNeighbor es un vecino LLDP anunciado en un puerto local. Todos los
 // campos son opcionales en el anuncio; vacío = no anunciado.
 type LldpNeighbor struct {
-	Port       string   // puerto local que recibe el anuncio ("lan3"…)
-	ChassisMac string   // id del chasis tipo mac (mayúsculas)
-	Chassis    string   // nombre del chasis (o id si no hay nombre)
-	Mgmt       string   // primera mgmt-ip anunciada
-	Caps       []string // capacidades enabled ("Bridge", "Router", "Wlan"…)
-	PortDesc   string   // descripción del puerto remoto
+	Port       string      // puerto local que recibe el anuncio ("lan3"…)
+	ChassisMac macaddr.MAC // id del chasis tipo mac
+	Chassis    string      // nombre del chasis (o id si no hay nombre)
+	Mgmt       string      // primera mgmt-ip anunciada
+	Caps       []string    // capacidades enabled ("Bridge", "Router", "Wlan"…)
+	PortDesc   string      // descripción del puerto remoto
 	// ChassisFromLocDesc: el Chassis se sintetizó desde lldpLocPortDesc del
 	// puerto LOCAL del que sondea (caso Omada #1279), no de un anuncio remoto.
 	// Vale para etiquetas de puerto; la resolución de uplinks de flota lo
@@ -57,7 +58,7 @@ func (n LldpNeighbor) displayName() string {
 	if n.Chassis != "" {
 		return n.Chassis
 	}
-	return n.ChassisMac
+	return n.ChassisMac.String()
 }
 
 // lldpDownCached: true si la indisponibilidad de lldpd está cacheada (dentro
@@ -117,9 +118,11 @@ func isLldpUnavailable(err error) bool {
 func lldpFromProbe(nbs []probe.LldpNeighbor) []LldpNeighbor {
 	out := make([]LldpNeighbor, len(nbs))
 	for i, n := range nbs {
+		// Un chassis ID que no es MAC se registra una vez y queda como sin MAC.
+		cm, _ := macaddr.ParseOrWarn(macWarn, "lldp.chassis_mac", n.ChassisMac)
 		out[i] = LldpNeighbor{
 			Port:       n.Port,
-			ChassisMac: n.ChassisMac,
+			ChassisMac: cm,
 			Chassis:    n.Chassis,
 			Mgmt:       n.Mgmt,
 			Caps:       n.Caps,

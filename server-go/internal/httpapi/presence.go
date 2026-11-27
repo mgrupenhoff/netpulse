@@ -11,7 +11,6 @@ import (
 	"database/sql"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gnacho/netpulse/agent/macaddr"
@@ -30,8 +29,8 @@ const historyLimitKey = "history.limit_enabled"
 // conexiones en las últimas 24 h. En demo devuelve una muestra sintética
 // determinista para que la UI sea explorable sin red real.
 func (s *server) handleDevicePresence(w http.ResponseWriter, r *http.Request) {
-	mac := macaddr.Normalize(r.PathValue("mac"))
-	if mac == "" {
+	mac, err := macaddr.Parse(r.PathValue("mac"))
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_mac")
 		return
 	}
@@ -77,9 +76,9 @@ func (s *server) handleDevicePresence(w http.ResponseWriter, r *http.Request) {
 // un 0 no significa "roaming sano" sino "no hay fuente" (#1740).
 func (s *server) handlePresenceRoaming(w http.ResponseWriter, r *http.Request) {
 	type item struct {
-		MAC      string `json:"mac"`
-		Name     string `json:"name"`
-		Connects int    `json:"connects"`
+		MAC      macaddr.MAC `json:"mac"`
+		Name     string      `json:"name"`
+		Connects int         `json:"connects"`
 	}
 	if s.cfg.DemoMode {
 		writeJSON(w, http.StatusOK, map[string]any{"items": []item{}, "source": true})
@@ -91,20 +90,19 @@ func (s *server) handlePresenceRoaming(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "db_error")
 		return
 	}
-	names := map[string]string{}
+	names := map[macaddr.MAC]string{}
 	if s.adapter != nil {
 		for _, d := range s.adapter.GetDevices(r.Context()) {
-			names[strings.ToUpper(d.MAC)] = d.Name
+			names[d.MAC] = d.Name
 		}
 	}
 	items := make([]item, 0, len(counts))
 	for _, c := range counts {
-		mac := strings.ToUpper(c.MAC)
-		nm := names[mac]
+		nm := names[c.MAC]
 		if nm == "" {
-			nm = s.knownMacName(mac)
+			nm = s.knownMacName(c.MAC)
 		}
-		items = append(items, item{MAC: mac, Name: nm, Connects: c.Connects})
+		items = append(items, item{MAC: c.MAC, Name: nm, Connects: c.Connects})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"items":  items,
@@ -113,7 +111,7 @@ func (s *server) handlePresenceRoaming(w http.ResponseWriter, r *http.Request) {
 }
 
 // knownMacName resuelve el alias de una MAC desde known_macs ("" si no hay).
-func (s *server) knownMacName(mac string) string {
+func (s *server) knownMacName(mac macaddr.MAC) string {
 	var name string
 	_ = s.db.QueryRow("SELECT name FROM known_macs WHERE mac = ?", mac).Scan(&name)
 	return name
@@ -199,10 +197,10 @@ func (s *server) presenceRetentionDays() int {
 // demoPresence genera una muestra determinista para el modo demo: dos tramos
 // hoy (mañana en el router par, tarde en impar) y un tramo de ayer, más la
 // ventana pedida vacía en días anteriores.
-func demoPresence(mac string, days int, now time.Time) map[string]any {
+func demoPresence(mac macaddr.MAC, days int, now time.Time) map[string]any {
 	// Hash simple de la MAC para desplazar las horas de forma estable.
 	h := 0
-	for _, c := range mac {
+	for _, c := range mac.String() {
 		h = (h*31 + int(c)) % 240
 	}
 	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())

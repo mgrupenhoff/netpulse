@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 )
 
@@ -57,7 +58,7 @@ func TestUsteerAPsFromPayload(t *testing.T) {
 	}
 	// Orden determinista: 2.4 GHz primero (BSSID ...:96 < ...:97).
 	ap24, ap5 := aps[0], aps[1]
-	if ap24.BSSID != "CC:D8:43:B1:E5:96" || ap24.Iface != "phy0-ap0" {
+	if ap24.BSSID != macaddr.MustParse("CC:D8:43:B1:E5:96") || ap24.Iface != "phy0-ap0" {
 		t.Errorf("ap 2.4 = %+v", ap24)
 	}
 	if ap24.Band != "2.4 GHz" || ap24.Freq != 2412 || ap24.UtilizationPct != 30 || ap24.ClientCount != 3 {
@@ -70,9 +71,9 @@ func TestUsteerAPsFromPayload(t *testing.T) {
 	// y 06 (-75 de usteer, la estación no trae señal). 04 sin señal fuera,
 	// 05 con banda desconocida y 2 APs candidatos fuera (no se adivina).
 	want24 := []UsteerClient{
-		{MAC: "AA:AA:AA:AA:AA:01", Signal: -52},
-		{MAC: "AA:AA:AA:AA:AA:02", Signal: -68},
-		{MAC: "AA:AA:AA:AA:AA:06", Signal: -75},
+		{MAC: macaddr.MustParse("AA:AA:AA:AA:AA:01"), Signal: -52},
+		{MAC: macaddr.MustParse("AA:AA:AA:AA:AA:02"), Signal: -68},
+		{MAC: macaddr.MustParse("AA:AA:AA:AA:AA:06"), Signal: -75},
 	}
 	if len(ap24.Clients) != len(want24) {
 		t.Fatalf("clientes 2.4 = %+v, want %+v", ap24.Clients, want24)
@@ -83,7 +84,7 @@ func TestUsteerAPsFromPayload(t *testing.T) {
 		}
 	}
 	// Cliente del 5 GHz.
-	if len(ap5.Clients) != 1 || ap5.Clients[0] != (UsteerClient{MAC: "AA:AA:AA:AA:AA:03", Signal: -61}) {
+	if len(ap5.Clients) != 1 || ap5.Clients[0] != (UsteerClient{MAC: macaddr.MustParse("AA:AA:AA:AA:AA:03"), Signal: -61}) {
 		t.Errorf("clientes 5 = %+v", ap5.Clients)
 	}
 	if ap5.Iface != "phy1-ap0" || ap5.Band != "5 GHz" {

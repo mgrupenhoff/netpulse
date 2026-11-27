@@ -91,8 +91,8 @@ func normalizePayloadMACs(p *probe.Payload) {
 
 // canonMAC devuelve la forma canónica de s, o s sin tocar si no es una MAC.
 func canonMAC(s string) string {
-	if c := macaddr.Normalize(s); c != "" {
-		return c
+	if m, err := macaddr.Parse(s); err == nil {
+		return m.String()
 	}
 	return s
 }

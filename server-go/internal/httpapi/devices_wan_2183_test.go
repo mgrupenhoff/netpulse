@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/adapters"
 )
 
@@ -14,7 +15,7 @@ type wanSideAdapter struct{ adapters.Snapshotter }
 func (w wanSideAdapter) GetDevices(ctx context.Context) []adapters.Device {
 	return append(w.Snapshotter.GetDevices(ctx), adapters.Device{
 		ID:       "0c-ef-15-00-00-02",
-		MAC:      "0C:EF:15:00:00:02",
+		MAC:      macaddr.MustParse("0C:EF:15:00:00:02"),
 		Name:     "0C:EF:15:00:00:02",
 		IP:       "203.0.113.248",
 		Online:   true,

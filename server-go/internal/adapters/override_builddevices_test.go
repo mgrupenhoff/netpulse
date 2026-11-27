@@ -7,6 +7,8 @@ package adapters
 import (
 	"testing"
 	"time"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 func TestBuildDevicesNameTypeIconOverride(t *testing.T) {
@@ -23,7 +25,7 @@ func TestBuildDevicesNameTypeIconOverride(t *testing.T) {
 	polled := map[string]*routerPolled{
 		"patio": {
 			cfg:      RouterConfig{ID: "patio", Name: "Patio", Host: "192.168.1.2"},
-			wireless: map[string]WirelessClient{mac: {SignalDbm: -55, Band: "5 GHz"}},
+			wireless: map[macaddr.MAC]WirelessClient{macaddr.MustParse(mac): {SignalDbm: -55, Band: "5 GHz"}},
 		},
 	}
 	devs := l.buildDevices(polled, "")
@@ -49,7 +51,7 @@ func TestGhostDevicesApplyManualOverrides(t *testing.T) {
 	d := openLiveTestDB(t)
 	l := &Live{db: d}
 	l.noteDevicesSeen([]Device{
-		{MAC: "aa:bb:cc:dd:ee:ff", Online: true, Hostname: "viewsonic-proj", Type: "desconocido"},
+		{MAC: macaddr.MustParse("aa:bb:cc:dd:ee:ff"), Online: true, Hostname: "viewsonic-proj", Type: "desconocido"},
 	}, 1000)
 	now := time.Now().UnixMilli()
 	if _, err := d.Exec(

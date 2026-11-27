@@ -60,24 +60,21 @@ func loadTopologyOverrides(q queryer) []TopologyOverride {
 	return out
 }
 
-// colonMAC devuelve la forma canónica (AA:BB:CC:DD:EE:FF) si s es una MAC
-// escrita con ':', o "". Los campos de override admiten también ids de router,
-// que son slugs (minúsculas, '-', sin ':'): uno como "aa-bb-cc-dd-ee-ff" o
-// "cafebabe1234" no debe leerse como MAC, así que solo cuenta la forma con ':'.
-func colonMAC(s string) string {
-	s = strings.TrimSpace(s)
-	if strings.Count(s, ":") != 5 {
-		return ""
-	}
-	return macaddr.Normalize(s)
+// colonMAC devuelve la MAC parseada si s está escrita con ':', o (MAC{}, false).
+// Los campos de override admiten también ids de router, que son slugs
+// (minúsculas, '-', sin ':'): uno como "aa-bb-cc-dd-ee-ff" o "cafebabe1234" no
+// debe leerse como MAC, así que solo cuenta la forma con ':'.
+func colonMAC(s string) (macaddr.MAC, bool) {
+	m, err := macaddr.ParseColon(s)
+	return m, err == nil
 }
 
 // NormalizeMAC normaliza el target de un override: una MAC con ':' en forma
 // canónica; cualquier otra cosa es un id de router (#1485: unidad de flota sin
 // MAC de bridge) y se devuelve en minúsculas sin espacios, como antes.
 func NormalizeMAC(mac string) string {
-	if m := colonMAC(mac); m != "" {
-		return m
+	if m, ok := colonMAC(mac); ok {
+		return m.String()
 	}
 	return strings.ToLower(strings.TrimSpace(mac))
 }
@@ -86,19 +83,17 @@ func NormalizeMAC(mac string) string {
 // una MAC con ':' en forma canónica; una referencia de router ("routerId" o
 // "routerId:puerto") solo sin espacios alrededor.
 func NormalizeParentRef(raw string) string {
-	if m := colonMAC(raw); m != "" {
-		return m
+	if m, ok := colonMAC(raw); ok {
+		return m.String()
 	}
 	return strings.TrimSpace(raw)
 }
 
-// deviceIndexByMAC indexa devices por MAC normalizada.
-func deviceIndexByMAC(devices []Device) map[string]int {
-	m := make(map[string]int, len(devices))
+// deviceIndexByMAC indexa devices por MAC.
+func deviceIndexByMAC(devices []Device) map[macaddr.MAC]int {
+	m := make(map[macaddr.MAC]int, len(devices))
 	for i, d := range devices {
-		if d.MAC != "" {
-			m[NormalizeMAC(d.MAC)] = i
-		}
+		m[d.MAC] = i
 	}
 	return m
 }
@@ -113,6 +108,14 @@ const (
 	parentRefPort                         // id de router + puerto concreto
 )
 
+// parentRef es el destino parseado de un override kind=attach (#690).
+type parentRef struct {
+	kind     parentRefKind
+	mac      macaddr.MAC // válido solo cuando kind == parentRefMAC
+	routerID string      // válido en parentRefRouter y parentRefPort
+	port     string      // válido en parentRefPort
+}
+
 // routerPort: clave compuesta para localizar un distnode por (router, puerto).
 type routerPort struct{ router, port string }
 
@@ -124,23 +127,23 @@ type routerPort struct{ router, port string }
 //
 // Una MAC solo cuenta en la forma con ':' (ver colonMAC). La referencia de
 // router se compara en minúsculas, id y puerto, como siempre.
-func parseParentRef(parent string) (kind parentRefKind, routerID, port, mac string) {
+func parseParentRef(parent string) parentRef {
 	p := strings.TrimSpace(parent)
 	if p == "" {
-		return parentRefInvalid, "", "", ""
+		return parentRef{}
 	}
-	if m := colonMAC(p); m != "" {
-		return parentRefMAC, "", "", m
+	if m, ok := colonMAC(p); ok {
+		return parentRef{kind: parentRefMAC, mac: m}
 	}
 	p = strings.ToLower(p)
 	if i := strings.IndexByte(p, ':'); i >= 0 {
-		routerID, port = strings.TrimSpace(p[:i]), strings.TrimSpace(p[i+1:])
+		routerID, port := strings.TrimSpace(p[:i]), strings.TrimSpace(p[i+1:])
 		if routerID == "" || port == "" {
-			return parentRefInvalid, "", "", ""
+			return parentRef{}
 		}
-		return parentRefPort, routerID, port, ""
+		return parentRef{kind: parentRefPort, routerID: routerID, port: port}
 	}
-	return parentRefRouter, p, "", ""
+	return parentRef{kind: parentRefRouter, routerID: p}
 }
 
 // applyTopologyOverrides aplica la capa 2 manual sobre el resultado del
@@ -172,7 +175,11 @@ func applyTopologyOverrides(routers []Router, devices []Device, dists []Distribu
 		if !ov.Enabled || ov.Kind != "hypervisor" {
 			continue
 		}
-		idx, ok := byMAC[NormalizeMAC(ov.MAC)]
+		ovMAC, ok := colonMAC(ov.MAC)
+		if !ok {
+			continue
+		}
+		idx, ok := byMAC[ovMAC]
 		if !ok {
 			continue
 		}
@@ -186,7 +193,7 @@ func applyTopologyOverrides(routers []Router, devices []Device, dists []Distribu
 			if d.RouterID != host.RouterID || d.Port != host.Port {
 				continue
 			}
-			if d.ID == host.ID || !isHypervisorMAC(NormalizeMAC(d.MAC)) {
+			if d.ID == host.ID || !isHypervisorMAC(d.MAC) {
 				continue
 			}
 			d.AttachTo = host.ID
@@ -200,7 +207,11 @@ func applyTopologyOverrides(routers []Router, devices []Device, dists []Distribu
 		if !ov.Enabled || ov.Kind != "switch" {
 			continue
 		}
-		idx, ok := byMAC[NormalizeMAC(ov.MAC)]
+		ovMAC, ok := colonMAC(ov.MAC)
+		if !ok {
+			continue
+		}
+		idx, ok := byMAC[ovMAC]
 		if !ok {
 			continue
 		}
@@ -249,15 +260,19 @@ func applyTopologyOverrides(routers []Router, devices []Device, dists []Distribu
 		if !ov.Enabled || ov.Kind != "attach" || ov.Parent == "" {
 			continue
 		}
-		tIdx, ok := byMAC[NormalizeMAC(ov.MAC)]
+		ovMAC, ok := colonMAC(ov.MAC)
+		if !ok {
+			continue
+		}
+		tIdx, ok := byMAC[ovMAC]
 		if !ok {
 			continue
 		}
 		target := &devices[tIdx]
-		kind, routerID, port, mac := parseParentRef(ov.Parent)
-		switch kind {
+		ref := parseParentRef(ov.Parent)
+		switch ref.kind {
 		case parentRefMAC:
-			pIdx, ok := byMAC[mac]
+			pIdx, ok := byMAC[ref.mac]
 			if !ok {
 				continue
 			}
@@ -267,19 +282,19 @@ func applyTopologyOverrides(routers []Router, devices []Device, dists []Distribu
 				target.Infra = "ct"
 			}
 		case parentRefRouter:
-			if !routerByID[routerID] {
+			if !routerByID[ref.routerID] {
 				continue
 			}
-			target.AttachTo = routerID
+			target.AttachTo = ref.routerID
 		case parentRefPort:
-			if !routerByID[routerID] {
+			if !routerByID[ref.routerID] {
 				continue
 			}
-			if distID, ok := distByRouterPort[routerPort{routerID, port}]; ok {
+			if distID, ok := distByRouterPort[routerPort{ref.routerID, ref.port}]; ok {
 				target.AttachTo = distID
 			} else {
-				target.AttachTo = routerID
-				target.Port = port
+				target.AttachTo = ref.routerID
+				target.Port = ref.port
 			}
 		default:
 			// parent inválido: no-op.
@@ -307,12 +322,12 @@ func fleetOverrideEvidence(overrides []TopologyOverride, routers []Router) map[s
 	if len(overrides) == 0 {
 		return nil
 	}
-	routerByMac := map[string]string{}
+	routerByMac := map[macaddr.MAC]string{}
 	routerByID := map[string]bool{}
 	routerIDByLower := map[string]string{}
 	for _, r := range routers {
-		if r.MAC != "" {
-			routerByMac[NormalizeMAC(r.MAC)] = r.ID
+		if r.MAC.IsValid() {
+			routerByMac[r.MAC] = r.ID
 		}
 		routerByID[r.ID] = true
 		routerIDByLower[strings.ToLower(r.ID)] = r.ID
@@ -322,7 +337,11 @@ func fleetOverrideEvidence(overrides []TopologyOverride, routers []Router) map[s
 		if !o.Enabled || o.Kind != "attach" {
 			continue
 		}
-		rid, ok := routerByMac[NormalizeMAC(o.MAC)]
+		var rid string
+		var ok bool
+		if m, isMac := colonMAC(o.MAC); isMac {
+			rid, ok = routerByMac[m]
+		}
 		if !ok {
 			// #1485: una unidad de flota sin MAC de bridge (ONT/módem dado de
 			// alta como external sin MAC) no se puede fijar por MAC. El target
@@ -338,7 +357,7 @@ func fleetOverrideEvidence(overrides []TopologyOverride, routers []Router) map[s
 			continue
 		}
 		var parent, port string
-		if m := colonMAC(p); m != "" {
+		if m, isMac := colonMAC(p); isMac {
 			parent = routerByMac[m]
 			if parent == "" {
 				continue // el target no es un router de flota

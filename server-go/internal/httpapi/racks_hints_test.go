@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/adapters"
 	"github.com/gnacho/netpulse/server-go/internal/db"
 	"github.com/gnacho/netpulse/server-go/internal/rack"
@@ -19,7 +20,7 @@ func (a *rackHintsStubAdapter) GetDevices(context.Context) []adapters.Device {
 	return a.devices
 }
 
-func (a *rackHintsStubAdapter) FleetFdbUplinks(string, string) map[string]adapters.FdbUplink {
+func (a *rackHintsStubAdapter) FleetFdbUplinks(string, macaddr.MAC) map[string]adapters.FdbUplink {
 	return a.uplinks
 }
 
@@ -39,13 +40,13 @@ func TestBuildRackHintsSymmetricDedup(t *testing.T) {
 		t.Fatalf("sembrar rack_uplink_unit: %v", err)
 	}
 
-	const (
-		macR1  = "AA:BB:CC:00:00:01"
-		macSW1 = "AA:BB:CC:00:00:02"
-		macDev = "AA:BB:CC:00:00:03"
-		macAgg = "AA:BB:CC:00:00:04"
-		macAg2 = "AA:BB:CC:00:00:05"
-		macOff = "AA:BB:CC:00:00:06"
+	var (
+		macR1  = macaddr.MustParse("AA:BB:CC:00:00:01")
+		macSW1 = macaddr.MustParse("AA:BB:CC:00:00:02")
+		macDev = macaddr.MustParse("AA:BB:CC:00:00:03")
+		macAgg = macaddr.MustParse("AA:BB:CC:00:00:04")
+		macAg2 = macaddr.MustParse("AA:BB:CC:00:00:05")
+		macOff = macaddr.MustParse("AA:BB:CC:00:00:06")
 	)
 
 	stub := &rackHintsStubAdapter{
@@ -71,8 +72,8 @@ func TestBuildRackHintsSymmetricDedup(t *testing.T) {
 
 	ov := &adapters.Overview{
 		Routers: []adapters.Router{
-			{ID: "r1", MAC: "AA:BB:CC:00:00:01"},
-			{ID: "sw1", MAC: "AA:BB:CC:00:00:02"},
+			{ID: "r1", MAC: macR1},
+			{ID: "sw1", MAC: macSW1},
 		},
 	}
 	s := &server{
@@ -94,7 +95,7 @@ func TestBuildRackHintsSymmetricDedup(t *testing.T) {
 	}
 	// Se busca cada hint por su par (sin importar el sentido ni el orden), para
 	// no depender de qué bucle de buildRackHints lo emite primero.
-	find := func(a, b string) *rack.CableHint {
+	find := func(a, b macaddr.MAC) *rack.CableHint {
 		for i := range hints {
 			h := &hints[i]
 			if (h.FromDeviceID == a && h.ToDeviceID == b) || (h.FromDeviceID == b && h.ToDeviceID == a) {

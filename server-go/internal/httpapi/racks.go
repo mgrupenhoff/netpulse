@@ -38,17 +38,17 @@ func (s *server) registerRackRoutes(mux *http.ServeMux) {
 // hint con el puerto físico donde el bridge aprende su MAC. La fuente es el
 // descubrimiento, no el dibujo.
 func (s *server) buildRackHints(ctx context.Context, mounts []rack.MountRow) []rack.CableHint {
-	mounted := map[string]bool{}
+	mounted := map[macaddr.MAC]bool{}
 	for _, m := range mounts {
-		if m.DeviceMAC != "" {
-			mounted[macaddr.NormalizeLenient(m.DeviceMAC)] = true
+		if m.DeviceMAC.IsValid() {
+			mounted[m.DeviceMAC] = true
 		}
 	}
-	routerMAC := map[string]string{}
+	routerMAC := map[string]macaddr.MAC{}
 	if ov := s.lastOv(); ov != nil {
 		for _, r := range ov.Routers {
-			if r.MAC != "" {
-				routerMAC[r.ID] = macaddr.NormalizeLenient(r.MAC)
+			if r.MAC.IsValid() {
+				routerMAC[r.ID] = r.MAC
 			}
 		}
 	}
@@ -58,20 +58,20 @@ func (s *server) buildRackHints(ctx context.Context, mounts []rack.MountRow) []r
 	// generan hint.
 	perPort := map[string]int{}
 	for _, d := range s.adapter.GetDevices(ctx) {
-		if d.Band != "cable" || d.MAC == "" || d.Port == "" {
+		if d.Band != "cable" || !d.MAC.IsValid() || d.Port == "" {
 			continue
 		}
 		perPort[d.RouterID+"|"+d.Port]++
 	}
-	type macPair struct{ a, b string }
+	type macPair struct{ a, b macaddr.MAC }
 	hints := []rack.CableHint{}
 	seen := map[macPair]bool{}
-	addHint := func(from, to, fromPort, toPort string) {
-		if from == "" || to == "" || !mounted[from] || !mounted[to] {
+	addHint := func(from, to macaddr.MAC, fromPort, toPort string) {
+		if !from.IsValid() || !to.IsValid() || !mounted[from] || !mounted[to] {
 			return
 		}
 		key := macPair{from, to}
-		if from > to {
+		if from.Compare(to) > 0 {
 			key = macPair{to, from}
 		}
 		if seen[key] {
@@ -87,13 +87,13 @@ func (s *server) buildRackHints(ctx context.Context, mounts []rack.MountRow) []r
 		})
 	}
 	for _, d := range s.adapter.GetDevices(ctx) {
-		if d.Band != "cable" || d.MAC == "" || d.Port == "" {
+		if d.Band != "cable" || !d.MAC.IsValid() || d.Port == "" {
 			continue
 		}
 		if perPort[d.RouterID+"|"+d.Port] != 1 {
 			continue
 		}
-		addHint(routerMAC[d.RouterID], macaddr.NormalizeLenient(d.MAC), d.Port, "")
+		addHint(routerMAC[d.RouterID], d.MAC, d.Port, "")
 	}
 
 	// Uplinks entre miembros de flota montados: el FDB de la unidad designada
@@ -180,18 +180,26 @@ func dtoToRack(d rackDTO) rack.Rack {
 
 func mountRowToDTO(m rack.MountRow) mountDTO {
 	return mountDTO{
-		ID: m.ID, RackID: m.RackID, DeviceMAC: m.DeviceMAC, FaceplateID: m.FaceplateID,
+		ID: m.ID, RackID: m.RackID, DeviceMAC: m.DeviceMAC.String(), FaceplateID: m.FaceplateID,
 		UStart: m.UStart, UHeight: m.UHeight, ColStart: m.ColStart, ColSpan: m.ColSpan,
 		Label: m.Label, StatusPin: m.StatusPin, PortVisibility: m.PortVisibility,
 	}
 }
 
-func dtoToMount(d mountDTO) rack.Mount {
+func dtoToMount(d mountDTO) (rack.Mount, error) {
+	var mac macaddr.MAC
+	if d.DeviceMAC != "" {
+		parsed, err := macaddr.Parse(d.DeviceMAC)
+		if err != nil {
+			return rack.Mount{}, rack.ErrInvalidMAC
+		}
+		mac = parsed
+	}
 	return rack.Mount{
-		ID: d.ID, RackID: d.RackID, DeviceMAC: d.DeviceMAC, FaceplateID: d.FaceplateID,
+		ID: d.ID, RackID: d.RackID, DeviceMAC: mac, FaceplateID: d.FaceplateID,
 		UStart: d.UStart, ColStart: d.ColStart,
 		Label: d.Label, StatusPin: d.StatusPin, PortVisibility: d.PortVisibility,
-	}
+	}, nil
 }
 
 func cableToDTO(c rack.Cable) cableDTO {
@@ -212,14 +220,14 @@ func dtoToCable(d cableDTO) rack.Cable {
 
 func profileToDTO(p rack.DeviceProfile) profileDTO {
 	return profileDTO{
-		MAC: p.MAC, FaceplateID: p.FaceplateID, UHeight: p.UHeight,
+		MAC: p.MAC.String(), FaceplateID: p.FaceplateID, UHeight: p.UHeight,
 		ColSpan: p.ColSpan, Color: p.Color, Ports: p.Ports,
 	}
 }
 
-func dtoToProfile(d profileDTO) rack.DeviceProfile {
+func dtoToProfile(mac macaddr.MAC, d profileDTO) rack.DeviceProfile {
 	return rack.DeviceProfile{
-		MAC: d.MAC, FaceplateID: d.FaceplateID, UHeight: d.UHeight,
+		MAC: mac, FaceplateID: d.FaceplateID, UHeight: d.UHeight,
 		ColSpan: d.ColSpan, Color: d.Color, Ports: d.Ports,
 	}
 }
@@ -360,7 +368,12 @@ func (s *server) handleRackLayoutPut(w http.ResponseWriter, r *http.Request) {
 	}
 	change := rack.LayoutChange{RackID: body.RackID, Delete: body.Delete}
 	for _, d := range body.Upsert {
-		change.Upsert = append(change.Upsert, dtoToMount(d))
+		m, err := dtoToMount(d)
+		if err != nil {
+			writeRackStoreError(w, err)
+			return
+		}
+		change.Upsert = append(change.Upsert, m)
 	}
 	if err := rack.SaveLayout(s.db.DB, change); err != nil {
 		writeRackStoreError(w, err)
@@ -397,12 +410,17 @@ func (s *server) handleRackProfilePut(w http.ResponseWriter, r *http.Request) {
 		writeBodyError(w, st, "invalid_body", "body JSON inválido")
 		return
 	}
-	d.MAC = macaddr.Normalize(r.PathValue("mac"))
-	if err := rack.UpsertProfile(s.db.DB, dtoToProfile(d)); err != nil {
+	mac, err := macaddr.Parse(r.PathValue("mac"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_profile", "rack: mac requerida")
+		return
+	}
+	prof := dtoToProfile(mac, d)
+	if err := rack.UpsertProfile(s.db.DB, prof); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_profile", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, profileToDTO(dtoToProfile(d)))
+	writeJSON(w, http.StatusOK, profileToDTO(prof))
 }
 
 // writeRackStoreError mapea los errores del store a códigos HTTP estables.

@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 // Umbrales por defecto del re-anclaje: -65 dBm mínimo para el destino y 10 dBm
@@ -58,7 +60,7 @@ type usteerHearingRaw struct {
 // usteerAPInfo almacena la metainformación de un AP (local o remoto) para
 // convertir el nombre de nodo devuelto por usteer en datos legibles.
 type usteerAPInfo struct {
-	BSSID    string
+	BSSID    macaddr.MAC
 	SSID     string
 	Freq     int
 	Hostname string
@@ -71,12 +73,12 @@ type usteerAPInfo struct {
 // con usteer local_info. Si no hay usteer devuelve (nil, false).
 func usteerReanchor(ctx context.Context, routers []RouterConfig, cfg ReanchorConfig, runner sshRunner) ([]ReanchorRecommendation, bool) {
 	apByNode := make(map[string]usteerAPInfo) // nombre de nodo usteer -> AP
-	currentByMAC := make(map[string]struct {
+	currentByMAC := make(map[macaddr.MAC]struct {
 		node   string
 		signal int
 		host   string
 	})
-	hearing := make(map[string]map[string]int) // MAC -> nodo -> mejor señal
+	hearing := make(map[macaddr.MAC]map[string]int) // MAC -> nodo -> mejor señal
 	found := false
 
 	for _, rt := range routers {
@@ -98,11 +100,12 @@ func usteerReanchor(ctx context.Context, routers []RouterConfig, cfg ReanchorCon
 			found = true
 		}
 		for iface, raw := range local {
-			if raw.SSID == "" || raw.BSSID == "" {
+			bssid, ok := macaddr.ParseOrWarn(macWarn, "reanchor.usteer_local_bssid", raw.BSSID)
+			if raw.SSID == "" || !ok {
 				continue
 			}
 			apByNode[iface] = usteerAPInfo{
-				BSSID:    strings.ToUpper(raw.BSSID),
+				BSSID:    bssid,
 				SSID:     raw.SSID,
 				Freq:     raw.Freq,
 				Hostname: name,
@@ -117,14 +120,15 @@ func usteerReanchor(ctx context.Context, routers []RouterConfig, cfg ReanchorCon
 		var remote map[string]usteerAPRaw
 		if err := json.Unmarshal([]byte(remoteOut), &remote); err == nil {
 			for node, raw := range remote {
-				if raw.SSID == "" || raw.BSSID == "" {
+				bssid, ok := macaddr.ParseOrWarn(macWarn, "reanchor.usteer_remote_bssid", raw.BSSID)
+				if raw.SSID == "" || !ok {
 					continue
 				}
 				if _, exists := apByNode[node]; exists {
 					continue
 				}
 				apByNode[node] = usteerAPInfo{
-					BSSID:    strings.ToUpper(raw.BSSID),
+					BSSID:    bssid,
 					SSID:     raw.SSID,
 					Freq:     raw.Freq,
 					Hostname: usteerRemoteHostname(node, routers, raw.BSSID),
@@ -139,11 +143,14 @@ func usteerReanchor(ctx context.Context, routers []RouterConfig, cfg ReanchorCon
 		var clients map[string]map[string]usteerClientRaw
 		if err := json.Unmarshal([]byte(clientsOut), &clients); err == nil {
 			for iface, macs := range clients {
-				for mac, c := range macs {
+				for rawMac, c := range macs {
 					if c.Signal >= 0 {
 						continue
 					}
-					mac = strings.ToUpper(mac)
+					mac, ok := macaddr.ParseOrWarn(macWarn, "reanchor.usteer_client", rawMac)
+					if !ok {
+						continue
+					}
 					currentByMAC[mac] = struct {
 						node   string
 						signal int
@@ -157,8 +164,11 @@ func usteerReanchor(ctx context.Context, routers []RouterConfig, cfg ReanchorCon
 		hearOut, _ := runner.Run(rt.Host, "ubus call usteer get_clients", 0)
 		var hear map[string]map[string]usteerHearingRaw
 		if err := json.Unmarshal([]byte(hearOut), &hear); err == nil {
-			for mac, nodes := range hear {
-				mac = strings.ToUpper(mac)
+			for rawMac, nodes := range hear {
+				mac, ok := macaddr.ParseOrWarn(macWarn, "reanchor.usteer_hearing_client", rawMac)
+				if !ok {
+					continue
+				}
 				if hearing[mac] == nil {
 					hearing[mac] = make(map[string]int)
 				}
@@ -228,7 +238,7 @@ func usteerReanchor(ctx context.Context, routers []RouterConfig, cfg ReanchorCon
 		if recs[i].DeltaDbm != recs[j].DeltaDbm {
 			return recs[i].DeltaDbm > recs[j].DeltaDbm
 		}
-		return recs[i].MAC < recs[j].MAC
+		return recs[i].MAC.Compare(recs[j].MAC) < 0
 	})
 	return recs, true
 }
@@ -288,9 +298,8 @@ func DawnNetworkFromHost(ctx context.Context, host string, runner sshRunner) []D
 }
 
 // DawnHearingMapFromHost ejecuta `ubus call dawn get_hearing_map` en un host
-// concreto. Devuelve map[MAC] -> map[BSSID] -> signal. Los MAC y BSSID se
-// normalizan a mayúsculas.
-func DawnHearingMapFromHost(ctx context.Context, host string, runner sshRunner) map[string]map[string]int {
+// concreto. Devuelve map[MAC] -> map[BSSID] -> signal.
+func DawnHearingMapFromHost(ctx context.Context, host string, runner sshRunner) map[macaddr.MAC]map[macaddr.MAC]int {
 	if host == "" {
 		return nil
 	}
@@ -303,20 +312,26 @@ func DawnHearingMapFromHost(ctx context.Context, host string, runner sshRunner) 
 
 // parseDawnHearingMap parsea la salida JSON de `ubus call dawn get_hearing_map`.
 // Estructura: { SSID: { MAC: { BSSID: { signal, freq, ... } } } }
-func parseDawnHearingMap(out string) map[string]map[string]int {
+func parseDawnHearingMap(out string) map[macaddr.MAC]map[macaddr.MAC]int {
 	var raw map[string]map[string]map[string]map[string]json.RawMessage
 	if json.Unmarshal([]byte(out), &raw) != nil {
 		return nil
 	}
-	res := make(map[string]map[string]int)
+	res := make(map[macaddr.MAC]map[macaddr.MAC]int)
 	for _, clients := range raw {
-		for mac, bssids := range clients {
-			mac = strings.ToUpper(mac)
-			if res[mac] == nil {
-				res[mac] = make(map[string]int)
+		for rawMac, bssids := range clients {
+			mac, ok := macaddr.ParseOrWarn(macWarn, "reanchor.dawn_hearing_client", rawMac)
+			if !ok {
+				continue
 			}
-			for bssid, fields := range bssids {
-				bssid = strings.ToUpper(bssid)
+			if res[mac] == nil {
+				res[mac] = make(map[macaddr.MAC]int)
+			}
+			for rawBSSID, fields := range bssids {
+				bssid, ok := macaddr.ParseOrWarn(macWarn, "reanchor.dawn_hearing_bssid", rawBSSID)
+				if !ok {
+					continue
+				}
 				signalRaw, ok := fields["signal"]
 				if !ok {
 					continue
@@ -345,7 +360,10 @@ func dawnAPsFromNetwork(data map[string]map[string]json.RawMessage) []DawnAP {
 	var aps []DawnAP
 	for ssid, bssids := range data {
 		for bssidRaw, raw := range bssids {
-			bssid := strings.ToUpper(bssidRaw)
+			bssid, ok := macaddr.ParseOrWarn(macWarn, "reanchor.dawn_ap_bssid", bssidRaw)
+			if !ok {
+				continue
+			}
 			var ap dawnAPData
 			if json.Unmarshal(raw, &ap) != nil {
 				continue
@@ -359,14 +377,18 @@ func dawnAPsFromNetwork(data map[string]map[string]json.RawMessage) []DawnAP {
 				if c.Signal >= 0 {
 					continue
 				}
+				cmac, ok := macaddr.ParseOrWarn(macWarn, "reanchor.dawn_client", mac)
+				if !ok {
+					continue
+				}
 				clients = append(clients, DawnClient{
-					MAC:    strings.ToUpper(mac),
+					MAC:    cmac,
 					Signal: c.Signal,
 					HT:     c.HT,
 					VHT:    c.VHT,
 				})
 			}
-			sort.Slice(clients, func(i, j int) bool { return clients[i].MAC < clients[j].MAC })
+			sort.Slice(clients, func(i, j int) bool { return clients[i].MAC.Compare(clients[j].MAC) < 0 })
 			aps = append(aps, DawnAP{
 				SSID:           ssid,
 				BSSID:          bssid,
@@ -405,13 +427,13 @@ type dawnClientData struct {
 // dawnReanchor devuelve (recomendaciones, true) si al menos un router responde
 // con DAWN. Si no hay DAWN devuelve (nil, false).
 func dawnReanchor(ctx context.Context, routers []RouterConfig, cfg ReanchorConfig, runner sshRunner) ([]ReanchorRecommendation, bool) {
-	apByBSSID := make(map[string]DawnAP)
-	currentByMAC := make(map[string]struct {
-		bssid  string
+	apByBSSID := make(map[macaddr.MAC]DawnAP)
+	currentByMAC := make(map[macaddr.MAC]struct {
+		bssid  macaddr.MAC
 		signal int
 		host   string
 	})
-	hearing := make(map[string]map[string]int)
+	hearing := make(map[macaddr.MAC]map[macaddr.MAC]int)
 	found := false
 
 	for _, rt := range routers {
@@ -423,7 +445,6 @@ func dawnReanchor(ctx context.Context, routers []RouterConfig, cfg ReanchorConfi
 			found = true
 		}
 		for _, ap := range aps {
-			ap.BSSID = strings.ToUpper(ap.BSSID)
 			if _, exists := apByBSSID[ap.BSSID]; !exists {
 				apByBSSID[ap.BSSID] = ap
 			}
@@ -431,9 +452,8 @@ func dawnReanchor(ctx context.Context, routers []RouterConfig, cfg ReanchorConfi
 				continue
 			}
 			for _, c := range ap.Clients {
-				c.MAC = strings.ToUpper(c.MAC)
 				currentByMAC[c.MAC] = struct {
-					bssid  string
+					bssid  macaddr.MAC
 					signal int
 					host   string
 				}{bssid: ap.BSSID, signal: c.Signal, host: rt.Host}
@@ -443,7 +463,7 @@ func dawnReanchor(ctx context.Context, routers []RouterConfig, cfg ReanchorConfi
 		hm := DawnHearingMapFromHost(ctx, rt.Host, runner)
 		for mac, bssids := range hm {
 			if hearing[mac] == nil {
-				hearing[mac] = make(map[string]int)
+				hearing[mac] = make(map[macaddr.MAC]int)
 			}
 			for bssid, signal := range bssids {
 				if prev, ok := hearing[mac][bssid]; !ok || signal > prev {
@@ -464,18 +484,18 @@ func dawnReanchor(ctx context.Context, routers []RouterConfig, cfg ReanchorConfi
 			continue
 		}
 		currentAP := apByBSSID[current.bssid]
-		var bestBSSID string
+		var bestBSSID macaddr.MAC
 		var bestSignal int
 		for bssid, signal := range hearingMap {
 			if bssid == current.bssid {
 				continue
 			}
-			if bestBSSID == "" || signal > bestSignal {
+			if !bestBSSID.IsValid() || signal > bestSignal {
 				bestBSSID = bssid
 				bestSignal = signal
 			}
 		}
-		if bestBSSID == "" {
+		if !bestBSSID.IsValid() {
 			continue
 		}
 		if bestSignal < cfg.MinRecommendedSignal {
@@ -504,15 +524,14 @@ func dawnReanchor(ctx context.Context, routers []RouterConfig, cfg ReanchorConfi
 		if recs[i].DeltaDbm != recs[j].DeltaDbm {
 			return recs[i].DeltaDbm > recs[j].DeltaDbm
 		}
-		return recs[i].MAC < recs[j].MAC
+		return recs[i].MAC.Compare(recs[j].MAC) < 0
 	})
 	return recs, true
 }
 
 // ReanchorKickScript genera el comando hostapd del_client para expulsar a un
 // cliente de un AP. Se ejecuta en el host donde está el AP actual (DAWN).
-func ReanchorKickScript(mac string, iface string) string {
-	mac = strings.ToUpper(mac)
+func ReanchorKickScript(mac macaddr.MAC, iface string) string {
 	return fmt.Sprintf("ubus call hostapd.%s del_client '{\"addr\":\"%s\",\"reason\":5,\"deauth\":true,\"ban_time\":120000}'",
 		iface, mac)
 }

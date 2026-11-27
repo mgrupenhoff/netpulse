@@ -31,10 +31,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 	"github.com/gnacho/netpulse/server-go/internal/agentbin"
 	"github.com/gnacho/netpulse/server-go/internal/agentinstall"
 	"github.com/gnacho/netpulse/server-go/internal/auth"
+	"github.com/gnacho/netpulse/server-go/internal/logonce"
 	"github.com/gnacho/netpulse/server-go/internal/openwrtpkg"
 	"github.com/gnacho/netpulse/server-go/internal/rearmer"
 	"github.com/gnacho/netpulse/server-go/internal/reinstall"
@@ -43,6 +45,10 @@ import (
 	"github.com/gnacho/netpulse/server-go/internal/uninstall"
 	"github.com/gnacho/netpulse/server-go/internal/vercmp"
 )
+
+// macWarn avisa una sola vez por valor de las MAC inválidas que llegan en los
+// pushes del agente y en las peticiones de la API: se repiten en cada envío.
+var macWarn = logonce.New("[httpapi] ")
 
 const (
 	// ingestBodyCap: body máximo del push del agente (2 MB, SPEC §1).
@@ -872,8 +878,9 @@ func (s *server) handleAgentsList(w http.ResponseWriter, _ *http.Request) {
 	if s.db != nil {
 		if rows, err := s.db.Query("SELECT id, type, name, host, COALESCE(mac,'') FROM routers"); err == nil {
 			for rows.Next() {
-				var id, typ, name, host, mac string
-				if rows.Scan(&id, &typ, &name, &host, &mac) == nil {
+				var id, typ, name, host, rawMac string
+				if rows.Scan(&id, &typ, &name, &host, &rawMac) == nil {
+					mac, _ := macaddr.ParseOrWarn(macWarn, "agent.routers_mac router="+id, rawMac)
 					routerByID[id] = routerIdentity{ID: id, Type: typ, Name: name, Host: host, Mac: mac}
 				}
 			}
@@ -936,7 +943,8 @@ func (s *server) handleAgentsList(w http.ResponseWriter, _ *http.Request) {
 				// el router sin id: la UI pintaba "agente no instalado" con el
 				// agente vivo. La identidad retenida por el registry (#852) es
 				// la que sobrevive a esos pushes.
-				host, bridgeMAC := "", ""
+				host := ""
+				var bridgeMAC macaddr.MAC
 				if s.agents != nil {
 					host, bridgeMAC, _ = s.agents.Identity(slug)
 				}
@@ -946,8 +954,8 @@ func (s *server) handleAgentsList(w http.ResponseWriter, _ *http.Request) {
 							host = h
 						}
 					}
-					if bridgeMAC == "" {
-						bridgeMAC = payload.Data.System.BridgeMAC
+					if !bridgeMAC.IsValid() {
+						bridgeMAC, _ = macaddr.ParseOrWarn(macWarn, "agent.bridge_mac router="+slug, payload.Data.System.BridgeMAC)
 					}
 				}
 				item.RouterID = resolveAgentRouterIdentity(slug, host, bridgeMAC, routerByID)
@@ -997,7 +1005,7 @@ type routerIdentity struct {
 	Type string
 	Name string
 	Host string
-	Mac  string
+	Mac  macaddr.MAC
 }
 
 // resolveAgentRouter devuelve el id del router asociado a un agente a partir
@@ -1005,9 +1013,10 @@ type routerIdentity struct {
 // llamadores que no tienen la identidad retenida; handleAgentsList y el plan
 // de canales usan resolveAgentRouterIdentity con la identidad del registry.
 func resolveAgentRouter(slug string, payload *probe.Payload, routers map[string]routerIdentity) string {
-	host, bridgeMAC := "", ""
+	host := ""
+	var bridgeMAC macaddr.MAC
 	if payload != nil && payload.Data.System != nil {
-		bridgeMAC = payload.Data.System.BridgeMAC
+		bridgeMAC, _ = macaddr.ParseOrWarn(macWarn, "agent.bridge_mac router="+slug, payload.Data.System.BridgeMAC)
 		if payload.Data.System.Board != nil {
 			host = payload.Data.System.Board.Hostname
 		}
@@ -1022,15 +1031,15 @@ func resolveAgentRouter(slug string, payload *probe.Payload, routers map[string]
 // asociación. La MAC es la identidad física autoritativa. Recibe host y MAC
 // por separado porque el último push puede ser event-driven y no traerlos
 // (#1874): ahí se pasan los retenidos por el registry (#852).
-func resolveAgentRouterIdentity(slug, host, bridgeMAC string, routers map[string]routerIdentity) string {
+func resolveAgentRouterIdentity(slug, host string, bridgeMAC macaddr.MAC, routers map[string]routerIdentity) string {
 	if slug != "" {
 		if _, ok := routers[slug]; ok {
 			return slug
 		}
 	}
-	if bridgeMAC != "" {
+	if bridgeMAC.IsValid() {
 		for _, r := range routers {
-			if r.Mac != "" && strings.EqualFold(bridgeMAC, r.Mac) {
+			if r.Mac == bridgeMAC {
 				return r.ID
 			}
 		}

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/pve"
 )
 
@@ -16,17 +17,17 @@ import (
 // hypervisor. El caso que la heurística L2 NO puede resolver (puerto mezclado).
 func TestSealProxmoxInfra(t *testing.T) {
 	inv := &pveInventory{
-		ctByMAC: map[string]pveVM{
-			"BC:24:11:A4:9E:BB": {Name: "webs", Node: "citadel-01", Type: "lxc", Instance: "default"},
-			"02:78:F4:02:8A:94": {Name: "homeassistant", Node: "citadel-01", Type: "lxc", Instance: "default"},
+		ctByMAC: map[macaddr.MAC]pveVM{
+			macaddr.MustParse("BC:24:11:A4:9E:BB"): {Name: "webs", Node: "citadel-01", Type: "lxc", Instance: "default"},
+			macaddr.MustParse("02:78:F4:02:8A:94"): {Name: "homeassistant", Node: "citadel-01", Type: "lxc", Instance: "default"},
 		},
 		nodes: map[string]pveNode{"default|citadel-01": {Instance: "default", Node: "citadel-01"}},
 	}
 	devices := []Device{
-		{ID: "c8-ff-bf-0c-60-12", MAC: "C8:FF:BF:0C:60:12", Name: "citadel-01", RouterID: "gateway", Band: "—"},
-		{ID: "bc-24-11-a4-9e-bb", MAC: "BC:24:11:A4:9E:BB", Name: "webs", RouterID: "gateway", Band: "cable", Port: "lan3", AttachTo: "dist-gateway-lan3"},
-		{ID: "02-78-f4-02-8a-94", MAC: "02:78:F4:02:8A:94", Name: "homeassistant", RouterID: "gateway", Band: "cable", Port: "lan3", AttachTo: "dist-gateway-lan3"},
-		{ID: "aa-bb-cc-dd-ee-ff", MAC: "AA:BB:CC:DD:EE:FF", Name: "shield", RouterID: "gateway", Band: "cable", Port: "lan3"},
+		{ID: "c8-ff-bf-0c-60-12", MAC: macaddr.MustParse("C8:FF:BF:0C:60:12"), Name: "citadel-01", RouterID: "gateway", Band: "—"},
+		{ID: "bc-24-11-a4-9e-bb", MAC: macaddr.MustParse("BC:24:11:A4:9E:BB"), Name: "webs", RouterID: "gateway", Band: "cable", Port: "lan3", AttachTo: "dist-gateway-lan3"},
+		{ID: "02-78-f4-02-8a-94", MAC: macaddr.MustParse("02:78:F4:02:8A:94"), Name: "homeassistant", RouterID: "gateway", Band: "cable", Port: "lan3", AttachTo: "dist-gateway-lan3"},
+		{ID: "aa-bb-cc-dd-ee-ff", MAC: macaddr.MustParse("AA:BB:CC:DD:EE:FF"), Name: "shield", RouterID: "gateway", Band: "cable", Port: "lan3"},
 	}
 	applyPVEInfra(devices, nil, inv)
 
@@ -61,16 +62,16 @@ func TestSealProxmoxInfra(t *testing.T) {
 // (#1757). Un invitado sin tag queda en 0 (VLAN nativa del bridge).
 func TestSealProxmoxInfraCarriesTheGuestVlan(t *testing.T) {
 	inv := &pveInventory{
-		ctByMAC: map[string]pveVM{
-			"BC:24:11:00:00:01": {Name: "iot", Node: "pve", Type: "lxc", Instance: "default", Tag: 999},
-			"BC:24:11:00:00:02": {Name: "lan", Node: "pve", Type: "lxc", Instance: "default"},
+		ctByMAC: map[macaddr.MAC]pveVM{
+			macaddr.MustParse("BC:24:11:00:00:01"): {Name: "iot", Node: "pve", Type: "lxc", Instance: "default", Tag: 999},
+			macaddr.MustParse("BC:24:11:00:00:02"): {Name: "lan", Node: "pve", Type: "lxc", Instance: "default"},
 		},
 		nodes: map[string]pveNode{"default|pve": {Instance: "default", Node: "pve"}},
 	}
 	devices := []Device{
-		{ID: "pve", MAC: "C8:FF:BF:0C:60:12", Name: "pve"},
-		{ID: "bc-24-11-00-00-01", MAC: "BC:24:11:00:00:01", Name: "iot"},
-		{ID: "bc-24-11-00-00-02", MAC: "BC:24:11:00:00:02", Name: "lan"},
+		{ID: "pve", MAC: macaddr.MustParse("C8:FF:BF:0C:60:12"), Name: "pve"},
+		{ID: "bc-24-11-00-00-01", MAC: macaddr.MustParse("BC:24:11:00:00:01"), Name: "iot"},
+		{ID: "bc-24-11-00-00-02", MAC: macaddr.MustParse("BC:24:11:00:00:02"), Name: "lan"},
 	}
 	applyPVEInfra(devices, nil, inv)
 	if devices[1].Vlan != 999 {
@@ -96,17 +97,17 @@ func TestSealProxmoxInfraCarriesTheGuestVlan(t *testing.T) {
 // única fuente: sin tag, la respuesta honesta es "sin VLAN".
 func TestSealProxmoxInfraUntaggedGuestClearsTheFdbVlan(t *testing.T) {
 	inv := &pveInventory{
-		ctByMAC: map[string]pveVM{
-			"BC:24:11:00:00:01": {Name: "tagged", Node: "pve", Type: "qemu", Instance: "default", Tag: 999},
-			"BC:24:11:00:00:02": {Name: "untagged", Node: "pve", Type: "lxc", Instance: "default"},
+		ctByMAC: map[macaddr.MAC]pveVM{
+			macaddr.MustParse("BC:24:11:00:00:01"): {Name: "tagged", Node: "pve", Type: "qemu", Instance: "default", Tag: 999},
+			macaddr.MustParse("BC:24:11:00:00:02"): {Name: "untagged", Node: "pve", Type: "lxc", Instance: "default"},
 		},
 		nodes: map[string]pveNode{"default|pve": {Instance: "default", Node: "pve"}},
 	}
 	devices := []Device{
-		{ID: "pve", MAC: "C8:FF:BF:0C:60:12", Name: "pve", Vlan: 888},
-		{ID: "bc-24-11-00-00-01", MAC: "BC:24:11:00:00:01", Name: "tagged", Vlan: 1},
-		{ID: "bc-24-11-00-00-02", MAC: "BC:24:11:00:00:02", Name: "untagged", Vlan: 888},
-		{ID: "aa-bb-cc-dd-ee-ff", MAC: "AA:BB:CC:DD:EE:FF", Name: "otro", Vlan: 888},
+		{ID: "pve", MAC: macaddr.MustParse("C8:FF:BF:0C:60:12"), Name: "pve", Vlan: 888},
+		{ID: "bc-24-11-00-00-01", MAC: macaddr.MustParse("BC:24:11:00:00:01"), Name: "tagged", Vlan: 1},
+		{ID: "bc-24-11-00-00-02", MAC: macaddr.MustParse("BC:24:11:00:00:02"), Name: "untagged", Vlan: 888},
+		{ID: "aa-bb-cc-dd-ee-ff", MAC: macaddr.MustParse("AA:BB:CC:DD:EE:FF"), Name: "otro", Vlan: 888},
 	}
 	applyPVEInfra(devices, nil, inv)
 	if devices[0].Vlan != 0 {
@@ -136,7 +137,7 @@ func TestSealProxmoxInfraUntaggedGuestClearsTheFdbVlan(t *testing.T) {
 // TestSealProxmoxInfraSinInventario: sin cluster configurado o sin CTs
 // conocidos → no-op (los devices no cambian).
 func TestSealProxmoxInfraSinInventario(t *testing.T) {
-	devices := []Device{{ID: "c8-ff-bf-0c-60-12", MAC: "C8:FF:BF:0C:60:12", Name: "citadel-01"}}
+	devices := []Device{{ID: "c8-ff-bf-0c-60-12", MAC: macaddr.MustParse("C8:FF:BF:0C:60:12"), Name: "citadel-01"}}
 	applyPVEInfra(devices, nil, nil)
 	if devices[0].Infra != "" || devices[0].AttachTo != "" {
 		t.Fatalf("sin inventario no debe tocar devices: %+v", devices[0])
@@ -147,13 +148,13 @@ func TestSealProxmoxInfraSinInventario(t *testing.T) {
 // conocido (no habla a la LAN) no rompe nada: los CTs se sellan ct sin host.
 func TestSealProxmoxInfraHostSinDevice(t *testing.T) {
 	inv := &pveInventory{
-		ctByMAC: map[string]pveVM{
-			"BC:24:11:A4:9E:BB": {Name: "webs", Node: "citadel-99", Type: "lxc", Instance: "default"},
+		ctByMAC: map[macaddr.MAC]pveVM{
+			macaddr.MustParse("BC:24:11:A4:9E:BB"): {Name: "webs", Node: "citadel-99", Type: "lxc", Instance: "default"},
 		},
 		nodes: map[string]pveNode{"default|citadel-99": {Instance: "default", Node: "citadel-99"}},
 	}
 	devices := []Device{
-		{ID: "bc-24-11-a4-9e-bb", MAC: "BC:24:11:A4:9E:BB", Name: "webs", RouterID: "gateway"},
+		{ID: "bc-24-11-a4-9e-bb", MAC: macaddr.MustParse("BC:24:11:A4:9E:BB"), Name: "webs", RouterID: "gateway"},
 	}
 	applyPVEInfra(devices, nil, inv)
 	if devices[0].Infra != "ct" {
@@ -169,15 +170,15 @@ func TestSealProxmoxInfraHostSinDevice(t *testing.T) {
 // host se casa por IP del nodo (vmbr0).
 func TestSealProxmoxInfraHostPorIP(t *testing.T) {
 	inv := &pveInventory{
-		ctByMAC: map[string]pveVM{
-			"BC:24:11:A4:9E:BB": {Name: "webs", Node: "citadel-02", Type: "lxc", Instance: "default"},
+		ctByMAC: map[macaddr.MAC]pveVM{
+			macaddr.MustParse("BC:24:11:A4:9E:BB"): {Name: "webs", Node: "citadel-02", Type: "lxc", Instance: "default"},
 		},
 		nodes:   map[string]pveNode{"default|citadel-02": {Instance: "default", Node: "citadel-02"}},
 		nodeIPs: map[string][]string{"default|citadel-02": {"192.168.1.101"}},
 	}
 	devices := []Device{
-		{ID: "e8-ff-1e-dd-c7-ed", MAC: "E8:FF:1E:DD:C7:ED", Name: "E8:FF:1E:DD:C7:ED", IP: "192.168.1.101", RouterID: "switch16"},
-		{ID: "bc-24-11-a4-9e-bb", MAC: "BC:24:11:A4:9E:BB", Name: "webs", IP: "192.168.1.226", RouterID: "switch16", AttachTo: "dist-switch16-lan8"},
+		{ID: "e8-ff-1e-dd-c7-ed", MAC: macaddr.MustParse("E8:FF:1E:DD:C7:ED"), Name: "E8:FF:1E:DD:C7:ED", IP: "192.168.1.101", RouterID: "switch16"},
+		{ID: "bc-24-11-a4-9e-bb", MAC: macaddr.MustParse("BC:24:11:A4:9E:BB"), Name: "webs", IP: "192.168.1.226", RouterID: "switch16", AttachTo: "dist-switch16-lan8"},
 	}
 	applyPVEInfra(devices, nil, inv)
 	if devices[0].Infra != "hypervisor" {
@@ -197,18 +198,18 @@ func TestSealProxmoxInfraHostPorIP(t *testing.T) {
 // nodo (vmbr0), aunque otro device tenga el nombre "citadel-01".
 func TestSealProxmoxInfraHostConflictoNICs(t *testing.T) {
 	inv := &pveInventory{
-		ctByMAC: map[string]pveVM{
-			"BC:24:11:A4:9E:BB": {Name: "webs", Node: "citadel-01", Type: "lxc", Instance: "default"},
+		ctByMAC: map[macaddr.MAC]pveVM{
+			macaddr.MustParse("BC:24:11:A4:9E:BB"): {Name: "webs", Node: "citadel-01", Type: "lxc", Instance: "default"},
 		},
 		nodes:   map[string]pveNode{"default|citadel-01": {Instance: "default", Node: "citadel-01"}},
 		nodeIPs: map[string][]string{"default|citadel-01": {"192.168.1.100"}},
 	}
 	devices := []Device{
 		// device con nombre citadel-01 pero IP de gestión (.243) y offline.
-		{ID: "c8-ff-bf-0c-60-12", MAC: "C8:FF:BF:0C:60:12", Name: "citadel-01", IP: "192.168.1.243", Online: false},
+		{ID: "c8-ff-bf-0c-60-12", MAC: macaddr.MustParse("C8:FF:BF:0C:60:12"), Name: "citadel-01", IP: "192.168.1.243", Online: false},
 		// device online con la IP vmbr0 del nodo (.100): host correcto.
-		{ID: "fe-c9-95-97-15-30", MAC: "FE:C9:95:97:15:30", Name: "FE:C9:95:97:15:30", IP: "192.168.1.100", Online: true},
-		{ID: "bc-24-11-a4-9e-bb", MAC: "BC:24:11:A4:9E:BB", Name: "webs", IP: "192.168.1.226", Online: true},
+		{ID: "fe-c9-95-97-15-30", MAC: macaddr.MustParse("FE:C9:95:97:15:30"), Name: "FE:C9:95:97:15:30", IP: "192.168.1.100", Online: true},
+		{ID: "bc-24-11-a4-9e-bb", MAC: macaddr.MustParse("BC:24:11:A4:9E:BB"), Name: "webs", IP: "192.168.1.226", Online: true},
 	}
 	applyPVEInfra(devices, nil, inv)
 	// El hypervisor debe ser el device con IP .100 (online), no el offline.
@@ -223,11 +224,11 @@ func TestSealProxmoxInfraHostConflictoNICs(t *testing.T) {
 	}
 }
 
-// TestPVEHostMACDeviceID: el id del device (MAC minúsculas con guiones) casa
+// TestPVEMacToDeviceID: el id del device (MAC minúsculas con guiones) casa
 // con la clave del inventario (MAC mayúsculas con ':') para CTs.
 func TestPVEMacToDeviceID(t *testing.T) {
-	if got := macToDeviceID("BC:24:11:A4:9E:BB"); got != "bc-24-11-a4-9e-bb" {
-		t.Fatalf("macToDeviceID: %q", got)
+	if got := macaddr.MustParse("BC:24:11:A4:9E:BB").DeviceID(); got != "bc-24-11-a4-9e-bb" {
+		t.Fatalf("DeviceID: %q", got)
 	}
 }
 
@@ -237,18 +238,18 @@ func TestPVEMacToDeviceID(t *testing.T) {
 // inferido por L2 NO se duplica.
 func TestPVEHypervisorDistNodes(t *testing.T) {
 	inv := &pveInventory{
-		ctByMAC: map[string]pveVM{
-			"BC:24:11:A4:9E:BB": {Name: "webs", Node: "citadel-02", Type: "lxc", Instance: "default"},
-			"02:78:F4:02:8A:94": {Name: "pbs", Node: "citadel-02", Type: "lxc", Instance: "default"},
+		ctByMAC: map[macaddr.MAC]pveVM{
+			macaddr.MustParse("BC:24:11:A4:9E:BB"): {Name: "webs", Node: "citadel-02", Type: "lxc", Instance: "default"},
+			macaddr.MustParse("02:78:F4:02:8A:94"): {Name: "pbs", Node: "citadel-02", Type: "lxc", Instance: "default"},
 		},
 		nodes:   map[string]pveNode{"default|citadel-02": {Instance: "default", Node: "citadel-02"}, "default|citadel-01": {Instance: "default", Node: "citadel-01"}},
 		nodeIPs: map[string][]string{"default|citadel-02": {"192.168.1.101"}, "default|citadel-01": {"192.168.1.100"}},
 	}
 	devices := []Device{
-		{ID: "e8-ff-1e-dd-c7-ed", MAC: "E8:FF:1E:DD:C7:ED", Name: "E8:FF:1E:DD:C7:ED", IP: "192.168.1.101", RouterID: "switch16", Port: "lan8"},
-		{ID: "fe-c9-95-97-15-30", MAC: "FE:C9:95:97:15:30", Name: "FE:C9:95:97:15:30", IP: "192.168.1.100", RouterID: "gateway", Port: "lan1"},
-		{ID: "bc-24-11-a4-9e-bb", MAC: "BC:24:11:A4:9E:BB", Name: "webs"},
-		{ID: "02-78-f4-02-8a-94", MAC: "02:78:F4:02:8A:94", Name: "pbs"},
+		{ID: "e8-ff-1e-dd-c7-ed", MAC: macaddr.MustParse("E8:FF:1E:DD:C7:ED"), Name: "E8:FF:1E:DD:C7:ED", IP: "192.168.1.101", RouterID: "switch16", Port: "lan8"},
+		{ID: "fe-c9-95-97-15-30", MAC: macaddr.MustParse("FE:C9:95:97:15:30"), Name: "FE:C9:95:97:15:30", IP: "192.168.1.100", RouterID: "gateway", Port: "lan1"},
+		{ID: "bc-24-11-a4-9e-bb", MAC: macaddr.MustParse("BC:24:11:A4:9E:BB"), Name: "webs"},
+		{ID: "02-78-f4-02-8a-94", MAC: macaddr.MustParse("02:78:F4:02:8A:94"), Name: "pbs"},
 	}
 	// citadel-01 ya tiene distnode hypervisor inferido por L2: no duplicar.
 	dists := []DistributionNode{{ID: "dist-gateway-lan1", Kind: "hypervisor", RouterID: "gateway", HostDeviceID: "fe-c9-95-97-15-30"}}
@@ -275,7 +276,7 @@ func TestPVEHypervisorDistNodes(t *testing.T) {
 // TestPVEHypervisorDistNodesSinHost: sin inventario los distnodes no cambian.
 func TestPVEHypervisorDistNodesSinHost(t *testing.T) {
 	dists := []DistributionNode{{ID: "dist-gateway-lan1", Kind: "inferred"}}
-	out := applyPVEInfra([]Device{{ID: "x", MAC: "AA:BB:CC:DD:EE:FF"}}, dists, nil)
+	out := applyPVEInfra([]Device{{ID: "x", MAC: macaddr.MustParse("AA:BB:CC:DD:EE:FF")}}, dists, nil)
 	if len(out) != 1 || out[0].ID != "dist-gateway-lan1" {
 		t.Fatalf("sin inventario no debe añadir distnodes: %+v", out)
 	}
@@ -286,9 +287,9 @@ func TestPVEHypervisorDistNodesSinHost(t *testing.T) {
 // CTs cuelgan del host de SU instancia y los distnodes son distintos.
 func TestSealProxmoxInfraMultiInstancia(t *testing.T) {
 	inv := &pveInventory{
-		ctByMAC: map[string]pveVM{
-			"AA:00:00:00:00:01": {Name: "webs", Node: "pve1", Type: "lxc", Instance: "casa"},
-			"BB:00:00:00:00:02": {Name: "erp", Node: "pve1", Type: "qemu", Instance: "ofi"},
+		ctByMAC: map[macaddr.MAC]pveVM{
+			macaddr.MustParse("AA:00:00:00:00:01"): {Name: "webs", Node: "pve1", Type: "lxc", Instance: "casa"},
+			macaddr.MustParse("BB:00:00:00:00:02"): {Name: "erp", Node: "pve1", Type: "qemu", Instance: "ofi"},
 		},
 		nodes: map[string]pveNode{
 			"casa|pve1": {Instance: "casa", Node: "pve1"},
@@ -296,8 +297,8 @@ func TestSealProxmoxInfraMultiInstancia(t *testing.T) {
 		},
 	}
 	devices := []Device{
-		{ID: "aa-11", MAC: "AA:11:00:00:00:01", Name: "host-casa", RouterID: "gateway", Band: "—"},
-		{ID: "bb-22", MAC: "BB:11:00:00:00:02", Name: "host-ofi", RouterID: "gateway", Band: "—"},
+		{ID: "aa-11", MAC: macaddr.MustParse("AA:11:00:00:00:01"), Name: "host-casa", RouterID: "gateway", Band: "—"},
+		{ID: "bb-22", MAC: macaddr.MustParse("BB:11:00:00:00:02"), Name: "host-ofi", RouterID: "gateway", Band: "—"},
 	}
 	// Hosts casados por IP de su instancia.
 	inv.nodeIPs = map[string][]string{"casa|pve1": {"10.0.0.1"}, "ofi|pve1": {"10.0.0.2"}}
@@ -309,7 +310,7 @@ func TestSealProxmoxInfraMultiInstancia(t *testing.T) {
 		t.Fatalf("hosts: %q %q", devices[0].Infra, devices[1].Infra)
 	}
 	// Cada CT cuelga del host de SU instancia (no del homónimo).
-	byMAC := map[string]int{}
+	byMAC := map[macaddr.MAC]int{}
 	for i, d := range devices {
 		byMAC[d.MAC] = i
 	}
@@ -336,21 +337,21 @@ func TestSealProxmoxInfraMultiInstancia(t *testing.T) {
 // is a column of MACs wearing a CT badge.
 func TestSealProxmoxNamesContainersKnownOnlyByMAC(t *testing.T) {
 	inv := &pveInventory{
-		ctByMAC: map[string]pveVM{
-			"BC:24:11:A4:9E:BB": {Name: "storage", Node: "pve1", Type: "lxc", Instance: "default"},
-			"02:00:00:00:00:32": {Name: "proxyapp", Node: "pve1", Type: "lxc", Instance: "default"},
-			"02:00:00:00:00:31": {Name: "jellyfin", Node: "pve1", Type: "lxc", Instance: "default"},
+		ctByMAC: map[macaddr.MAC]pveVM{
+			macaddr.MustParse("BC:24:11:A4:9E:BB"): {Name: "storage", Node: "pve1", Type: "lxc", Instance: "default"},
+			macaddr.MustParse("02:00:00:00:00:32"): {Name: "proxyapp", Node: "pve1", Type: "lxc", Instance: "default"},
+			macaddr.MustParse("02:00:00:00:00:31"): {Name: "jellyfin", Node: "pve1", Type: "lxc", Instance: "default"},
 		},
 		nodes: map[string]pveNode{"default|pve1": {Instance: "default", Node: "pve1"}},
 	}
 	devices := []Device{
 		// Known only by its MAC: the guest name is all we have.
-		{ID: "bc-24-11-a4-9e-bb", MAC: "BC:24:11:A4:9E:BB", Name: "BC:24:11:A4:9E:BB"},
+		{ID: "bc-24-11-a4-9e-bb", MAC: macaddr.MustParse("BC:24:11:A4:9E:BB"), Name: "BC:24:11:A4:9E:BB"},
 		// Same, spelled with dashes as the device id is.
-		{ID: "02-00-00-00-00-32", MAC: "02:00:00:00:00:32", Name: "02-00-00-00-00-32"},
+		{ID: "02-00-00-00-00-32", MAC: macaddr.MustParse("02:00:00:00:00:32"), Name: "02-00-00-00-00-32"},
 		// This one has a real name from its DHCP lease: Proxmox must not
 		// overwrite what the network already knows it as.
-		{ID: "02-00-00-00-00-31", MAC: "02:00:00:00:00:31", Name: "media-server"},
+		{ID: "02-00-00-00-00-31", MAC: macaddr.MustParse("02:00:00:00:00:31"), Name: "media-server"},
 	}
 	applyPVEInfra(devices, nil, inv)
 
@@ -373,10 +374,10 @@ func TestSealProxmoxNamesContainersKnownOnlyByMAC(t *testing.T) {
 // A guest the controller reports without a name leaves the device alone.
 func TestSealProxmoxKeepsMACWhenTheGuestHasNoName(t *testing.T) {
 	inv := &pveInventory{
-		ctByMAC: map[string]pveVM{"BC:24:11:A4:9E:BB": {Node: "pve1", Type: "qemu", Instance: "default"}},
+		ctByMAC: map[macaddr.MAC]pveVM{macaddr.MustParse("BC:24:11:A4:9E:BB"): {Node: "pve1", Type: "qemu", Instance: "default"}},
 		nodes:   map[string]pveNode{"default|pve1": {Instance: "default", Node: "pve1"}},
 	}
-	devices := []Device{{ID: "bc-24-11-a4-9e-bb", MAC: "BC:24:11:A4:9E:BB", Name: "BC:24:11:A4:9E:BB"}}
+	devices := []Device{{ID: "bc-24-11-a4-9e-bb", MAC: macaddr.MustParse("BC:24:11:A4:9E:BB"), Name: "BC:24:11:A4:9E:BB"}}
 	applyPVEInfra(devices, nil, inv)
 	if devices[0].Name != "BC:24:11:A4:9E:BB" {
 		t.Fatalf("name: %q", devices[0].Name)
@@ -465,8 +466,8 @@ func TestPVENodeIPFallsBackToTheEndpoint(t *testing.T) {
 	// And with that address the seal finally produces the hypervisor node
 	// and hangs the container off it -- the whole point of the fallback.
 	devices := []Device{
-		{ID: "02-00-00-00-00-40", MAC: "02:00:00:00:00:40", Name: "proxmox", IP: want, RouterID: "gateway", Port: "lan2"},
-		{ID: "bc-24-11-a4-9e-bb", MAC: "BC:24:11:A4:9E:BB", Name: "BC:24:11:A4:9E:BB"},
+		{ID: "02-00-00-00-00-40", MAC: macaddr.MustParse("02:00:00:00:00:40"), Name: "proxmox", IP: want, RouterID: "gateway", Port: "lan2"},
+		{ID: "bc-24-11-a4-9e-bb", MAC: macaddr.MustParse("BC:24:11:A4:9E:BB"), Name: "BC:24:11:A4:9E:BB"},
 	}
 	dists := applyPVEInfra(devices, nil, inv)
 	if devices[0].Infra != "hypervisor" {
@@ -529,8 +530,8 @@ func TestPVEKeepsBothTheManagementAndTheClusterAddress(t *testing.T) {
 	// And the host still matches on the management address, as it did
 	// before cluster/status existed here.
 	devices := []Device{
-		{ID: "aa-bb-cc-00-00-01", MAC: "AA:BB:CC:00:00:01", Name: "pve-host", IP: "192.0.2.50"},
-		{ID: "bc-24-11-a4-9e-bb", MAC: "BC:24:11:A4:9E:BB", Name: "BC:24:11:A4:9E:BB"},
+		{ID: "aa-bb-cc-00-00-01", MAC: macaddr.MustParse("AA:BB:CC:00:00:01"), Name: "pve-host", IP: "192.0.2.50"},
+		{ID: "bc-24-11-a4-9e-bb", MAC: macaddr.MustParse("BC:24:11:A4:9E:BB"), Name: "BC:24:11:A4:9E:BB"},
 	}
 	applyPVEInfra(devices, nil, inv)
 	if devices[0].Infra != "hypervisor" {
@@ -545,17 +546,17 @@ func TestPVEKeepsBothTheManagementAndTheClusterAddress(t *testing.T) {
 // which it is and the seal used to ignore it, so a VM wore a CT badge.
 func TestSealProxmoxTellsVMsFromContainers(t *testing.T) {
 	inv := &pveInventory{
-		ctByMAC: map[string]pveVM{
-			"BC:24:11:A4:9E:BB": {Name: "appbox", Node: "pve1", Type: "lxc", Instance: "default"},
-			"02:00:00:00:00:50": {Name: "vm-appliance", Node: "pve1", Type: "qemu", Instance: "default"},
+		ctByMAC: map[macaddr.MAC]pveVM{
+			macaddr.MustParse("BC:24:11:A4:9E:BB"): {Name: "appbox", Node: "pve1", Type: "lxc", Instance: "default"},
+			macaddr.MustParse("02:00:00:00:00:50"): {Name: "vm-appliance", Node: "pve1", Type: "qemu", Instance: "default"},
 		},
 		nodes:   map[string]pveNode{"default|pve1": {Instance: "default", Node: "pve1"}},
 		nodeIPs: map[string][]string{"default|pve1": {"192.0.2.2"}},
 	}
 	devices := []Device{
-		{ID: "aa-bb-cc-00-00-01", MAC: "AA:BB:CC:00:00:01", Name: "pve-host", IP: "192.0.2.2"},
-		{ID: "bc-24-11-a4-9e-bb", MAC: "BC:24:11:A4:9E:BB", Name: "BC:24:11:A4:9E:BB"},
-		{ID: "02-00-00-00-00-50", MAC: "02:00:00:00:00:50", Name: "02:00:00:00:00:50"},
+		{ID: "aa-bb-cc-00-00-01", MAC: macaddr.MustParse("AA:BB:CC:00:00:01"), Name: "pve-host", IP: "192.0.2.2"},
+		{ID: "bc-24-11-a4-9e-bb", MAC: macaddr.MustParse("BC:24:11:A4:9E:BB"), Name: "BC:24:11:A4:9E:BB"},
+		{ID: "02-00-00-00-00-50", MAC: macaddr.MustParse("02:00:00:00:00:50"), Name: "02:00:00:00:00:50"},
 	}
 	applyPVEInfra(devices, nil, inv)
 
@@ -582,20 +583,20 @@ func TestSealProxmoxTellsVMsFromContainers(t *testing.T) {
 // "servidor" rule.
 func TestSealProxmoxReclassifiesWhatItRenames(t *testing.T) {
 	inv := &pveInventory{
-		ctByMAC: map[string]pveVM{
-			"BC:24:11:00:00:01": {Name: "adguard", Node: "pve1", Type: "lxc", Instance: "default"},
-			"BC:24:11:00:00:02": {Name: "appbox", Node: "pve1", Type: "lxc", Instance: "default"},
-			"BC:24:11:00:00:03": {Name: "pixel-of-someone", Node: "pve1", Type: "lxc", Instance: "default"},
+		ctByMAC: map[macaddr.MAC]pveVM{
+			macaddr.MustParse("BC:24:11:00:00:01"): {Name: "adguard", Node: "pve1", Type: "lxc", Instance: "default"},
+			macaddr.MustParse("BC:24:11:00:00:02"): {Name: "appbox", Node: "pve1", Type: "lxc", Instance: "default"},
+			macaddr.MustParse("BC:24:11:00:00:03"): {Name: "pixel-of-someone", Node: "pve1", Type: "lxc", Instance: "default"},
 		},
 		nodes:   map[string]pveNode{"default|pve1": {Instance: "default", Node: "pve1"}},
 		nodeIPs: map[string][]string{"default|pve1": {"192.0.2.2"}},
 	}
 	devices := []Device{
-		{ID: "aa-bb-cc-00-00-01", MAC: "AA:BB:CC:00:00:01", Name: "pve-host", IP: "192.0.2.2", Type: "desconocido"},
-		{ID: "bc-24-11-00-00-01", MAC: "BC:24:11:00:00:01", Name: "BC:24:11:00:00:01", Type: "desconocido"},
-		{ID: "bc-24-11-00-00-02", MAC: "BC:24:11:00:00:02", Name: "BC:24:11:00:00:02", Type: "desconocido"},
+		{ID: "aa-bb-cc-00-00-01", MAC: macaddr.MustParse("AA:BB:CC:00:00:01"), Name: "pve-host", IP: "192.0.2.2", Type: "desconocido"},
+		{ID: "bc-24-11-00-00-01", MAC: macaddr.MustParse("BC:24:11:00:00:01"), Name: "BC:24:11:00:00:01", Type: "desconocido"},
+		{ID: "bc-24-11-00-00-02", MAC: macaddr.MustParse("BC:24:11:00:00:02"), Name: "BC:24:11:00:00:02", Type: "desconocido"},
 		// Already typed from its own evidence: the rename must not re-open it.
-		{ID: "bc-24-11-00-00-03", MAC: "BC:24:11:00:00:03", Name: "BC:24:11:00:00:03", Type: "servidor"},
+		{ID: "bc-24-11-00-00-03", MAC: macaddr.MustParse("BC:24:11:00:00:03"), Name: "BC:24:11:00:00:03", Type: "servidor"},
 	}
 	applyPVEInfra(devices, nil, inv)
 
@@ -619,24 +620,24 @@ func TestSealProxmoxReclassifiesWhatItRenames(t *testing.T) {
 // "a server" still wins.
 func TestSealProxmoxTypesEveryGuest(t *testing.T) {
 	inv := &pveInventory{
-		ctByMAC: map[string]pveVM{
-			"BC:24:11:00:00:01": {Name: "metrics", Node: "pve1", Type: "lxc", Instance: "default"},
-			"BC:24:11:00:00:02": {Name: "unifi", Node: "pve1", Type: "lxc", Instance: "default"},
-			"BC:24:11:00:00:03": {Name: "frigate", Node: "pve1", Type: "qemu", Instance: "default"},
+		ctByMAC: map[macaddr.MAC]pveVM{
+			macaddr.MustParse("BC:24:11:00:00:01"): {Name: "metrics", Node: "pve1", Type: "lxc", Instance: "default"},
+			macaddr.MustParse("BC:24:11:00:00:02"): {Name: "unifi", Node: "pve1", Type: "lxc", Instance: "default"},
+			macaddr.MustParse("BC:24:11:00:00:03"): {Name: "frigate", Node: "pve1", Type: "qemu", Instance: "default"},
 		},
 		nodes:   map[string]pveNode{"default|pve1": {Instance: "default", Node: "pve1"}},
 		nodeIPs: map[string][]string{"default|pve1": {"192.0.2.2"}},
 	}
 	devices := []Device{
 		// The host itself, named by nothing in particular.
-		{ID: "aa-bb-cc-00-00-01", MAC: "AA:BB:CC:00:00:01", Name: "maquina-del-armario", IP: "192.0.2.2", Type: "desconocido"},
+		{ID: "aa-bb-cc-00-00-01", MAC: macaddr.MustParse("AA:BB:CC:00:00:01"), Name: "maquina-del-armario", IP: "192.0.2.2", Type: "desconocido"},
 		// Renamed by the seal.
-		{ID: "bc-24-11-00-00-01", MAC: "BC:24:11:00:00:01", Name: "BC:24:11:00:00:01", Type: "desconocido"},
+		{ID: "bc-24-11-00-00-01", MAC: macaddr.MustParse("BC:24:11:00:00:01"), Name: "BC:24:11:00:00:01", Type: "desconocido"},
 		// Already had a lease name, so the seal does not rename it -- and it
 		// was still left untyped before this.
-		{ID: "bc-24-11-00-00-02", MAC: "BC:24:11:00:00:02", Name: "unifi", Type: "desconocido"},
+		{ID: "bc-24-11-00-00-02", MAC: macaddr.MustParse("BC:24:11:00:00:02"), Name: "unifi", Type: "desconocido"},
 		// A name a rule covers: the camera wins over the generic default.
-		{ID: "bc-24-11-00-00-03", MAC: "BC:24:11:00:00:03", Name: "camera-nvr", Type: "desconocido"},
+		{ID: "bc-24-11-00-00-03", MAC: macaddr.MustParse("BC:24:11:00:00:03"), Name: "camera-nvr", Type: "desconocido"},
 	}
 	applyPVEInfra(devices, nil, inv)
 
@@ -653,18 +654,18 @@ func TestSealProxmoxTypesEveryGuest(t *testing.T) {
 // con su puerto (como el canon) y solo queda el distnode PVE de agrupación.
 func TestPVEAbsorbeInferredDeHypervisor(t *testing.T) {
 	inv := &pveInventory{
-		ctByMAC: map[string]pveVM{
-			"BC:24:11:A4:9E:BB": {Name: "webs", Node: "citadel-01", Type: "lxc", Instance: "default"},
-			"02:78:F4:02:8A:94": {Name: "ha", Node: "citadel-01", Type: "lxc", Instance: "default"},
+		ctByMAC: map[macaddr.MAC]pveVM{
+			macaddr.MustParse("BC:24:11:A4:9E:BB"): {Name: "webs", Node: "citadel-01", Type: "lxc", Instance: "default"},
+			macaddr.MustParse("02:78:F4:02:8A:94"): {Name: "ha", Node: "citadel-01", Type: "lxc", Instance: "default"},
 		},
 		nodes:   map[string]pveNode{"default|citadel-01": {Instance: "default", Node: "citadel-01"}},
 		nodeIPs: map[string][]string{"default|citadel-01": {"192.168.1.100"}},
 	}
 	devices := []Device{
-		{ID: "c8-ff-bf-0c-60-12", MAC: "C8:FF:BF:0C:60:12", Name: "C8:FF:BF:0C:60:12", IP: "192.168.1.100",
+		{ID: "c8-ff-bf-0c-60-12", MAC: macaddr.MustParse("C8:FF:BF:0C:60:12"), Name: "C8:FF:BF:0C:60:12", IP: "192.168.1.100",
 			RouterID: "switch16", Port: "lan5", AttachTo: "dist-switch16-lan5", Online: true},
-		{ID: "bc-24-11-a4-9e-bb", MAC: "BC:24:11:A4:9E:BB", Name: "webs", AttachTo: "dist-switch16-lan5"},
-		{ID: "02-78-f4-02-8a-94", MAC: "02:78:F4:02:8A:94", Name: "ha", AttachTo: "dist-switch16-lan5"},
+		{ID: "bc-24-11-a4-9e-bb", MAC: macaddr.MustParse("BC:24:11:A4:9E:BB"), Name: "webs", AttachTo: "dist-switch16-lan5"},
+		{ID: "02-78-f4-02-8a-94", MAC: macaddr.MustParse("02:78:F4:02:8A:94"), Name: "ha", AttachTo: "dist-switch16-lan5"},
 	}
 	dists := []DistributionNode{{ID: "dist-switch16-lan5", Kind: "inferred", RouterID: "switch16", Port: "lan5", MacCount: 3}}
 	out := applyPVEInfra(devices, dists, inv)
@@ -684,17 +685,17 @@ func TestPVEAbsorbeInferredDeHypervisor(t *testing.T) {
 // hardware real sin explicar detrás).
 func TestPVENoAbsorbeInferredConDesconocidos(t *testing.T) {
 	inv := &pveInventory{
-		ctByMAC: map[string]pveVM{
-			"BC:24:11:A4:9E:BB": {Name: "webs", Node: "citadel-01", Type: "lxc", Instance: "default"},
+		ctByMAC: map[macaddr.MAC]pveVM{
+			macaddr.MustParse("BC:24:11:A4:9E:BB"): {Name: "webs", Node: "citadel-01", Type: "lxc", Instance: "default"},
 		},
 		nodes:   map[string]pveNode{"default|citadel-01": {Instance: "default", Node: "citadel-01"}},
 		nodeIPs: map[string][]string{"default|citadel-01": {"192.168.1.100"}},
 	}
 	devices := []Device{
-		{ID: "c8-ff-bf-0c-60-12", MAC: "C8:FF:BF:0C:60:12", Name: "C8:FF:BF:0C:60:12", IP: "192.168.1.100",
+		{ID: "c8-ff-bf-0c-60-12", MAC: macaddr.MustParse("C8:FF:BF:0C:60:12"), Name: "C8:FF:BF:0C:60:12", IP: "192.168.1.100",
 			RouterID: "switch16", Port: "lan5", AttachTo: "dist-switch16-lan5", Online: true},
-		{ID: "bc-24-11-a4-9e-bb", MAC: "BC:24:11:A4:9E:BB", Name: "webs", AttachTo: "dist-switch16-lan5"},
-		{ID: "a4-d5-c2-05-ef-66", MAC: "A4:D5:C2:05:EF:66", Name: "equipo-suelto", AttachTo: "dist-switch16-lan5"},
+		{ID: "bc-24-11-a4-9e-bb", MAC: macaddr.MustParse("BC:24:11:A4:9E:BB"), Name: "webs", AttachTo: "dist-switch16-lan5"},
+		{ID: "a4-d5-c2-05-ef-66", MAC: macaddr.MustParse("A4:D5:C2:05:EF:66"), Name: "equipo-suelto", AttachTo: "dist-switch16-lan5"},
 	}
 	dists := []DistributionNode{{ID: "dist-switch16-lan5", Kind: "inferred", RouterID: "switch16", Port: "lan5", MacCount: 3}}
 	out := applyPVEInfra(devices, dists, inv)
@@ -711,8 +712,8 @@ func TestPVENoAbsorbeInferredConDesconocidos(t *testing.T) {
 // distnode hypervisor dos veces: el frontend dibujaba los CTs duplicados.
 func TestPVEHypervisorDistNodesNoDuplicaHostRepetido(t *testing.T) {
 	inv := &pveInventory{
-		ctByMAC: map[string]pveVM{
-			"BC:24:11:A4:9E:BB": {Name: "webs", Node: "citadel-02", Type: "lxc", Instance: "default"},
+		ctByMAC: map[macaddr.MAC]pveVM{
+			macaddr.MustParse("BC:24:11:A4:9E:BB"): {Name: "webs", Node: "citadel-02", Type: "lxc", Instance: "default"},
 		},
 		nodes: map[string]pveNode{
 			"default|citadel-02": {Instance: "default", Node: "citadel-02"},
@@ -724,8 +725,8 @@ func TestPVEHypervisorDistNodesNoDuplicaHostRepetido(t *testing.T) {
 		},
 	}
 	devices := []Device{
-		{ID: "e8-ff-1e-dd-c7-ed", MAC: "E8:FF:1E:DD:C7:ED", Name: "beelink-nas", IP: "192.168.1.101", RouterID: "switch16", Port: "lan8"},
-		{ID: "bc-24-11-a4-9e-bb", MAC: "BC:24:11:A4:9E:BB", Name: "webs"},
+		{ID: "e8-ff-1e-dd-c7-ed", MAC: macaddr.MustParse("E8:FF:1E:DD:C7:ED"), Name: "beelink-nas", IP: "192.168.1.101", RouterID: "switch16", Port: "lan8"},
+		{ID: "bc-24-11-a4-9e-bb", MAC: macaddr.MustParse("BC:24:11:A4:9E:BB"), Name: "webs"},
 	}
 	dists := applyPVEInfra(devices, nil, inv)
 	count := 0

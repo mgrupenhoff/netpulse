@@ -3,6 +3,7 @@ package adapters
 import (
 	"testing"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/db"
 )
 
@@ -11,8 +12,8 @@ import (
 // online y sin nombre ese tiempo y aun así no debe alertar.
 func TestTrackUnknownDevicesIgnoresWanSide(t *testing.T) {
 	l := liveTestLive()
-	neighbour := Device{MAC: "0C:EF:15:00:00:02", IP: "203.0.113.248", Name: "0C:EF:15:00:00:02", RouterID: "gw", Online: true, Band: "cable", WanSide: true}
-	named := Device{MAC: "77:88:99:AA:BB:CC", Name: "Galaxy Tab", RouterID: "gw", Online: true}
+	neighbour := Device{MAC: macaddr.MustParse("0C:EF:15:00:00:02"), IP: "203.0.113.248", Name: "0C:EF:15:00:00:02", RouterID: "gw", Online: true, Band: "cable", WanSide: true}
+	named := Device{MAC: macaddr.MustParse("77:88:99:AA:BB:CC"), Name: "Galaxy Tab", RouterID: "gw", Online: true}
 
 	// Primer ciclo: siembra (no alerta) y siguientes, más allá de la gracia.
 	for i := 0; i < 6; i++ {
@@ -50,8 +51,8 @@ func TestDeviceSeenSkipsAndPurgesWanSide(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	wan := Device{MAC: "0C:EF:15:00:00:02", Name: "0C:EF:15:00:00:02", Online: true, WanSide: true}
-	lan := Device{MAC: "AA:BB:CC:00:00:01", Name: "NAS", Online: true}
+	wan := Device{MAC: macaddr.MustParse("0C:EF:15:00:00:02"), Name: "0C:EF:15:00:00:02", Online: true, WanSide: true}
+	lan := Device{MAC: macaddr.MustParse("AA:BB:CC:00:00:01"), Name: "NAS", Online: true}
 	if firsts := l.noteDevicesSeen([]Device{wan, lan}, 2000); len(firsts) != 0 {
 		t.Fatalf("clientes nuevos inesperados: %+v", firsts)
 	}
@@ -59,7 +60,7 @@ func TestDeviceSeenSkipsAndPurgesWanSide(t *testing.T) {
 		t.Fatalf("noteDevicesSeen no debe insertar vecinos WAN, filas=%d", n)
 	}
 
-	l.purgeWanSideSeen([]Device{wan, lan})
+	l.purgeWanSideSeen([]Device{wan, lan}, nil)
 	if n := countRows(t, d, "SELECT COUNT(*) FROM device_seen WHERE mac = ?", "0C:EF:15:00:00:02"); n != 0 {
 		t.Fatalf("el vecino WAN debe purgarse del registro, filas=%d", n)
 	}

@@ -3,6 +3,8 @@ package adapters
 import (
 	"testing"
 	"time"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 // #954: first_seen se fija en el alta y no se toca después; last_seen
@@ -11,15 +13,15 @@ func TestDeviceSeenFirstStableLastAdvances(t *testing.T) {
 	d := openLiveTestDB(t)
 	l := &Live{db: d}
 	devs := []Device{
-		{MAC: "aa:bb:cc:dd:ee:ff", Online: true},
-		{MAC: "11:22:33:44:55:66", Online: false},
+		{MAC: macaddr.MustParse("aa:bb:cc:dd:ee:ff"), Online: true},
+		{MAC: macaddr.MustParse("11:22:33:44:55:66"), Online: false},
 	}
 	l.noteDevicesSeen(devs, 1000)
 	l.noteDevicesSeen(devs, 2000)
 
 	out := []Device{
-		{MAC: "AA:BB:CC:DD:EE:FF"}, // normalización: case-insensitive
-		{MAC: "11:22:33:44:55:66"},
+		{MAC: macaddr.MustParse("AA:BB:CC:DD:EE:FF")}, // normalización: case-insensitive
+		{MAC: macaddr.MustParse("11:22:33:44:55:66")},
 	}
 	l.applyDeviceSeen(out)
 	if out[0].FirstSeenMs != 1000 {
@@ -36,7 +38,7 @@ func TestDeviceSeenFirstStableLastAdvances(t *testing.T) {
 // #954: sin BD (demo/tests) ambos lados son no-op y los campos quedan a 0.
 func TestDeviceSeenNilDB(t *testing.T) {
 	l := &Live{}
-	devs := []Device{{MAC: "aa:bb:cc:dd:ee:ff", Online: true}}
+	devs := []Device{{MAC: macaddr.MustParse("aa:bb:cc:dd:ee:ff"), Online: true}}
 	l.noteDevicesSeen(devs, 1000) // no panic
 	l.applyDeviceSeen(devs)
 	if devs[0].FirstSeenMs != 0 || devs[0].LastSeenMs != 0 {
@@ -51,17 +53,17 @@ func TestGhostDevicesOfflineRetention(t *testing.T) {
 	d := openLiveTestDB(t)
 	l := &Live{db: d}
 	l.noteDevicesSeen([]Device{
-		{MAC: "aa:bb:cc:dd:ee:ff", Online: true, Hostname: "iphone-peter"},
-		{MAC: "11:22:33:44:55:66", Online: true},
+		{MAC: macaddr.MustParse("aa:bb:cc:dd:ee:ff"), Online: true, Hostname: "iphone-peter"},
+		{MAC: macaddr.MustParse("11:22:33:44:55:66"), Online: true},
 	}, 1000)
 
 	// Solo uno sigue vivo: el otro sale como ghost con su nombre y seen.
-	ghosts := l.ghostDevices([]Device{{MAC: "11:22:33:44:55:66", Online: true}})
+	ghosts := l.ghostDevices([]Device{{MAC: macaddr.MustParse("11:22:33:44:55:66"), Online: true}})
 	if len(ghosts) != 1 {
 		t.Fatalf("ghosts = %d, want 1", len(ghosts))
 	}
 	g := ghosts[0]
-	if g.MAC != "AA:BB:CC:DD:EE:FF" || g.Online {
+	if g.MAC != macaddr.MustParse("AA:BB:CC:DD:EE:FF") || g.Online {
 		t.Fatalf("ghost = %+v, want offline AA:BB:CC:DD:EE:FF", g)
 	}
 	if g.Hostname != "iphone-peter" {
@@ -73,8 +75,8 @@ func TestGhostDevicesOfflineRetention(t *testing.T) {
 
 	// Los dos vivos: ningún ghost.
 	if ghosts := l.ghostDevices([]Device{
-		{MAC: "11:22:33:44:55:66", Online: true},
-		{MAC: "AA:BB:CC:DD:EE:FF", Online: true},
+		{MAC: macaddr.MustParse("11:22:33:44:55:66"), Online: true},
+		{MAC: macaddr.MustParse("AA:BB:CC:DD:EE:FF"), Online: true},
 	}); len(ghosts) != 0 {
 		t.Fatalf("ghosts = %d, want 0", len(ghosts))
 	}
@@ -84,13 +86,13 @@ func TestGhostDevicesOfflineRetention(t *testing.T) {
 // normalización dedupe con la versión de dos puntos y enriquece la entrada.
 func TestNormalizeDevicesDashedMAC(t *testing.T) {
 	out := normalizeDevices([]Device{
-		{MAC: "AA-BB-CC-DD-EE-FF", Online: false, Hostname: "watch"},
-		{MAC: "aa:bb:cc:dd:ee:ff", Online: true, IP: "192.168.1.50"},
+		{MAC: macaddr.MustParse("AA-BB-CC-DD-EE-FF"), Online: false, Hostname: "watch"},
+		{MAC: macaddr.MustParse("aa:bb:cc:dd:ee:ff"), Online: true, IP: "192.168.1.50"},
 	})
 	if len(out) != 1 {
 		t.Fatalf("devices = %d, want 1 (dedup por MAC normalizada)", len(out))
 	}
-	if out[0].MAC != "AA:BB:CC:DD:EE:FF" || !out[0].Online {
+	if out[0].MAC != macaddr.MustParse("AA:BB:CC:DD:EE:FF") || !out[0].Online {
 		t.Fatalf("device = %+v, want online con MAC canonica", out[0])
 	}
 	if out[0].Hostname != "watch" || out[0].IP != "192.168.1.50" {
@@ -102,8 +104,8 @@ func TestNormalizeDevicesDashedMAC(t *testing.T) {
 func TestNoteDevicesSeenKeepsLastName(t *testing.T) {
 	d := openLiveTestDB(t)
 	l := &Live{db: d}
-	l.noteDevicesSeen([]Device{{MAC: "aa:bb:cc:dd:ee:ff", Online: true, Hostname: "iphone"}}, 1000)
-	l.noteDevicesSeen([]Device{{MAC: "AA:BB:CC:DD:EE:FF", Online: true}}, 2000)
+	l.noteDevicesSeen([]Device{{MAC: macaddr.MustParse("aa:bb:cc:dd:ee:ff"), Online: true, Hostname: "iphone"}}, 1000)
+	l.noteDevicesSeen([]Device{{MAC: macaddr.MustParse("AA:BB:CC:DD:EE:FF"), Online: true}}, 2000)
 
 	ghosts := l.ghostDevices(nil)
 	if len(ghosts) != 1 || ghosts[0].Hostname != "iphone" {
@@ -117,7 +119,7 @@ func TestNoteDevicesSeenKeepsLastName(t *testing.T) {
 func TestDeletedClientTombstone(t *testing.T) {
 	d := openLiveTestDB(t)
 	l := &Live{db: d}
-	mac := "12:77:BC:5A:5A:FA"
+	mac := macaddr.MustParse("12:77:BC:5A:5A:FA")
 	if err := d.AddDeletedClient(mac); err != nil {
 		t.Fatal(err)
 	}
@@ -170,14 +172,14 @@ func TestDeletedClientTombstone(t *testing.T) {
 func TestFilterTombstonedFinalList(t *testing.T) {
 	d := openLiveTestDB(t)
 	l := &Live{db: d}
-	if err := d.AddDeletedClient("12:77:BC:5A:5A:FA"); err != nil {
+	if err := d.AddDeletedClient(macaddr.MustParse("12:77:BC:5A:5A:FA")); err != nil {
 		t.Fatal(err)
 	}
 	devs := l.filterTombstoned([]Device{
-		{MAC: "12:77:BC:5A:5A:FA", Online: true},
-		{MAC: "AA:BB:CC:DD:EE:FF", Online: true},
+		{MAC: macaddr.MustParse("12:77:BC:5A:5A:FA"), Online: true},
+		{MAC: macaddr.MustParse("AA:BB:CC:DD:EE:FF"), Online: true},
 	})
-	if len(devs) != 1 || devs[0].MAC != "AA:BB:CC:DD:EE:FF" {
+	if len(devs) != 1 || devs[0].MAC != macaddr.MustParse("AA:BB:CC:DD:EE:FF") {
 		t.Errorf("filterTombstoned = %+v", devs)
 	}
 }
@@ -189,10 +191,10 @@ func TestFilterTombstonedFinalList(t *testing.T) {
 func TestPurgeFleetSeenIncludesRadioBSSIDs(t *testing.T) {
 	d := openLiveTestDB(t)
 	l := &Live{db: d, lastPolled: map[string]*routerPolled{
-		"ap1": {brMac: "aa:aa:aa:aa:aa:01", radios: []Radio{
-			{Name: "2.4 GHz", BSSID: "aa:aa:aa:aa:aa:02"},
-			{Name: "5 GHz", BSSID: "AA-AA-AA-AA-AA-03"}, // guiones: normaliza
-			{Name: "5 GHz", BSSID: ""},                  // sin BSSID: no-op
+		"ap1": {brMac: macaddr.MustParse("aa:aa:aa:aa:aa:01"), radios: []Radio{
+			{Name: "2.4 GHz", BSSID: macaddr.MustParse("aa:aa:aa:aa:aa:02")},
+			{Name: "5 GHz", BSSID: macaddr.MustParse("AA-AA-AA-AA-AA-03")}, // guiones: normaliza
+			{Name: "5 GHz"}, // sin BSSID: no-op
 		}},
 	}}
 	// El registro guarda MACs normalizadas (normSeenMAC en el alta): mayúsculas
@@ -222,15 +224,15 @@ func TestPurgeFleetSeenIncludesRadioBSSIDs(t *testing.T) {
 func TestFilterTombstonedAlsoFiltersFleetMACs(t *testing.T) {
 	d := openLiveTestDB(t)
 	l := &Live{db: d, lastPolled: map[string]*routerPolled{
-		"ap1": {brMac: "aa:aa:aa:aa:aa:01", radios: []Radio{{Name: "2.4 GHz", BSSID: "aa:aa:aa:aa:aa:02"}}},
+		"ap1": {brMac: macaddr.MustParse("aa:aa:aa:aa:aa:01"), radios: []Radio{{Name: "2.4 GHz", BSSID: macaddr.MustParse("aa:aa:aa:aa:aa:02")}}},
 	}}
 	devs := []Device{
-		{MAC: "AA:AA:AA:AA:AA:01"}, // bridge
-		{MAC: "aa:aa:aa:aa:aa:02"}, // BSSID radio (case-insensitive)
-		{MAC: "cc:cc:cc:cc:cc:cc"}, // cliente real
+		{MAC: macaddr.MustParse("AA:AA:AA:AA:AA:01")}, // bridge
+		{MAC: macaddr.MustParse("aa:aa:aa:aa:aa:02")}, // BSSID radio (case-insensitive)
+		{MAC: macaddr.MustParse("cc:cc:cc:cc:cc:cc")}, // cliente real
 	}
 	out := l.filterTombstoned(devs)
-	if len(out) != 1 || out[0].MAC != "cc:cc:cc:cc:cc:cc" {
+	if len(out) != 1 || out[0].MAC != macaddr.MustParse("cc:cc:cc:cc:cc:cc") {
 		t.Fatalf("filterTombstoned = %+v, want solo el cliente real", out)
 	}
 }
@@ -243,11 +245,11 @@ func TestApplyDeviceSeenRestoresNameAndIP(t *testing.T) {
 	d := openLiveTestDB(t)
 	l := &Live{db: d}
 	l.noteDevicesSeen([]Device{
-		{MAC: "aa:bb:cc:dd:ee:ff", Online: true, Hostname: "iphone-peter", IP: "192.168.1.50"},
+		{MAC: macaddr.MustParse("aa:bb:cc:dd:ee:ff"), Online: true, Hostname: "iphone-peter", IP: "192.168.1.50"},
 	}, 1000)
 
 	// Mismo cliente en el ciclo vivo SIN nombre ni IP (lease expirado).
-	out := []Device{{MAC: "AA:BB:CC:DD:EE:FF", Name: "AA:BB:CC:DD:EE:FF", Online: false}}
+	out := []Device{{MAC: macaddr.MustParse("AA:BB:CC:DD:EE:FF"), Name: "AA:BB:CC:DD:EE:FF", Online: false}}
 	l.applyDeviceSeen(out)
 	if out[0].Name != "iphone-peter" {
 		t.Errorf("Name = %q, want iphone-peter (retenido del registro)", out[0].Name)
@@ -260,7 +262,7 @@ func TestApplyDeviceSeenRestoresNameAndIP(t *testing.T) {
 	}
 
 	// Un nombre real (alias/override) NO se pisa con el del registro.
-	aliased := []Device{{MAC: "AA:BB:CC:DD:EE:FF", Name: "telefono-ana", Online: false}}
+	aliased := []Device{{MAC: macaddr.MustParse("AA:BB:CC:DD:EE:FF"), Name: "telefono-ana", Online: false}}
 	l.applyDeviceSeen(aliased)
 	if aliased[0].Name != "telefono-ana" {
 		t.Errorf("Name = %q, want telefono-ana (el alias manda)", aliased[0].Name)
@@ -276,12 +278,12 @@ func TestApplyDeviceSeenRestoresLinkedAliasMACName(t *testing.T) {
 	d := openLiveTestDB(t)
 	l := &Live{db: d}
 	l.noteDevicesSeen([]Device{
-		{MAC: "cc:cc:cc:00:00:01", Online: true, Hostname: "galaxy-s9", Type: "movil"},
+		{MAC: macaddr.MustParse("cc:cc:cc:00:00:01"), Online: true, Hostname: "galaxy-s9", Type: "movil"},
 	}, 1000)
 
 	// El canónico llega vivo con la MAC de una alias como nombre (merge de
 	// #1151 cuando el primario no tiene hostname).
-	out := []Device{{MAC: "CC:CC:CC:00:00:01", Name: "AA:AA:AA:00:00:02", Online: true, Type: "desconocido"}}
+	out := []Device{{MAC: macaddr.MustParse("CC:CC:CC:00:00:01"), Name: "AA:AA:AA:00:00:02", Online: true, Type: "desconocido"}}
 	l.applyDeviceSeen(out)
 	if out[0].Name != "galaxy-s9" {
 		t.Errorf("Name = %q, want galaxy-s9 (la MAC de la alias no es un nombre)", out[0].Name)
@@ -299,23 +301,23 @@ func TestNoteDevicesSeenSkipsMACLikeNames(t *testing.T) {
 	d := openLiveTestDB(t)
 	l := &Live{db: d}
 	l.noteDevicesSeen([]Device{
-		{MAC: "cc:cc:cc:00:00:01", Online: true, Name: "cc:cc:cc:00:00:01"},           // MAC propia
-		{MAC: "dd:dd:dd:00:00:01", Online: true, Name: "AA:AA:AA:00:00:02"},           // MAC de otra interfaz (linked)
-		{MAC: "ee:ee:ee:00:00:01", Online: true, Name: "EE-EE-EE-00-00-01"},           // MAC con guiones
-		{MAC: "ff:ff:ff:00:00:01", Online: true, Name: "iphone-peter", Type: "movil"}, // nombre real
+		{MAC: macaddr.MustParse("cc:cc:cc:00:00:01"), Online: true, Name: "cc:cc:cc:00:00:01"},           // MAC propia
+		{MAC: macaddr.MustParse("dd:dd:dd:00:00:01"), Online: true, Name: "AA:AA:AA:00:00:02"},           // MAC de otra interfaz (linked)
+		{MAC: macaddr.MustParse("ee:ee:ee:00:00:01"), Online: true, Name: "EE-EE-EE-00-00-01"},           // MAC con guiones
+		{MAC: macaddr.MustParse("ff:ff:ff:00:00:01"), Online: true, Name: "iphone-peter", Type: "movil"}, // nombre real
 	}, 1000)
 
 	ghosts := l.ghostDevices(nil)
-	byMAC := map[string]Device{}
+	byMAC := map[macaddr.MAC]Device{}
 	for _, g := range ghosts {
 		byMAC[g.MAC] = g
 	}
 	for _, mac := range []string{"CC:CC:CC:00:00:01", "DD:DD:DD:00:00:01", "EE:EE:EE:00:00:01"} {
-		if g, ok := byMAC[mac]; !ok || g.Hostname != "" || g.Name != "" {
+		if g, ok := byMAC[macaddr.MustParse(mac)]; !ok || g.Hostname != "" || g.Name != "" {
 			t.Errorf("registro de %s = %+v, want sin nombre (una MAC no es nombre)", mac, g)
 		}
 	}
-	if g, ok := byMAC["FF:FF:FF:00:00:01"]; !ok || g.Hostname != "iphone-peter" {
+	if g, ok := byMAC[macaddr.MustParse("FF:FF:FF:00:00:01")]; !ok || g.Hostname != "iphone-peter" {
 		t.Errorf("registro de FF:FF:FF:00:00:01 = %+v, want iphone-peter", g)
 	}
 }
@@ -329,7 +331,7 @@ func TestApplyDeviceSeenIgnoresStoredMACName(t *testing.T) {
 	if _, err := d.Exec("INSERT INTO device_seen (mac, first_seen, last_seen, name) VALUES ('CC:CC:CC:00:00:01', 1, 2, 'AA-BB-CC-DD-EE-FF')"); err != nil {
 		t.Fatal(err)
 	}
-	out := []Device{{MAC: "CC:CC:CC:00:00:01", Name: "CC:CC:CC:00:00:01", Online: false}}
+	out := []Device{{MAC: macaddr.MustParse("CC:CC:CC:00:00:01"), Name: "CC:CC:CC:00:00:01", Online: false}}
 	l.applyDeviceSeen(out)
 	if out[0].Name != "CC:CC:CC:00:00:01" {
 		t.Errorf("Name = %q, want la MAC viva conservada (el nombre MAC del registro no se restaura)", out[0].Name)
@@ -347,15 +349,15 @@ func TestApplyDeviceSeenStickyInferredType(t *testing.T) {
 	d := openLiveTestDB(t)
 	l := &Live{db: d}
 	l.noteDevicesSeen([]Device{
-		{MAC: "aa:bb:cc:dd:ee:ff", Online: true, Hostname: "galaxy-s9", Type: "movil"},
-		{MAC: "11:22:33:44:55:66", Online: true, Hostname: "tv-salon", Type: "tv", TypeOverride: "tv"},
-		{MAC: "77:77:77:77:77:77", Online: true, Hostname: "sin-tipo", Type: "desconocido"},
+		{MAC: macaddr.MustParse("aa:bb:cc:dd:ee:ff"), Online: true, Hostname: "galaxy-s9", Type: "movil"},
+		{MAC: macaddr.MustParse("11:22:33:44:55:66"), Online: true, Hostname: "tv-salon", Type: "tv", TypeOverride: "tv"},
+		{MAC: macaddr.MustParse("77:77:77:77:77:77"), Online: true, Hostname: "sin-tipo", Type: "desconocido"},
 	}, 1000)
 
 	// Lease expirado: nombre degradado, clasificación viva "desconocido".
 	out := []Device{
-		{MAC: "AA:BB:CC:DD:EE:FF", Name: "AA:BB:CC:DD:EE:FF", Online: true, Type: "desconocido"},
-		{MAC: "11:22:33:44:55:66", Name: "11:22:33:44:55:66", Online: true, Type: "tv", TypeOverride: "tv"},
+		{MAC: macaddr.MustParse("AA:BB:CC:DD:EE:FF"), Name: "AA:BB:CC:DD:EE:FF", Online: true, Type: "desconocido"},
+		{MAC: macaddr.MustParse("11:22:33:44:55:66"), Name: "11:22:33:44:55:66", Online: true, Type: "tv", TypeOverride: "tv"},
 	}
 	l.applyDeviceSeen(out)
 	if out[0].Type != "movil" {
@@ -382,9 +384,9 @@ func TestApplyDeviceSeenStickyInferredType(t *testing.T) {
 
 	// Inferencia viva no genérica: manda sobre el retenido.
 	l.noteDevicesSeen([]Device{
-		{MAC: "aa:bb:cc:dd:ee:ff", Online: true, Hostname: "nuevo-nombre-tv", Type: "tv"},
+		{MAC: macaddr.MustParse("aa:bb:cc:dd:ee:ff"), Online: true, Hostname: "nuevo-nombre-tv", Type: "tv"},
 	}, 2000)
-	out2 := []Device{{MAC: "AA:BB:CC:DD:EE:FF", Name: "AA:BB:CC:DD:EE:FF", Online: true, Type: "desconocido"}}
+	out2 := []Device{{MAC: macaddr.MustParse("AA:BB:CC:DD:EE:FF"), Name: "AA:BB:CC:DD:EE:FF", Online: true, Type: "desconocido"}}
 	l.applyDeviceSeen(out2)
 	if out2[0].Type != "tv" {
 		t.Errorf("Type = %q, want tv (la inferencia nueva pisa al retenido)", out2[0].Type)
@@ -397,18 +399,18 @@ func TestGhostDevicesStickyType(t *testing.T) {
 	d := openLiveTestDB(t)
 	l := &Live{db: d}
 	l.noteDevicesSeen([]Device{
-		{MAC: "aa:bb:cc:dd:ee:ff", Online: true, Hostname: "roborock-s8", Type: "aspirador"},
-		{MAC: "11:22:33:44:55:66", Online: true, Hostname: "sin-tipo"},
+		{MAC: macaddr.MustParse("aa:bb:cc:dd:ee:ff"), Online: true, Hostname: "roborock-s8", Type: "aspirador"},
+		{MAC: macaddr.MustParse("11:22:33:44:55:66"), Online: true, Hostname: "sin-tipo"},
 	}, 1000)
 	ghosts := l.ghostDevices(nil)
-	byMAC := map[string]Device{}
+	byMAC := map[macaddr.MAC]Device{}
 	for _, g := range ghosts {
 		byMAC[g.MAC] = g
 	}
-	if g := byMAC["AA:BB:CC:DD:EE:FF"]; g.Type != "aspirador" {
+	if g := byMAC[macaddr.MustParse("AA:BB:CC:DD:EE:FF")]; g.Type != "aspirador" {
 		t.Errorf("ghost Type = %q, want aspirador (sticky)", g.Type)
 	}
-	if g := byMAC["11:22:33:44:55:66"]; g.Type != "desconocido" {
+	if g := byMAC[macaddr.MustParse("11:22:33:44:55:66")]; g.Type != "desconocido" {
 		t.Errorf("ghost Type = %q, want desconocido (nunca hubo inferencia)", g.Type)
 	}
 }
@@ -426,20 +428,20 @@ func TestDeviceSeenNewFlagsFromSeenDay(t *testing.T) {
 	cuatro := now.Add(-4 * 24 * time.Hour).UnixMilli()
 	ocho := now.Add(-8 * 24 * time.Hour).UnixMilli()
 	l.noteDevicesSeen([]Device{
-		{MAC: "aa:bb:cc:dd:ee:ff", Online: true},
-		{MAC: "11:22:33:44:55:66", Online: true},
+		{MAC: macaddr.MustParse("aa:bb:cc:dd:ee:ff"), Online: true},
+		{MAC: macaddr.MustParse("11:22:33:44:55:66"), Online: true},
 	}, hoy)
-	l.noteDevicesSeen([]Device{{MAC: "22:33:44:55:66:77", Online: true}}, ayer)
-	l.noteDevicesSeen([]Device{{MAC: "33:44:55:66:77:88", Online: true}}, cuatro)
-	l.noteDevicesSeen([]Device{{MAC: "44:55:66:77:88:99", Online: true}}, ocho)
+	l.noteDevicesSeen([]Device{{MAC: macaddr.MustParse("22:33:44:55:66:77"), Online: true}}, ayer)
+	l.noteDevicesSeen([]Device{{MAC: macaddr.MustParse("33:44:55:66:77:88"), Online: true}}, cuatro)
+	l.noteDevicesSeen([]Device{{MAC: macaddr.MustParse("44:55:66:77:88:99"), Online: true}}, ocho)
 
 	out := []Device{
-		{MAC: "AA:BB:CC:DD:EE:FF", Online: true},
-		{MAC: "11:22:33:44:55:66", Online: true},
-		{MAC: "22:33:44:55:66:77", Online: true},
-		{MAC: "33:44:55:66:77:88", Online: true},
-		{MAC: "44:55:66:77:88:99", Online: true},
-		{MAC: "55:66:77:88:99:AA", Online: true}, // sin fila: nunca visto por este server
+		{MAC: macaddr.MustParse("AA:BB:CC:DD:EE:FF"), Online: true},
+		{MAC: macaddr.MustParse("11:22:33:44:55:66"), Online: true},
+		{MAC: macaddr.MustParse("22:33:44:55:66:77"), Online: true},
+		{MAC: macaddr.MustParse("33:44:55:66:77:88"), Online: true},
+		{MAC: macaddr.MustParse("44:55:66:77:88:99"), Online: true},
+		{MAC: macaddr.MustParse("55:66:77:88:99:AA"), Online: true}, // sin fila: nunca visto por este server
 	}
 	l.applyDeviceSeen(out)
 	want := []struct{ isNew, isWeek bool }{
@@ -470,12 +472,40 @@ func TestDeviceSeenNewFlagsFromSeenDay(t *testing.T) {
 		t.Fatalf("ghosts = %d, want 5 (ninguno está en la lista que se pasa)", len(ghosts))
 	}
 	for _, g := range ghosts {
-		isWeek := g.MAC != "44:55:66:77:88:99"
-		isNew := g.MAC == "AA:BB:CC:DD:EE:FF" || g.MAC == "11:22:33:44:55:66"
+		isWeek := g.MAC != macaddr.MustParse("44:55:66:77:88:99")
+		isNew := g.MAC == macaddr.MustParse("AA:BB:CC:DD:EE:FF") || g.MAC == macaddr.MustParse("11:22:33:44:55:66")
 		if g.IsNew != isNew || g.NewThisWeek != isWeek {
 			t.Errorf("ghost %s: isNew=%v newThisWeek=%v, want %v/%v",
 				g.MAC, g.IsNew, g.NewThisWeek, isNew, isWeek)
 		}
+	}
+}
+
+// TestSeenByMacSkipsCorruptRow comprueba que una fila heredada con una MAC
+// inválida en device_seen se salta sin tumbar la carga ni los fantasmas.
+func TestSeenByMacSkipsCorruptRow(t *testing.T) {
+	d := openLiveTestDB(t)
+	l := &Live{db: d}
+	validMAC := macaddr.MustParse("AA:BB:CC:DD:EE:01")
+	if _, err := d.Exec("INSERT INTO device_seen (mac, first_seen, last_seen, name) VALUES ('no-es-una-mac', 1000, 2000, 'basura')"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec("INSERT INTO device_seen (mac, first_seen, last_seen, name) VALUES (?, 1000, 2000, 'cliente-ok')", validMAC); err != nil {
+		t.Fatal(err)
+	}
+	byMac, err := l.seenByMac()
+	if err != nil {
+		t.Fatalf("seenByMac falló por fila corrupta: %v", err)
+	}
+	if len(byMac) != 1 {
+		t.Fatalf("esperaba 1 fila válida, obtuve %d: %+v", len(byMac), byMac)
+	}
+	if row, ok := byMac[validMAC]; !ok || row.name != "cliente-ok" {
+		t.Fatalf("fila válida ausente o alterada: %+v", byMac)
+	}
+	ghosts := l.ghostDevices(nil)
+	if len(ghosts) != 1 || ghosts[0].MAC != validMAC {
+		t.Fatalf("esperaba solo el fantasma válido %s, obtuve %+v", validMAC, ghosts)
 	}
 }
 

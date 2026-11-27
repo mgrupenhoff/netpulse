@@ -29,7 +29,7 @@ func TestBuildDevicesAbsorbsAgentSelfMacs(t *testing.T) {
 	devices := l.buildDevices(map[string]*routerPolled{"gateway": l.polledFromAgent(cfg, payload)}, "")
 	var real, self bool
 	for _, d := range devices {
-		switch d.MAC {
+		switch d.MAC.String() {
 		case "04:F4:1C:F3:46:66":
 			self = true
 		case "AA:BB:CC:00:00:09":

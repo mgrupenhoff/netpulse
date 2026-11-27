@@ -1,6 +1,10 @@
 package adapters
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
+)
 
 // #1150: con switches encadenados (gateway -> sw1 -> sw2) la boca de una
 // unidad aprende las MACs de bridge de VARIAS unidades, y la primera MAC
@@ -8,15 +12,15 @@ import "testing"
 // DIRECTO: su chassis MAC (unidad conocida) o su sysName manda.
 func TestEnrichEthPortRouterLinkPrefersLldpNeighbor(t *testing.T) {
 	deps := portEnrichDeps{
-		routerByMac: map[string]string{
-			"AA:AA:AA:00:00:02": "sw2", // ordena ANTES que sw1: el bug la elegía
-			"BB:BB:BB:00:00:01": "sw1",
+		routerByMac: map[macaddr.MAC]string{
+			macaddr.MustParse("AA:AA:AA:00:00:02"): "sw2", // ordena ANTES que sw1: el bug la elegía
+			macaddr.MustParse("BB:BB:BB:00:00:01"): "sw1",
 		},
-		portMacs: map[string][]string{
-			"lan1": {"AA:AA:AA:00:00:02", "BB:BB:BB:00:00:01"},
+		portMacs: map[string][]macaddr.MAC{
+			"lan1": {macaddr.MustParse("AA:AA:AA:00:00:02"), macaddr.MustParse("BB:BB:BB:00:00:01")},
 		},
 		lldp: []LldpNeighbor{
-			{Port: "lan1", ChassisMac: "bb:bb:bb:00:00:01", Mgmt: "192.168.1.11"},
+			{Port: "lan1", ChassisMac: macaddr.MustParse("bb:bb:bb:00:00:01"), Mgmt: "192.168.1.11"},
 		},
 	}
 	port := EthPort{ID: "lan1", Label: "lan1", Up: true}
@@ -28,7 +32,7 @@ func TestEnrichEthPortRouterLinkPrefersLldpNeighbor(t *testing.T) {
 	if got.PeerKind != "router-link-lldp" {
 		t.Fatalf("PeerKind = %q, want router-link-lldp", got.PeerKind)
 	}
-	if got.DeviceMac != "BB:BB:BB:00:00:01" {
+	if got.DeviceMac != macaddr.MustParse("BB:BB:BB:00:00:01") {
 		t.Fatalf("DeviceMac = %q, want la MAC del chassis vecino", got.DeviceMac)
 	}
 	if got.Detail != "192.168.1.11 · LLDP" {
@@ -42,18 +46,18 @@ func TestEnrichEthPortRouterLinkPrefersLldpNeighbor(t *testing.T) {
 // datos para desambiguar, la boca se queda sin par.
 func TestEnrichEthPortRouterLinkAmbiguousStaysEmpty(t *testing.T) {
 	deps := portEnrichDeps{
-		routerByMac: map[string]string{
-			"AA:AA:AA:00:00:02": "sw2",
-			"BB:BB:BB:00:00:01": "sw1",
+		routerByMac: map[macaddr.MAC]string{
+			macaddr.MustParse("AA:AA:AA:00:00:02"): "sw2",
+			macaddr.MustParse("BB:BB:BB:00:00:01"): "sw1",
 		},
-		portMacs: map[string][]string{
-			"lan1": {"AA:AA:AA:00:00:02", "BB:BB:BB:00:00:01"},
+		portMacs: map[string][]macaddr.MAC{
+			"lan1": {macaddr.MustParse("AA:AA:AA:00:00:02"), macaddr.MustParse("BB:BB:BB:00:00:01")},
 		},
 	}
 	port := EthPort{ID: "lan1", Label: "lan1", Up: true}
 
 	got := enrichEthPort(port, "lan1", deps)
-	if got.ConnectedTo != "" || got.PeerKind != "" || got.DeviceMac != "" {
+	if got.ConnectedTo != "" || got.PeerKind != "" || got.DeviceMac.IsValid() {
 		t.Fatalf("boca ambigua con par inventado: %+v", got)
 	}
 	if got.Detail != "" {
@@ -65,17 +69,15 @@ func TestEnrichEthPortRouterLinkAmbiguousStaysEmpty(t *testing.T) {
 // test-gw en un puerto dedicado; sw2 lo aprende en el uplink que también
 // lleva a sw1. El par directo es sw1.
 func TestEnrichEthPortRouterLinkPicksDedicatedPort(t *testing.T) {
-	const (
-		self = "CC:CC:CC:00:00:01"
-		sw1  = "BB:BB:BB:00:00:01"
-		sw2  = "AA:AA:AA:00:00:02"
-	)
+	self := macaddr.MustParse("CC:CC:CC:00:00:01")
+	sw1 := macaddr.MustParse("BB:BB:BB:00:00:01")
+	sw2 := macaddr.MustParse("AA:AA:AA:00:00:02")
 	deps := portEnrichDeps{
-		routerByMac: map[string]string{sw2: "sw2", sw1: "sw1"},
-		portMacs:    map[string][]string{"eth0": {sw2, sw1}},
-		unitByMac:   map[string]string{sw1: "sw1", sw2: "sw2"},
+		routerByMac: map[macaddr.MAC]string{sw2: "sw2", sw1: "sw1"},
+		portMacs:    map[string][]macaddr.MAC{"eth0": {sw2, sw1}},
+		unitByMac:   map[macaddr.MAC]string{sw1: "sw1", sw2: "sw2"},
 		selfBrMac:   self,
-		fdbByUnit: map[string]map[string]string{
+		fdbByUnit: map[string]map[macaddr.MAC]string{
 			// Puerto dedicado: solo test-gw.
 			"sw1": {self: "port1"},
 			// Uplink hacia sw1: lleva a test-gw y a sw1 a la vez.
@@ -94,17 +96,15 @@ func TestEnrichEthPortRouterLinkPicksDedicatedPort(t *testing.T) {
 // Si las dos candidatas lo aprenden en un puerto dedicado, el empate no se
 // rompe adivinando.
 func TestEnrichEthPortRouterLinkTieStaysEmpty(t *testing.T) {
-	const (
-		self = "CC:CC:CC:00:00:01"
-		sw1  = "BB:BB:BB:00:00:01"
-		sw2  = "AA:AA:AA:00:00:02"
-	)
+	self := macaddr.MustParse("CC:CC:CC:00:00:01")
+	sw1 := macaddr.MustParse("BB:BB:BB:00:00:01")
+	sw2 := macaddr.MustParse("AA:AA:AA:00:00:02")
 	deps := portEnrichDeps{
-		routerByMac: map[string]string{sw2: "sw2", sw1: "sw1"},
-		portMacs:    map[string][]string{"eth0": {sw2, sw1}},
-		unitByMac:   map[string]string{sw1: "sw1", sw2: "sw2"},
+		routerByMac: map[macaddr.MAC]string{sw2: "sw2", sw1: "sw1"},
+		portMacs:    map[string][]macaddr.MAC{"eth0": {sw2, sw1}},
+		unitByMac:   map[macaddr.MAC]string{sw1: "sw1", sw2: "sw2"},
 		selfBrMac:   self,
-		fdbByUnit: map[string]map[string]string{
+		fdbByUnit: map[string]map[macaddr.MAC]string{
 			"sw1": {self: "port1"},
 			"sw2": {self: "port2"},
 		},
@@ -119,11 +119,11 @@ func TestEnrichEthPortRouterLinkTieStaysEmpty(t *testing.T) {
 // sysName anunciado sobre la MAC ordenada.
 func TestEnrichEthPortRouterLinkLldpUnknownChassis(t *testing.T) {
 	deps := portEnrichDeps{
-		routerByMac: map[string]string{
-			"AA:AA:AA:00:00:02": "sw2",
+		routerByMac: map[macaddr.MAC]string{
+			macaddr.MustParse("AA:AA:AA:00:00:02"): "sw2",
 		},
-		portMacs: map[string][]string{
-			"eth5": {"AA:AA:AA:00:00:02"},
+		portMacs: map[string][]macaddr.MAC{
+			"eth5": {macaddr.MustParse("AA:AA:AA:00:00:02")},
 		},
 		lldp: []LldpNeighbor{
 			{Port: "eth5", Chassis: "downstream-sw", Mgmt: "10.0.0.9"},

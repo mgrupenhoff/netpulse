@@ -3,12 +3,16 @@ package adapters
 import (
 	"reflect"
 	"testing"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 // #1942: un cliente cae en exactamente una red o en ninguna. Los casos
 // cubren el br-lan sin VLAN (antes la columna quedaba vacia), el split
 // lan/guest, el trunk que no se puede adivinar y la via WiFi.
 func TestAttributeNetworkClients_1942(t *testing.T) {
+	macAA := macaddr.MustParse("AA:00:00:00:00:01")
+	macBB := macaddr.MustParse("BB:00:00:00:00:02")
 	lan := NetworkInfo{Name: "lan", Device: "br-lan", Ports: []string{"lan1", "lan2", "lan3"}}
 	guest := NetworkInfo{Name: "guest", Device: "br-guest", Vlan: 20, Ports: []string{"lan3"}}
 	iot := NetworkInfo{Name: "iot", Device: "br-iot", Vlan: 999, Ports: []string{"eth0.999"}}
@@ -17,62 +21,62 @@ func TestAttributeNetworkClients_1942(t *testing.T) {
 		networks []NetworkInfo
 		clients  []Device
 		wifiNet  map[string]string
-		want     map[string][]string // red -> MACs; las redes sin entrada quedan sin el campo
+		want     map[string][]macaddr.MAC // red -> MACs; las redes sin entrada quedan sin el campo
 	}{
 		{
 			name:     "br-lan sin VLAN atribuye por puerto",
 			networks: []NetworkInfo{lan},
 			clients: []Device{
-				{MAC: "aa", Port: "lan2"},
-				{MAC: "bb"}, // sin puerto ni VLAN: no se adivina
+				{MAC: macAA, Port: "lan2"},
+				{MAC: macBB}, // sin puerto ni VLAN: no se adivina
 			},
-			want: map[string][]string{"lan": {"aa"}},
+			want: map[string][]macaddr.MAC{"lan": {macAA}},
 		},
 		{
 			name:     "puerto trunk con VLAN desempata",
 			networks: []NetworkInfo{lan, guest},
-			clients:  []Device{{MAC: "aa", Port: "lan3", Vlan: 20}},
-			want:     map[string][]string{"guest": {"aa"}},
+			clients:  []Device{{MAC: macAA, Port: "lan3", Vlan: 20}},
+			want:     map[string][]macaddr.MAC{"guest": {macAA}},
 		},
 		{
 			name:     "puerto trunk sin VLAN no atribuye",
 			networks: []NetworkInfo{lan, guest},
-			clients:  []Device{{MAC: "aa", Port: "lan3"}},
-			want:     map[string][]string{},
+			clients:  []Device{{MAC: macAA, Port: "lan3"}},
+			want:     map[string][]macaddr.MAC{},
 		},
 		{
 			name:     "puerto exclusivo sin VLAN si atribuye",
 			networks: []NetworkInfo{lan, guest},
-			clients:  []Device{{MAC: "aa", Port: "lan1"}},
-			want:     map[string][]string{"lan": {"aa"}},
+			clients:  []Device{{MAC: macAA, Port: "lan1"}},
+			want:     map[string][]macaddr.MAC{"lan": {macAA}},
 		},
 		{
 			name:     "subinterfaz: base del puerto mas VLAN",
 			networks: []NetworkInfo{iot},
-			clients:  []Device{{MAC: "aa", Port: "eth0", Vlan: 999}},
-			want:     map[string][]string{"iot": {"aa"}},
+			clients:  []Device{{MAC: macAA, Port: "eth0", Vlan: 999}},
+			want:     map[string][]macaddr.MAC{"iot": {macAA}},
 		},
 		{
 			name:     "VLAN sola, sin puerto, como antes",
 			networks: []NetworkInfo{lan, guest},
-			clients:  []Device{{MAC: "aa", Vlan: 20}},
-			want:     map[string][]string{"guest": {"aa"}},
+			clients:  []Device{{MAC: macAA, Vlan: 20}},
+			want:     map[string][]macaddr.MAC{"guest": {macAA}},
 		},
 		{
 			name:     "wifi por config wireless",
 			networks: []NetworkInfo{lan, guest},
 			clients: []Device{
-				{MAC: "aa", WifiIface: "wlan1"},
-				{MAC: "bb", WifiIface: "wlan9"}, // iface no declarada: ninguna
+				{MAC: macAA, WifiIface: "wlan1"},
+				{MAC: macBB, WifiIface: "wlan9"}, // iface no declarada: ninguna
 			},
 			wifiNet: map[string]string{"wlan1": "guest"},
-			want:    map[string][]string{"guest": {"aa"}},
+			want:    map[string][]macaddr.MAC{"guest": {macAA}},
 		},
 		{
 			name:     "MAC vacia nunca se lista",
 			networks: []NetworkInfo{lan},
-			clients:  []Device{{MAC: "", Port: "lan1"}},
-			want:     map[string][]string{},
+			clients:  []Device{{MAC: macaddr.MAC{}, Port: "lan1"}},
+			want:     map[string][]macaddr.MAC{},
 		},
 	}
 	for _, tc := range cases {
@@ -94,7 +98,7 @@ func TestAttributeNetworkClients_1942(t *testing.T) {
 // La entrada no se modifica: el cache anti-parpadeo comparte el slice.
 func TestAttributeNetworkClientsNoMutaEntrada(t *testing.T) {
 	in := []NetworkInfo{{Name: "lan", Ports: []string{"lan1"}}}
-	attributeNetworkClients(in, []Device{{MAC: "aa", Port: "lan1"}}, nil)
+	attributeNetworkClients(in, []Device{{MAC: macaddr.MustParse("AA:00:00:00:00:01"), Port: "lan1"}}, nil)
 	if len(in[0].ClientMacs) != 0 {
 		t.Fatalf("la entrada quedo modificada: %v", in[0].ClientMacs)
 	}

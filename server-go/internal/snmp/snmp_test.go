@@ -46,7 +46,7 @@ func TestExtractMacFromOid(t *testing.T) {
 	}
 	for _, tt := range tests {
 		got := extractMacFromOid(tt.name, prefix)
-		if got != tt.want {
+		if got.String() != tt.want {
 			t.Errorf("extractMacFromOid(%q) = %q; want %q", tt.name, got, tt.want)
 		}
 	}
@@ -69,7 +69,7 @@ func TestExtractMacFromOidDot1q(t *testing.T) {
 	}
 	for _, tt := range tests {
 		got := extractMacFromOid(tt.name, prefix)
-		if got != tt.want {
+		if got.String() != tt.want {
 			t.Errorf("extractMacFromOid(%q) = %q; want %q", tt.name, got, tt.want)
 		}
 	}

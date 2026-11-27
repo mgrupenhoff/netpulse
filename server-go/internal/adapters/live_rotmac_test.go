@@ -6,6 +6,7 @@ package adapters
 import (
 	"testing"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/db"
 )
 
@@ -17,16 +18,16 @@ func TestBuildDevicesWirelessWinsOverWirelessSide(t *testing.T) {
 	polled := map[string]*routerPolled{
 		"gw": {cfg: RouterConfig{ID: "gw", Name: "Gateway", IsGateway: true}},
 		"ap1": {cfg: RouterConfig{ID: "ap1", Name: "ap1"},
-			wireless: map[string]WirelessClient{
-				"AA:BB:CC:DD:EE:01": {SignalDbm: -50, Band: "5 GHz"},
+			wireless: map[macaddr.MAC]WirelessClient{
+				macaddr.MustParse("AA:BB:CC:DD:EE:01"): {SignalDbm: -50, Band: "5 GHz"},
 			}},
 		"ap2": {cfg: RouterConfig{ID: "ap2", Name: "ap2"},
-			wirelessSide: map[string]string{"AA:BB:CC:DD:EE:01": "2.4 GHz"}},
+			wirelessSide: map[macaddr.MAC]string{macaddr.MustParse("AA:BB:CC:DD:EE:01"): "2.4 GHz"}},
 	}
 	devs := l.buildDevices(polled, "")
 	var got *Device
 	for i := range devs {
-		if devs[i].MAC == "AA:BB:CC:DD:EE:01" {
+		if devs[i].MAC == macaddr.MustParse("AA:BB:CC:DD:EE:01") {
 			got = &devs[i]
 		}
 	}
@@ -45,20 +46,20 @@ func TestBuildDevicesWirelessSideBeatsFdbFallbacks(t *testing.T) {
 	l := NewLive(nil, nil, nil, nil)
 	gwCfg := RouterConfig{ID: "gw", Name: "Gateway", IsGateway: true}
 	l.gatewayCfg = &gwCfg
-	const (
-		gwMac = "AA:BB:CC:00:00:01"
-		rot   = "AA:BB:CC:DD:EE:02"
+	var (
+		gwMac = macaddr.MustParse("AA:BB:CC:00:00:01")
+		rot   = macaddr.MustParse("AA:BB:CC:DD:EE:02")
 	)
 	polled := map[string]*routerPolled{
-		"gw": {cfg: gwCfg, brMac: gwMac, fdb: map[string]string{
+		"gw": {cfg: gwCfg, brMac: gwMac, fdb: map[macaddr.MAC]string{
 			rot: "br-lan", // tránsito: misma LAN bridged
 		}},
-		"sw": {cfg: RouterConfig{ID: "sw", Name: "sw"}, brMac: "AA:BB:CC:00:00:02", fdb: map[string]string{
+		"sw": {cfg: RouterConfig{ID: "sw", Name: "sw"}, brMac: macaddr.MustParse("AA:BB:CC:00:00:02"), fdb: map[macaddr.MAC]string{
 			gwMac: "1", // root port del switch
 			rot:   "5", // boca local: sin hint, (2) se la quedaría
 		}},
-		"ap": {cfg: RouterConfig{ID: "ap", Name: "ap"}, brMac: "AA:BB:CC:00:00:03",
-			wirelessSide: map[string]string{rot: "2.4 GHz"}},
+		"ap": {cfg: RouterConfig{ID: "ap", Name: "ap"}, brMac: macaddr.MustParse("AA:BB:CC:00:00:03"),
+			wirelessSide: map[macaddr.MAC]string{rot: "2.4 GHz"}},
 	}
 	devs := l.buildDevices(polled, "")
 	var got *Device
@@ -91,7 +92,7 @@ func TestBuildDevicesWirelessSideKeepsPersistedSignal(t *testing.T) {
 	polled := map[string]*routerPolled{
 		"gw": {cfg: RouterConfig{ID: "gw", Name: "Gateway", IsGateway: true}},
 		"ap": {cfg: RouterConfig{ID: "ap", Name: "ap"},
-			wirelessSide: map[string]string{rot: "2.4 GHz"}},
+			wirelessSide: map[macaddr.MAC]string{macaddr.MustParse(rot): "2.4 GHz"}},
 	}
 	l.buildDevices(polled, "")
 	var sig *int

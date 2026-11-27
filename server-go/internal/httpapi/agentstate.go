@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 	"github.com/gnacho/netpulse/server-go/internal/adapters"
 	"github.com/gnacho/netpulse/server-go/internal/db"
@@ -45,7 +46,7 @@ func (s *server) persistAgentState(slug string, st *adapters.AgentState) {
 		LastSeen:  st.LastSeen.Unix(),
 		Version:   st.Version,
 		Host:      st.Host,
-		BridgeMAC: st.BridgeMAC,
+		BridgeMAC: st.BridgeMAC.String(),
 	})
 	if err != nil {
 		log.Printf("[netpulse] warning: could not serialize state for agent %s: %v", slug, err)
@@ -88,12 +89,13 @@ func NewStateRestorer(d *db.DB) func(*adapters.AgentRegistry) {
 			// (#2134) puede traerlas en minúsculas o con guiones. Ingest no
 			// normaliza, así que se hace aquí, una vez, al restaurarlo.
 			normalizePayloadMACs(ps.Payload)
+			bridgeMAC, _ := macaddr.ParseOrWarn(macWarn, "agentstate.bridge_mac router="+slug, ps.BridgeMAC)
 			reg.Restore(slug, &adapters.AgentState{
 				Payload:   ps.Payload,
 				LastSeen:  time.Unix(ps.LastSeen, 0),
 				Version:   ps.Version,
 				Host:      ps.Host,
-				BridgeMAC: canonMAC(ps.BridgeMAC),
+				BridgeMAC: bridgeMAC,
 			})
 		}
 	}

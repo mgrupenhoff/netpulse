@@ -3,6 +3,8 @@ package adapters
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 // TestBuildUsteerAP parsea una salida sintética de `ubus call usteer
@@ -38,7 +40,7 @@ func TestBuildUsteerAP(t *testing.T) {
 	}
 
 	ap := buildUsteerAP("hostapd.phy0-ap0", local["hostapd.phy0-ap0"], "rt3", true)
-	if ap.SSID != "temiscira" || ap.BSSID != "9C:9D:7E:1B:EA:B3" {
+	if ap.SSID != "temiscira" || ap.BSSID != macaddr.MustParse("9C:9D:7E:1B:EA:B3") {
 		t.Errorf("ap = %+v", ap)
 	}
 	if ap.Band != "5 GHz" || ap.Freq != 5260 {
@@ -79,10 +81,10 @@ func TestBuildUsteerAPWithClients(t *testing.T) {
 	if len(ap.Clients) != 2 {
 		t.Fatalf("esperaba 2 clientes, got %d", len(ap.Clients))
 	}
-	if ap.Clients[0].MAC != "40:44:F7:38:32:28" || ap.Clients[0].Signal != -83 {
+	if ap.Clients[0].MAC.String() != "40:44:F7:38:32:28" || ap.Clients[0].Signal != -83 {
 		t.Errorf("client[0] = %+v", ap.Clients[0])
 	}
-	if ap.Clients[1].MAC != "D8:D6:68:32:7C:46" || ap.Clients[1].Signal != -53 {
+	if ap.Clients[1].MAC.String() != "D8:D6:68:32:7C:46" || ap.Clients[1].Signal != -53 {
 		t.Errorf("client[1] = %+v", ap.Clients[1])
 	}
 }
@@ -90,7 +92,7 @@ func TestBuildUsteerAPWithClients(t *testing.T) {
 // TestBuildUsteerAPVacio: entrada sin ssid/bssid se descarta en GetUsteer.
 func TestBuildUsteerAPVacio(t *testing.T) {
 	ap := buildUsteerAP("hostapd.phy0-ap0", usteerAPRaw{}, "rt3", true)
-	if ap.SSID != "" || ap.BSSID != "" {
+	if ap.SSID != "" || ap.BSSID.IsValid() {
 		t.Errorf("AP vacío debería tener ssid/bssid vacío: %+v", ap)
 	}
 	if ap.Band != "2.4 GHz" {

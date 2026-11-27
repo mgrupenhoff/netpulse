@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/roamcfg"
 )
 
@@ -36,13 +37,13 @@ const (
 
 // Event es una fila de roam_events (entrada del feed).
 type Event struct {
-	ID       int64  `json:"id"`
-	TsMs     int64  `json:"ts_ms"`
-	RouterID string `json:"router_id"`
-	Type     string `json:"type"`
-	MAC      string `json:"mac,omitempty"`
-	Iface    string `json:"iface,omitempty"`
-	Detail   string `json:"detail,omitempty"`
+	ID       int64       `json:"id"`
+	TsMs     int64       `json:"ts_ms"`
+	RouterID string      `json:"router_id"`
+	Type     string      `json:"type"`
+	MAC      macaddr.MAC `json:"mac,omitzero"`
+	Iface    string      `json:"iface,omitempty"`
+	Detail   string      `json:"detail,omitempty"`
 }
 
 // RouterHost resuelve router_id → host para que el Collector haga SSH.
@@ -218,24 +219,24 @@ func contentHash(ev Event) string {
 }
 
 // ListEvents lee eventos desde SQLite ordenados por ts DESC. Filtros opcionales.
-func ListEvents(db *sql.DB, limit int, sinceMs int64, routerID, eventType, mac string) ([]Event, error) {
+func ListEvents(db *sql.DB, limit int, sinceMs int64, routerID, eventType string, macs []macaddr.MAC) ([]Event, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
 	q := "SELECT id, ts_ms, router_id, type, COALESCE(mac,''), COALESCE(iface,''), COALESCE(detail,'') FROM roam_events WHERE ts_ms >= ?"
 	args := []any{sinceMs}
-	// #1127: router y mac aceptan listas separadas por comas (filtro
-	// multi-select): OR dentro del filtro, AND entre filtros.
+	// #1127: router y mac aceptan filtros multi-select: OR dentro del filtro,
+	// AND entre filtros.
 	if ids := csvValues(routerID); len(ids) > 0 {
 		q += " AND router_id IN (" + placeholders(len(ids)) + ")"
 		for _, id := range ids {
 			args = append(args, id)
 		}
 	}
-	if macs := csvValues(mac); len(macs) > 0 {
+	if len(macs) > 0 {
 		q += " AND mac IN (" + placeholders(len(macs)) + ")"
 		for _, m := range macs {
-			args = append(args, strings.ToUpper(m))
+			args = append(args, m)
 		}
 	}
 	if eventType != "" {
@@ -341,11 +342,6 @@ func ParseLogreadLine(line, routerID string) (Event, bool) {
 	if !ok {
 		return Event{}, false
 	}
-	// #1129: los logs (hostapd/dawn/usteer) emiten la MAC en minúsculas y
-	// el resto de la app canonicaliza a MAYÚSCULAS (#960). Normalizando en
-	// la ingesta, el filtro por cliente de /api/roam-events (que compara en
-	// mayúsculas) casa con lo guardado y el nameByMac del frontend también.
-	ev.MAC = strings.ToUpper(ev.MAC)
 	return ev, true
 }
 
@@ -353,7 +349,10 @@ func parseHostapd(rest, routerID string, ts int64) (Event, bool) {
 	// Caso general (iface opcional repetida + sufijos de motivo tolerados).
 	if m := hostapdRe.FindStringSubmatch(rest); m != nil {
 		iface := m[1]
-		mac := m[4]
+		mac, err := macaddr.Parse(m[4])
+		if err != nil {
+			return Event{}, false
+		}
 		typ := TypeConnected
 		if m[2] == "DISCONNECTED" {
 			typ = TypeDisconnected
@@ -362,7 +361,10 @@ func parseHostapd(rest, routerID string, ts int64) (Event, bool) {
 	}
 	// Caso corto: "AP-STA-CONNECTED 04:95:..."
 	if m := hostapdConnShortRe.FindStringSubmatch(rest); m != nil {
-		mac := m[2]
+		mac, err := macaddr.Parse(m[2])
+		if err != nil {
+			return Event{}, false
+		}
 		typ := TypeConnected
 		if m[1] == "DISCONNECTED" {
 			typ = TypeDisconnected
@@ -372,7 +374,10 @@ func parseHostapd(rest, routerID string, ts int64) (Event, bool) {
 	// Caso wpad-mbedtls (#1038): "phy1-ap0: STA <mac> IEEE 802.11: associated (aid 1)"
 	if m := hostapdAssocRe.FindStringSubmatch(rest); m != nil {
 		iface := m[1]
-		mac := m[2]
+		mac, err := macaddr.Parse(m[2])
+		if err != nil {
+			return Event{}, false
+		}
 		typ := TypeConnected
 		if m[3] == "dis" {
 			typ = TypeDisconnected
@@ -384,7 +389,10 @@ func parseHostapd(rest, routerID string, ts int64) (Event, bool) {
 
 func parseDawn(rest, routerID string, ts int64) (Event, bool) {
 	if m := dawnClientRe.FindStringSubmatch(rest); m != nil {
-		mac := m[1]
+		mac, err := macaddr.Parse(m[1])
+		if err != nil {
+			return Event{}, false
+		}
 		bssid := m[2]
 		action := strings.TrimSpace(m[3])
 		return Event{
@@ -400,7 +408,10 @@ func parseDawn(rest, routerID string, ts int64) (Event, bool) {
 // connected/disconnected (mismos tipos que hostapd).
 func parseUsteer(rest, routerID string, ts int64) (Event, bool) {
 	if m := usteerStationRe.FindStringSubmatch(rest); m != nil {
-		mac := m[1]
+		mac, err := macaddr.Parse(m[1])
+		if err != nil {
+			return Event{}, false
+		}
 		typ := TypeConnected
 		if m[2] == "disconnected from" {
 			typ = TypeDisconnected

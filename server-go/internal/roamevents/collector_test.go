@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	_ "modernc.org/sqlite"
 )
 
@@ -15,17 +16,18 @@ import (
 // el desempate es el id autoincrement (orden de inserción), no el azar.
 func TestListEventsSameSecondOrdering(t *testing.T) {
 	db := openMemDB(t)
+	m1 := macaddr.MustParse("AA:AA:AA:AA:AA:01")
 	// Mismo ts_ms, inserción en orden: conectado primero, desconectado después.
 	ordered := []Event{
-		{TsMs: 5000, RouterID: "rt1", Type: TypeConnected, MAC: "AA:AA:AA:AA:AA:01", Iface: "wlan0"},
-		{TsMs: 5000, RouterID: "rt1", Type: TypeDisconnected, MAC: "AA:AA:AA:AA:AA:01", Iface: "wlan0"},
+		{TsMs: 5000, RouterID: "rt1", Type: TypeConnected, MAC: m1, Iface: "wlan0"},
+		{TsMs: 5000, RouterID: "rt1", Type: TypeDisconnected, MAC: m1, Iface: "wlan0"},
 	}
 	for _, ev := range ordered {
 		if err := InsertEvent(db, ev); err != nil {
 			t.Fatal(err)
 		}
 	}
-	got, err := ListEvents(db, 10, 0, "", "", "")
+	got, err := ListEvents(db, 10, 0, "", "", nil)
 	if err != nil || len(got) != 2 {
 		t.Fatalf("list: %v %+v", err, got)
 	}
@@ -34,50 +36,52 @@ func TestListEventsSameSecondOrdering(t *testing.T) {
 		t.Fatalf("orden a mismo segundo roto: %+v", got)
 	}
 	// Filtro por cliente (#1097): MAC en minúsculas debe normalizarse.
-	one, err := ListEvents(db, 10, 0, "", "", "aa:aa:aa:aa:aa:01")
+	one, err := ListEvents(db, 10, 0, "", "", []macaddr.MAC{macaddr.MustParse("aa:aa:aa:aa:aa:01")})
 	if err != nil || len(one) != 2 {
 		t.Fatalf("filtro mac: %v %+v", err, one)
 	}
-	none, _ := ListEvents(db, 10, 0, "", "", "BB:BB:BB:BB:BB:02")
+	none, _ := ListEvents(db, 10, 0, "", "", []macaddr.MAC{macaddr.MustParse("BB:BB:BB:BB:BB:02")})
 	if len(none) != 0 {
 		t.Fatalf("filtro mac negativo: %+v", none)
 	}
 }
 
-// TestListEventsMultiSelect (#1127): router y mac aceptan listas separadas
-// por comas (filtros multi-select de la vista de eventos): OR dentro del
-// filtro, AND entre filtros. Las MACs del filtro se comparan en mayúsculas
-// (#1129: la ingesta canonicaliza a mayúsculas desde los logs en minúsculas).
+// TestListEventsMultiSelect (#1127): router acepta listas separadas por comas
+// y macs acepta varias MACs (filtros multi-select de la vista de eventos):
+// OR dentro del filtro, AND entre filtros.
 func TestListEventsMultiSelect(t *testing.T) {
 	db := openMemDB(t)
+	m1 := macaddr.MustParse("AA:AA:AA:AA:AA:01")
+	m2 := macaddr.MustParse("AA:AA:AA:AA:AA:02")
+	m3 := macaddr.MustParse("AA:AA:AA:AA:AA:03")
 	seed := []Event{
-		{TsMs: 1000, RouterID: "rt1", Type: TypeConnected, MAC: "AA:AA:AA:AA:AA:01", Iface: "wlan0"},
-		{TsMs: 2000, RouterID: "rt2", Type: TypeDisconnected, MAC: "AA:AA:AA:AA:AA:02", Iface: "wlan1"},
-		{TsMs: 3000, RouterID: "rt1", Type: TypeDawnDecision, MAC: "AA:AA:AA:AA:AA:03"},
-		{TsMs: 4000, RouterID: "rt3", Type: TypeConnected, MAC: "AA:AA:AA:AA:AA:01", Iface: "wlan0"},
+		{TsMs: 1000, RouterID: "rt1", Type: TypeConnected, MAC: m1, Iface: "wlan0"},
+		{TsMs: 2000, RouterID: "rt2", Type: TypeDisconnected, MAC: m2, Iface: "wlan1"},
+		{TsMs: 3000, RouterID: "rt1", Type: TypeDawnDecision, MAC: m3},
+		{TsMs: 4000, RouterID: "rt3", Type: TypeConnected, MAC: m1, Iface: "wlan0"},
 	}
 	for _, ev := range seed {
 		if err := InsertEvent(db, ev); err != nil {
 			t.Fatal(err)
 		}
 	}
-	// OR de MACs (una en minúsculas en el parámetro -> normaliza).
-	got, err := ListEvents(db, 10, 0, "", "", "aa:aa:aa:aa:aa:01,AA:AA:AA:AA:AA:02")
+	// OR de MACs (una parseada en minúsculas).
+	got, err := ListEvents(db, 10, 0, "", "", []macaddr.MAC{macaddr.MustParse("aa:aa:aa:aa:aa:01"), m2})
 	if err != nil || len(got) != 3 {
 		t.Fatalf("filtro mac multi: %v %+v", err, got)
 	}
 	// AND router x mac.
-	got, err = ListEvents(db, 10, 0, "rt1", "", "AA:AA:AA:AA:AA:01")
+	got, err = ListEvents(db, 10, 0, "rt1", "", []macaddr.MAC{m1})
 	if err != nil || len(got) != 1 || got[0].RouterID != "rt1" {
 		t.Fatalf("filtro router+mac: %v %+v", err, got)
 	}
 	// OR de routers.
-	got, err = ListEvents(db, 10, 0, "rt2,rt3", "", "")
+	got, err = ListEvents(db, 10, 0, "rt2,rt3", "", nil)
 	if err != nil || len(got) != 2 {
 		t.Fatalf("filtro router multi: %v %+v", err, got)
 	}
 	// Lista con vacíos/espacios no rompe.
-	got, err = ListEvents(db, 10, 0, " rt1 , , rt2 ", "", "")
+	got, err = ListEvents(db, 10, 0, " rt1 , , rt2 ", "", nil)
 	if err != nil || len(got) != 3 {
 		t.Fatalf("filtro router multi con vacíos: %v %+v", err, got)
 	}
@@ -101,7 +105,7 @@ func TestParseLogreadFlint2(t *testing.T) {
 	if ev.Type != TypeDawnDecision {
 		t.Errorf("type = %q, want %q", ev.Type, TypeDawnDecision)
 	}
-	if ev.MAC != "12:E6:F7:45:D4:40" {
+	if ev.MAC != macaddr.MustParse("12:E6:F7:45:D4:40") {
 		t.Errorf("mac = %q", ev.MAC)
 	}
 	if ev.RouterID != "gateway" {
@@ -118,17 +122,17 @@ func TestParseUsteer(t *testing.T) {
 	cases := []struct {
 		line string
 		want string
-		mac  string
+		mac  macaddr.MAC
 	}{
 		{
 			"Sat Aug  8 19:21:58 2026 user.info usteer: station 04:95:e6:76:55:a1 connected to node 04:95:e6:76:55:b2",
 			TypeConnected,
-			"04:95:E6:76:55:A1",
+			macaddr.MustParse("04:95:E6:76:55:A1"),
 		},
 		{
 			"Sat Aug  8 19:21:59 2026 user.info usteer: station 04:95:e6:76:55:a1 disconnected from node 04:95:e6:76:55:b2",
 			TypeDisconnected,
-			"04:95:E6:76:55:A1",
+			macaddr.MustParse("04:95:E6:76:55:A1"),
 		},
 	}
 	for _, tc := range cases {
@@ -226,7 +230,7 @@ func TestParseHostapdConnected(t *testing.T) {
 			if ev.Iface != c.iface {
 				t.Errorf("iface = %q, want %q", ev.Iface, c.iface)
 			}
-			if ev.MAC != "04:95:E6:76:55:A1" {
+			if ev.MAC != macaddr.MustParse("04:95:E6:76:55:A1") {
 				t.Errorf("mac = %q", ev.MAC)
 			}
 		})
@@ -305,7 +309,7 @@ func TestInsertEventDedup(t *testing.T) {
 	db := openMemDB(t)
 	ev := Event{
 		TsMs: 1700000000000, RouterID: "rt1", Type: TypeConnected,
-		MAC: "AA:BB:CC:DD:EE:FF", Iface: "wlan0",
+		MAC: macaddr.MustParse("AA:BB:CC:DD:EE:FF"), Iface: "wlan0",
 	}
 	if err := InsertEvent(db, ev); err != nil {
 		t.Fatalf("insert 1: %v", err)
@@ -323,7 +327,7 @@ func TestInsertEventDedup(t *testing.T) {
 
 	// Evento distinto (mac diferente) en mismo minuto → se inserta.
 	ev2 := ev
-	ev2.MAC = "11:22:33:44:55:66"
+	ev2.MAC = macaddr.MustParse("11:22:33:44:55:66")
 	if err := InsertEvent(db, ev2); err != nil {
 		t.Fatalf("insert distinto: %v", err)
 	}
@@ -339,9 +343,9 @@ func TestInsertEventDedup(t *testing.T) {
 func TestListEventsFilters(t *testing.T) {
 	db := openMemDB(t)
 	events := []Event{
-		{TsMs: 1000, RouterID: "rt1", Type: TypeConnected, MAC: "AA:AA:AA:AA:AA:01", Iface: "wlan0"},
-		{TsMs: 2000, RouterID: "rt2", Type: TypeDisconnected, MAC: "AA:AA:AA:AA:AA:02", Iface: "wlan1"},
-		{TsMs: 3000, RouterID: "rt1", Type: TypeDawnDecision, MAC: "AA:AA:AA:AA:AA:03"},
+		{TsMs: 1000, RouterID: "rt1", Type: TypeConnected, MAC: macaddr.MustParse("AA:AA:AA:AA:AA:01"), Iface: "wlan0"},
+		{TsMs: 2000, RouterID: "rt2", Type: TypeDisconnected, MAC: macaddr.MustParse("AA:AA:AA:AA:AA:02"), Iface: "wlan1"},
+		{TsMs: 3000, RouterID: "rt1", Type: TypeDawnDecision, MAC: macaddr.MustParse("AA:AA:AA:AA:AA:03")},
 	}
 	for _, ev := range events {
 		if err := InsertEvent(db, ev); err != nil {
@@ -350,7 +354,7 @@ func TestListEventsFilters(t *testing.T) {
 	}
 
 	// Sin filtro: 3 eventos, orden DESC por ts.
-	got, err := ListEvents(db, 100, 0, "", "", "")
+	got, err := ListEvents(db, 100, 0, "", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,17 +365,17 @@ func TestListEventsFilters(t *testing.T) {
 		t.Errorf("primero debería ser ts=3000 (DESC), got %d", got[0].TsMs)
 	}
 
-	got, _ = ListEvents(db, 100, 0, "rt1", "", "")
+	got, _ = ListEvents(db, 100, 0, "rt1", "", nil)
 	if len(got) != 2 {
 		t.Errorf("filtro router rt1: %d, want 2", len(got))
 	}
 
-	got, _ = ListEvents(db, 100, 0, "", TypeConnected, "")
+	got, _ = ListEvents(db, 100, 0, "", TypeConnected, nil)
 	if len(got) != 1 {
 		t.Errorf("filtro tipo connected: %d, want 1", len(got))
 	}
 
-	got, _ = ListEvents(db, 100, 2000, "", "", "")
+	got, _ = ListEvents(db, 100, 2000, "", "", nil)
 	if len(got) != 2 {
 		t.Errorf("filtro since 2000: %d, want 2", len(got))
 	}

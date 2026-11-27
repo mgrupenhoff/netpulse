@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 	"github.com/gnacho/netpulse/server-go/internal/alerts"
 	"github.com/gnacho/netpulse/server-go/internal/sshkey"
@@ -142,17 +143,17 @@ func TestLiveAgentFreshSkipsSSH(t *testing.T) {
 	if len(p.glClients) != 1 || p.glClients[0].IP != "192.168.8.99" {
 		t.Fatalf("glClients vía agente: %+v", p.glClients)
 	}
-	if p.wireless["EC:71:DB:44:12:8A"].SignalDbm != -55 {
+	if p.wireless[macaddr.MustParse("EC:71:DB:44:12:8A")].SignalDbm != -55 {
 		t.Fatalf("wireless: %+v", p.wireless)
 	}
-	if p.fdb["EC:71:DB:44:12:8A"] != "lan1" || len(p.ports) != 1 || p.ports[0].Speed != "1 Gbps" {
+	if p.fdb[macaddr.MustParse("EC:71:DB:44:12:8A")] != "lan1" || len(p.ports) != 1 || p.ports[0].Speed != "1 Gbps" {
 		t.Fatalf("fdb/ports: %+v %+v", p.fdb, p.ports)
 	}
 	// LuCI del agente (issue #258): etiquetas propagadas al routerPolled.
 	if p.luci == nil || p.luci.PortLabels["lan1"] != "Router/Fritzbox" || p.luci.VlanLabels["1"] != "LAN" {
 		t.Fatalf("luci vía agente: %+v", p.luci)
 	}
-	if len(p.radios) != 1 || p.radios[0].Name != "2.4 GHz" || p.brMac != "94:83:C4:00:00:09" || p.backhaul != "cable" {
+	if len(p.radios) != 1 || p.radios[0].Name != "2.4 GHz" || p.brMac != macaddr.MustParse("94:83:C4:00:00:09") || p.backhaul != "cable" {
 		t.Fatalf("radios/brMac/backhaul: %+v %q %q", p.radios, p.brMac, p.backhaul)
 	}
 	if p.board == nil || p.board.Model != "TP-Link EAP225" || p.latencyMs == nil || *p.latencyMs != 3 {

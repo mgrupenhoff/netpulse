@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/alerts"
 	npsnmp "github.com/gnacho/netpulse/server-go/internal/snmp"
 	"golang.org/x/net/icmp"
@@ -96,7 +97,7 @@ func (l *Live) pollRouterSNMP(cfg RouterConfig) (*routerPolled, error) {
 	// si el OID no contesta en este poll se conserva la última conocida.
 	brMac, _ := npsnmp.PollBridgeAddress(session)
 	l.mu.Lock()
-	if brMac == "" {
+	if !brMac.IsValid() {
 		brMac = l.snmpBrMac[cfg.ID]
 	} else {
 		l.snmpBrMac[cfg.ID] = brMac
@@ -566,8 +567,8 @@ func (l *Live) snmpPortCache(routerID string, ports []EthPort) {
 // topología/dispositivos. #661: NO descarta entradas cuyo ifIndex no resuelve
 // a un puerto conocido (antes eso dejaba el switch con 0 dispositivos);
 // cae a bridgePort y, en último caso, a un nombre generado.
-func snmpFdbMap(fdb []npsnmp.FdbEntry, portIdxToName map[int]string) map[string]string {
-	out := map[string]string{}
+func snmpFdbMap(fdb []npsnmp.FdbEntry, portIdxToName map[int]string) map[macaddr.MAC]string {
+	out := map[macaddr.MAC]string{}
 	for _, e := range fdb {
 		name := ""
 		if n, ok := portIdxToName[e.IfIndex]; ok {
@@ -590,8 +591,8 @@ func snmpFdbMap(fdb []npsnmp.FdbEntry, portIdxToName map[int]string) map[string]
 // stack, mgmt). Son identidades del propio equipo, no clientes: sirven para
 // absorberlas también donde las aprenda un vecino (p.ej. la br-lan del
 // gateway al gestionarlo), que es el segundo fantasma de #1489.
-func snmpSelfMacs(fdb []npsnmp.FdbEntry, portIdxToName map[int]string) []string {
-	out := []string{}
+func snmpSelfMacs(fdb []npsnmp.FdbEntry, portIdxToName map[int]string) []macaddr.MAC {
+	out := []macaddr.MAC{}
 	for _, e := range fdb {
 		name := ""
 		if n, ok := portIdxToName[e.IfIndex]; ok {

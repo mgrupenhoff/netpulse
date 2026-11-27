@@ -5,26 +5,30 @@ package adapters
 // no 802.1AB-compliant). Varios candidatos de flota llegan por el MISMO
 // puerto raíz; la corroboración FDB por bridge-MAC decide.
 
-import "testing"
+import (
+	"testing"
 
-const (
-	macGw    = "94:83:C4:00:00:01"
-	macRT2   = "22:22:22:22:22:02"
-	macRT3   = "33:33:33:33:33:03"
-	macSwCor = "44:44:44:44:44:04"
-	macSwFar = "55:55:55:55:55:05"
+	"github.com/gnacho/netpulse/agent/macaddr"
+)
+
+var (
+	macGw    = macaddr.MustParse("94:83:C4:00:00:01")
+	macRT2   = macaddr.MustParse("22:22:22:22:22:02")
+	macRT3   = macaddr.MustParse("33:33:33:33:33:03")
+	macSwCor = macaddr.MustParse("44:44:44:44:44:04")
+	macSwFar = macaddr.MustParse("55:55:55:55:55:05")
 )
 
 // phantomPolled: rt4 oye en lan1 a los vecinos dados (en ese orden, como
 // los devuelve lldpcli) y su FDB aprende al gateway por lan1 (root port).
-func phantomPolled(neighbors []LldpNeighbor, fdb map[string]string) map[string]*routerPolled {
+func phantomPolled(neighbors []LldpNeighbor, fdb map[macaddr.MAC]string) map[string]*routerPolled {
 	return map[string]*routerPolled{
 		"gw":     {cfg: RouterConfig{ID: "gw", IsGateway: true}, brMac: macGw},
 		"rt2":    {cfg: RouterConfig{ID: "rt2", Type: "openwrt"}, brMac: macRT2},
 		"rt3":    {cfg: RouterConfig{ID: "rt3", Type: "openwrt"}, brMac: macRT3},
 		"swCore": {cfg: RouterConfig{ID: "swCore", Type: "managed-switch"}, brMac: macSwCor},
 		"swFar":  {cfg: RouterConfig{ID: "swFar", Type: "managed-switch"}, brMac: macSwFar},
-		"rt4": {cfg: RouterConfig{ID: "rt4", Type: "openwrt"}, brMac: "44:00:00:00:00:44",
+		"rt4": {cfg: RouterConfig{ID: "rt4", Type: "openwrt"}, brMac: macaddr.MustParse("44:00:00:00:00:44"),
 			fdb:  fdb,
 			lldp: neighbors,
 		},
@@ -38,7 +42,7 @@ func TestPhantomFilteredByFdbCorroboration(t *testing.T) {
 		{Port: "lan1", Chassis: "rt3", ChassisMac: macRT3, PortDesc: "lan1"}, // phantom primero
 		{Port: "lan1", Chassis: "rt2", ChassisMac: macRT2, PortDesc: "lan2"}, // peer real
 	}
-	fdb := map[string]string{
+	fdb := map[macaddr.MAC]string{
 		macGw:  "lan1", // root port
 		macRT2: "lan1", // rt2 corroborado (tráfico real vía lan1)
 		// macRT3 ausente: phantom de 2º salto sin tráfico directo
@@ -59,7 +63,7 @@ func TestPhantomTwoSwitchesCorroboratedWins(t *testing.T) {
 		{Port: "lan1", Chassis: "swFar", ChassisMac: macSwFar, PortDesc: "ge9"},  // phantom primero
 		{Port: "lan1", Chassis: "swCore", ChassisMac: macSwCor, PortDesc: "ge5"}, // peer real
 	}
-	fdb := map[string]string{
+	fdb := map[macaddr.MAC]string{
 		macGw:    "lan1", // root port: el guard corre
 		macSwCor: "lan1", // swCore corroborado
 	}
@@ -77,7 +81,7 @@ func TestPhantomCorroboratedTiePrefersSwitch(t *testing.T) {
 		{Port: "lan1", Chassis: "rt3", ChassisMac: macRT3, PortDesc: "lan1"},     // AP primero
 		{Port: "lan1", Chassis: "swCore", ChassisMac: macSwCor, PortDesc: "ge5"}, // switch
 	}
-	fdb := map[string]string{
+	fdb := map[macaddr.MAC]string{
 		macGw:    "lan1",
 		macRT3:   "lan1", // ambos corroborados
 		macSwCor: "lan1",

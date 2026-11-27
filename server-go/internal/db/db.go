@@ -20,6 +20,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/clientbw"
 	"github.com/gnacho/netpulse/server-go/internal/portseries"
 	"github.com/gnacho/netpulse/server-go/internal/wgseries"
@@ -700,6 +701,7 @@ func Open(dir string, opts ...OpenOption) (*DB, error) {
 	// agent_only), "ssh" = nunca esperar agente: se inventaria por SSH y no
 	// alerta por la ausencia de un agente que no va a existir.
 	migrate(sqldb, "routers", "inventory_mode", "ALTER TABLE routers ADD COLUMN inventory_mode TEXT NOT NULL DEFAULT ''")
+	migrate(sqldb, "routers", "discovery_overrides", "ALTER TABLE routers ADD COLUMN discovery_overrides TEXT NOT NULL DEFAULT ''")
 	// issue #196: bridgeMAC persistido del router (exclusión de "desconocido").
 	migrate(sqldb, "routers", "mac", "ALTER TABLE routers ADD COLUMN mac TEXT")
 	// Ancho de canal de los vecinos (#1087), con el agente nuevo; 0 = viejo.
@@ -1058,7 +1060,7 @@ const macUpperMigratedKey = "mac_upper_tables_migrated"
 // Patrones GLOB de una MAC de 17 caracteres. topology_overrides solo admite la
 // forma con ':', porque sus columnas también guardan ids de router (slugs con
 // '-', que pueden parecer una MAC con guiones); las demás tablas solo guardan
-// MACs y aceptan también '-'. Como macaddr.Normalize, el separador debe ser el
+// MACs y aceptan también '-'. Como macaddr.Parse, el separador debe ser el
 // mismo en las cinco posiciones: "aa-bb:cc-…" no es una MAC.
 var (
 	colonMACGlob = strings.Repeat("[0-9A-Fa-f][0-9A-Fa-f]:", 5) + "[0-9A-Fa-f][0-9A-Fa-f]"
@@ -1346,7 +1348,7 @@ func (d *DB) ShutdownContext(ctx context.Context) error {
 
 // KnownMac es una fila de la allowlist (issue #196).
 type KnownMac struct {
-	MAC       string
+	MAC       macaddr.MAC
 	Name      string
 	Note      string
 	CreatedAt int64
@@ -1382,22 +1384,22 @@ func (d *DB) UpsertKnownMac(k KnownMac) error {
 
 // AddDeletedClient registra una lápida: el usuario borró este cliente a mano
 // y NO quiere que vuelva a alta solo (#1278).
-func (d *DB) AddDeletedClient(mac string) error {
+func (d *DB) AddDeletedClient(mac macaddr.MAC) error {
 	_, err := d.Exec("INSERT INTO deleted_clients (mac, deleted_at) VALUES (?, ?) ON CONFLICT(mac) DO UPDATE SET deleted_at=excluded.deleted_at", mac, NowMS())
 	return err
 }
 
 // DeletedClients devuelve el set de MACs enterradas.
-func (d *DB) DeletedClients() (map[string]bool, error) {
+func (d *DB) DeletedClients() (map[macaddr.MAC]bool, error) {
 	rows, err := d.Query("SELECT mac FROM deleted_clients")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[string]bool{}
+	out := map[macaddr.MAC]bool{}
 	for rows.Next() {
-		var mac string
-		if err := rows.Scan(&mac); err != nil {
+		var mac macaddr.MAC
+		if err := rows.Scan(&mac); err != nil || !mac.IsValid() {
 			continue
 		}
 		out[mac] = true
@@ -1407,13 +1409,13 @@ func (d *DB) DeletedClients() (map[string]bool, error) {
 
 // DeleteDeletedClient quita la lápida: el usuario vuelve a dar de alta la
 // MAC (allowlist/alta guiada), así que puede reaparecer con normalidad.
-func (d *DB) DeleteDeletedClient(mac string) error {
+func (d *DB) DeleteDeletedClient(mac macaddr.MAC) error {
 	_, err := d.Exec("DELETE FROM deleted_clients WHERE mac = ?", mac)
 	return err
 }
 
 // DeleteKnownMac quita una MAC de la allowlist.
-func (d *DB) DeleteKnownMac(mac string) error {
+func (d *DB) DeleteKnownMac(mac macaddr.MAC) error {
 	_, err := d.Exec("DELETE FROM known_macs WHERE mac = ?", mac)
 	return err
 }

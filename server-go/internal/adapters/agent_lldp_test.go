@@ -6,6 +6,7 @@ package adapters
 import (
 	"testing"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 )
 
@@ -29,7 +30,7 @@ func TestPolledFromAgentLldp(t *testing.T) {
 
 	// 1. Push completo con vecinos: lldp poblado, disponible.
 	p := l.polledFromAgent(cfg, lldpAgentPayload(1, &probe.LldpData{Available: true, Neighbors: lldpGoodNeighbors}))
-	if len(p.lldp) != 1 || p.lldp[0].Chassis != "GS308E" || p.lldp[0].ChassisMac != "28:C6:8E:1D:90:44" {
+	if len(p.lldp) != 1 || p.lldp[0].Chassis != "GS308E" || p.lldp[0].ChassisMac != macaddr.MustParse("28:C6:8E:1D:90:44") {
 		t.Fatalf("lldp: %+v", p.lldp)
 	}
 	if p.lldpUnavailable {

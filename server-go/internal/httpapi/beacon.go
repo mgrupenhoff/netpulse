@@ -28,8 +28,13 @@ import (
 	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 	"github.com/gnacho/netpulse/server-go/internal/alerts"
+	"github.com/gnacho/netpulse/server-go/internal/logonce"
 	"github.com/gnacho/netpulse/server-go/internal/portseries"
 )
+
+// beaconWarn avisa una sola vez por valor de las MAC del beacon que no son
+// válidas: el switch las repite en cada datagrama.
+var beaconWarn = logonce.New("[beacon] ")
 
 // beaconPort: una boca del beacon. n = número 1..9; l = código de link
 // (0 down · 1 10M · 2 100M · 3 1G · 4 500M · 5 10G · 6 2.5G · 7 5G);
@@ -198,8 +203,8 @@ func (s *server) ingestBeacon(src string, raw []byte) {
 		// descartan (firmware razonable).
 		macs := make(map[string]string, len(p.FDB))
 		for mac, port := range p.FDB {
-			if norm := macaddr.Normalize(mac); norm != "" {
-				macs[norm] = port
+			if m, ok := macaddr.ParseOrWarn(beaconWarn, "beacon.fdb router="+p.Slug, mac); ok {
+				macs[m.String()] = port
 			}
 		}
 		fdbPayload := &probe.Payload{
@@ -283,10 +288,11 @@ func (s *server) ingestBeacon(src string, raw []byte) {
 	if p.Up > 0 || p.Fw != "" {
 		b := &probe.BoardInfo{}
 		b.Release.Description = "RTLPlayground " + p.Fw
+		brMac, _ := macaddr.ParseOrWarn(beaconWarn, "beacon.bridge router="+p.Slug, p.Mac)
 		pl.Data.System = &probe.SystemData{
 			Board:     b,
 			SysInfo:   &probe.SysInfo{Uptime: float64(p.Up)},
-			BridgeMAC: macaddr.Normalize(p.Mac),
+			BridgeMAC: brMac.String(),
 		}
 	} else {
 		// #639: el beacon no lleva firmware/uptime; el server los obtiene de

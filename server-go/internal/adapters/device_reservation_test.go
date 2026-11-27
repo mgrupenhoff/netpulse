@@ -8,6 +8,7 @@ package adapters
 import (
 	"testing"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 )
 
@@ -29,7 +30,7 @@ func TestBuildDevicesNamesFromReservation(t *testing.T) {
 	devices := l.buildDevices(map[string]*routerPolled{"gateway": l.polledFromAgent(cfg, payload)}, "")
 	var found bool
 	for _, d := range devices {
-		if d.MAC != "02:00:00:00:00:01" {
+		if d.MAC != macaddr.MustParse("02:00:00:00:00:01") {
 			continue
 		}
 		found = true
@@ -62,7 +63,7 @@ func TestBuildDevicesLeaseHostnameWinsOverReservation(t *testing.T) {
 	}
 	devices := l.buildDevices(map[string]*routerPolled{"gateway": l.polledFromAgent(cfg, payload)}, "")
 	for _, d := range devices {
-		if d.MAC == "02:00:00:00:00:02" && (d.Name != "laptop" || d.IP != "192.0.2.30") {
+		if d.MAC == macaddr.MustParse("02:00:00:00:00:02") && (d.Name != "laptop" || d.IP != "192.0.2.30") {
 			t.Fatalf("the lease must win: %+v", d)
 		}
 	}

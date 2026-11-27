@@ -12,6 +12,8 @@
 //     posición (rack, uStart, colStart), label y status pinneado.
 package rack
 
+import "github.com/gnacho/netpulse/agent/macaddr"
+
 // RackColumns es el número de columnas por U del grid horizontal.
 const RackColumns = 12
 
@@ -66,14 +68,14 @@ type Port struct {
 }
 
 // DeviceProfile es el modelo físico compartido del dispositivo: la misma
-// cara frontal en todos los racks. Clave: MAC normalizada (mayúsculas, ':').
+// cara frontal en todos los racks. Clave: MAC canónica (AA:BB:CC:DD:EE:FF).
 type DeviceProfile struct {
-	MAC         string `json:"mac"`
-	FaceplateID string `json:"faceplateId"`
-	UHeight     int    `json:"uHeight"`
-	ColSpan     int    `json:"colSpan"`
-	Color       string `json:"color"`
-	Ports       []Port `json:"ports"`
+	MAC         macaddr.MAC `json:"mac"`
+	FaceplateID string      `json:"faceplateId"`
+	UHeight     int         `json:"uHeight"`
+	ColSpan     int         `json:"colSpan"`
+	Color       string      `json:"color"`
+	Ports       []Port      `json:"ports"`
 }
 
 // Rack es un rack físico (19" o 10").
@@ -90,17 +92,17 @@ type Rack struct {
 }
 
 // Mount es la colocación de un dispositivo (o accesorio) en un rack.
-// DeviceMAC == "" indica accesorio (blank, shelf, patch panel, PDU).
+// !DeviceMAC.IsValid() indica accesorio (blank, shelf, patch panel, PDU).
 type Mount struct {
-	ID             string `json:"id"`
-	RackID         string `json:"rackId"`
-	DeviceMAC      string `json:"deviceMac,omitempty"`
-	FaceplateID    string `json:"faceplateId"`
-	UStart         int    `json:"uStart"`
-	ColStart       int    `json:"colStart"`
-	Label          string `json:"label,omitempty"`
-	StatusPin      string `json:"statusPin"`
-	PortVisibility string `json:"portVisibility"`
+	ID             string      `json:"id"`
+	RackID         string      `json:"rackId"`
+	DeviceMAC      macaddr.MAC `json:"deviceMac,omitzero"`
+	FaceplateID    string      `json:"faceplateId"`
+	UStart         int         `json:"uStart"`
+	ColStart       int         `json:"colStart"`
+	Label          string      `json:"label,omitempty"`
+	StatusPin      string      `json:"statusPin"`
+	PortVisibility string      `json:"portVisibility"`
 }
 
 // Cable conecta dos puertos de dos montajes (puede cruzar racks).

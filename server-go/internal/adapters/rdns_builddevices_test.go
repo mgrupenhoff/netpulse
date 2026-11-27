@@ -3,6 +3,8 @@ package adapters
 import (
 	"testing"
 	"time"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 // TestBuildDevicesNamesFromReverseDNS: a static-IP host seen only in ARP
@@ -24,18 +26,18 @@ func TestBuildDevicesNamesFromReverseDNS(t *testing.T) {
 	polled := map[string]*routerPolled{
 		"gw": {
 			cfg: RouterConfig{ID: "gw", Name: "Gateway", Host: "172.16.16.1", IsGateway: true},
-			arp: map[string]string{
-				"5C:E2:8C:00:00:04": "172.16.16.4",
+			arp: map[macaddr.MAC]string{
+				macaddr.MustParse("5C:E2:8C:00:00:04"): "172.16.16.4",
 			},
 			leases: []DhcpLease{
-				{MAC: "AA:BB:CC:00:00:70", IP: "172.16.16.70", Hostname: "laptop"},
+				{MAC: macaddr.MustParse("AA:BB:CC:00:00:70"), IP: "172.16.16.70", Hostname: "laptop"},
 			},
 		},
 	}
 	byMAC := func(devs []Device) map[string]Device {
 		m := map[string]Device{}
 		for _, d := range devs {
-			m[d.MAC] = d
+			m[d.MAC.String()] = d
 		}
 		return m
 	}

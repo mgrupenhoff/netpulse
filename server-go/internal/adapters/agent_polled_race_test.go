@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/agent/probe"
 )
 
@@ -54,7 +55,7 @@ func TestPolledFromAgentFDBMapWriteRace(t *testing.T) {
 		if got := p.Data.FDB.MACs["AA:BB:CC:DD:EE:01"]; got != "1" {
 			t.Fatalf("el payload publicado cambió: puerto %q, se esperaba \"1\"", got)
 		}
-		if got := out.fdb["AA:BB:CC:DD:EE:01"]; got != "lan1" {
+		if got := out.fdb[macaddr.MustParse("AA:BB:CC:DD:EE:01")]; got != "lan1" {
 			t.Fatalf("puerto normalizado %q, se esperaba \"lan1\"", got)
 		}
 	}

@@ -1,6 +1,10 @@
 package adapters
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
+)
 
 // SPEC-65 D65-2: Device.infra sellado server-side ("hypervisor" | "ct" |
 // "managed-switch"); ausente = dispositivo normal.
@@ -82,7 +86,7 @@ func TestInfraSelladoLiveManagedSwitch(t *testing.T) {
 		"7C:ED:8D:4A:11:22": "lan3", // cliente tras el switch
 	})
 	polled["living"].lldp = []LldpNeighbor{{
-		Port: "lan3", ChassisMac: "28:C6:8E:1D:90:44", Chassis: "GS308E",
+		Port: "lan3", ChassisMac: macaddr.MustParse("28:C6:8E:1D:90:44"), Chassis: "GS308E",
 		Mgmt: "192.168.8.13", Caps: []string{"Bridge"},
 	}}
 	devices := []Device{

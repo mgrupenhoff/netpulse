@@ -17,11 +17,11 @@ import (
 	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
-// CableHint candidato de cable. From/To son MACs normalizadas; ambos
+// CableHint candidato de cable. From/To son MACs canónicas; ambos
 // extremos deben estar montados para que el hint produzca cable.
 type CableHint struct {
-	FromDeviceID string
-	ToDeviceID   string
+	FromDeviceID macaddr.MAC
+	ToDeviceID   macaddr.MAC
 	Medium       string // "ethernet" | "fiber" (vacío = se deriva del puerto)
 	FromPortHint string // ifName/ifDescr opcional (LLDP/SNMP)
 	ToPortHint   string
@@ -43,8 +43,6 @@ func pairKey(a, b string) string {
 	return p[0] + "|" + p[1]
 }
 
-func normMac(m string) string { return macaddr.NormalizeLenient(m) }
-
 // ImportCables crea cables para los hints cuyos extremos están montados.
 // Elección de puerto en dos niveles: primero uno libre cuyo tipo case con el
 // medio (fiber → sfp/sfp+, cobre → rj45); si no, cualquier puerto libre.
@@ -55,16 +53,16 @@ func ImportCables(db *sql.DB, hints []CableHint) (ImportResult, error) {
 	if err != nil {
 		return ImportResult{}, err
 	}
-	mountByMac := map[string]MountRow{}
+	mountByMac := map[macaddr.MAC]MountRow{}
 	for _, m := range mounts {
-		if m.DeviceMAC != "" {
-			mountByMac[normMac(m.DeviceMAC)] = m
+		if m.DeviceMAC.IsValid() {
+			mountByMac[m.DeviceMAC] = m
 		}
 	}
-	profiles := map[string]DeviceProfile{}
+	profiles := map[macaddr.MAC]DeviceProfile{}
 	if profs, err := ListProfiles(db); err == nil {
 		for _, p := range profs {
-			profiles[normMac(p.MAC)] = p
+			profiles[p.MAC] = p
 		}
 	}
 	existing, err := ListCables(db)
@@ -88,7 +86,7 @@ func ImportCables(db *sql.DB, hints []CableHint) (ImportResult, error) {
 	}
 
 	capacity := func(m MountRow) int {
-		if m.DeviceMAC == "" && IsPassThrough(m.FaceplateID) {
+		if !m.DeviceMAC.IsValid() && IsPassThrough(m.FaceplateID) {
 			return 2
 		}
 		return 1
@@ -138,8 +136,8 @@ func ImportCables(db *sql.DB, hints []CableHint) (ImportResult, error) {
 	defer tx.Rollback()
 
 	for _, h := range hints {
-		ma, oka := mountByMac[normMac(h.FromDeviceID)]
-		mb, okb := mountByMac[normMac(h.ToDeviceID)]
+		ma, oka := mountByMac[h.FromDeviceID]
+		mb, okb := mountByMac[h.ToDeviceID]
 		if !oka || !okb || ma.ID == mb.ID {
 			res.Skipped++
 			continue
@@ -148,8 +146,8 @@ func ImportCables(db *sql.DB, hints []CableHint) (ImportResult, error) {
 			res.Skipped++
 			continue
 		}
-		pa, hintedA := pickPort(ma, profiles[normMac(ma.DeviceMAC)], h.Medium, h.FromPortHint)
-		pb, _ := pickPort(mb, profiles[normMac(mb.DeviceMAC)], h.Medium, h.ToPortHint)
+		pa, hintedA := pickPort(ma, profiles[ma.DeviceMAC], h.Medium, h.FromPortHint)
+		pb, _ := pickPort(mb, profiles[mb.DeviceMAC], h.Medium, h.ToPortHint)
 		if pa == nil || pb == nil {
 			res.NoFreePort = append(res.NoFreePort, h)
 			continue
@@ -202,16 +200,16 @@ const (
 // "manual" cuyo par aparece en los hints actuales pasan a "confirmed"; el
 // resto queda "manual-only".
 func AuditCables(cables []Cable, hints []CableHint, mounts []MountRow) map[string]string {
-	mountByMac := map[string]MountRow{}
+	mountByMac := map[macaddr.MAC]MountRow{}
 	for _, m := range mounts {
-		if m.DeviceMAC != "" {
-			mountByMac[normMac(m.DeviceMAC)] = m
+		if m.DeviceMAC.IsValid() {
+			mountByMac[m.DeviceMAC] = m
 		}
 	}
 	hintPairs := map[string]bool{}
 	for _, h := range hints {
-		ma, oka := mountByMac[normMac(h.FromDeviceID)]
-		mb, okb := mountByMac[normMac(h.ToDeviceID)]
+		ma, oka := mountByMac[h.FromDeviceID]
+		mb, okb := mountByMac[h.ToDeviceID]
 		if oka && okb {
 			hintPairs[pairKey(ma.ID, mb.ID)] = true
 		}

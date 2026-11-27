@@ -86,7 +86,7 @@ func attributeNetworkClients(networks []NetworkInfo, clients []Device, wifiNet m
 			}
 			candidates = byVlan
 		}
-		if len(candidates) != 1 || c.MAC == "" {
+		if len(candidates) != 1 || !c.MAC.IsValid() {
 			continue
 		}
 		i := candidates[0]

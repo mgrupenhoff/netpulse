@@ -9,6 +9,8 @@ package rack
 
 import (
 	"database/sql"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 // SyncDetectedCables ajusta los cables origin=detected a la evidencia actual
@@ -22,17 +24,17 @@ func SyncDetectedCables(db *sql.DB, hints []CableHint) (ImportResult, error) {
 	if err != nil {
 		return res, err
 	}
-	macToMount := map[string]string{}
+	macToMount := map[macaddr.MAC]string{}
 	for _, m := range mounts {
-		if m.DeviceMAC != "" {
-			macToMount[normMac(m.DeviceMAC)] = m.ID
+		if m.DeviceMAC.IsValid() {
+			macToMount[m.DeviceMAC] = m.ID
 		}
 	}
 	// Pares deseados según los hints (ambos extremos montados).
 	want := map[string]CableHint{}
 	for _, h := range hints {
-		ma, okA := macToMount[normMac(h.FromDeviceID)]
-		mb, okB := macToMount[normMac(h.ToDeviceID)]
+		ma, okA := macToMount[h.FromDeviceID]
+		mb, okB := macToMount[h.ToDeviceID]
 		if !okA || !okB || ma == mb {
 			continue
 		}

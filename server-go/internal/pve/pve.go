@@ -35,7 +35,12 @@ import (
 	"time"
 
 	"github.com/gnacho/netpulse/agent/macaddr"
+	"github.com/gnacho/netpulse/server-go/internal/logonce"
 )
+
+// pveWarn avisa una sola vez por hwaddr inválida: el inventario se
+// vuelve a leer en cada sondeo del cluster.
+var pveWarn = logonce.New("[pve] ")
 
 // Config: datos de conexión al cluster (persistidos en kv por el server).
 type Config struct {
@@ -227,7 +232,7 @@ func (c *Client) NodeIP(ctx context.Context, node string) (string, error) {
 // guest is not on the native VLAN, and that is the only place the tag exists:
 // the guest sits behind the host bridge, so the router never sees it (#1757).
 type NIC struct {
-	MAC    string
+	MAC    macaddr.MAC
 	Tag    int
 	Bridge string
 }
@@ -238,7 +243,7 @@ type NIC struct {
 //	LXC:  net0: bridge=vmbr0,hwaddr=BC:24:11:XX:XX:XX,ip=dhcp,name=eth0,type=veth
 //	QEMU: net0: virtio=BC:24:11:XX:XX:XX,bridge=vmbr0   (MAC tras el modelo)
 //
-// MACs are normalised to upper case with ':'.
+// Las MACs se normalizan a macaddr.MAC canónico.
 func NICsOfConfig(cfg map[string]any) []NIC {
 	keys := make([]string, 0, len(cfg))
 	for k := range cfg {
@@ -257,7 +262,9 @@ func NICsOfConfig(cfg map[string]any) []NIC {
 		for _, field := range strings.Split(s, ",") {
 			switch {
 			case strings.HasPrefix(field, "hwaddr="):
-				nic.MAC = normMAC(field[len("hwaddr="):])
+				// Un hwaddr inválido deja el NIC sin MAC y se descarta más abajo;
+				// ParseOrWarn avisa una sola vez por valor.
+				nic.MAC, _ = macaddr.ParseOrWarn(pveWarn, "pve.hwaddr nic="+k, field[len("hwaddr="):])
 			case strings.HasPrefix(field, "bridge="):
 				nic.Bridge = field[len("bridge="):]
 			case strings.HasPrefix(field, "tag="):
@@ -265,15 +272,16 @@ func NICsOfConfig(cfg map[string]any) []NIC {
 					nic.Tag = n
 				}
 			default:
-				// QEMU: el primer campo es <modelo>=<MAC> (virtio=XX, e1000=XX…)
+				// QEMU: el primer campo es <modelo>=<MAC> (virtio=XX, e1000=XX…).
+				// Exige separadores (17 caracteres) para distinguirlo de otras opciones.
 				if eq := strings.Index(field, "="); eq > 0 {
-					if looksLikeMAC(field[eq+1:]) {
-						nic.MAC = normMAC(field[eq+1:])
+					if m, err := macaddr.ParseSeparated(field[eq+1:]); err == nil {
+						nic.MAC = m
 					}
 				}
 			}
 		}
-		if nic.MAC != "" {
+		if nic.MAC.IsValid() {
 			out = append(out, nic)
 		}
 	}
@@ -281,26 +289,16 @@ func NICsOfConfig(cfg map[string]any) []NIC {
 }
 
 // MACsOfConfig extrae las MACs de una config de VM/CT (ver NICsOfConfig).
-func MACsOfConfig(cfg map[string]any) []string {
+func MACsOfConfig(cfg map[string]any) []macaddr.MAC {
 	nics := NICsOfConfig(cfg)
 	if len(nics) == 0 {
 		return nil
 	}
-	out := make([]string, 0, len(nics))
+	out := make([]macaddr.MAC, 0, len(nics))
 	for _, n := range nics {
 		out = append(out, n.MAC)
 	}
 	return out
-}
-
-// looksLikeMAC comprueba si el valor de un campo key=value de netN es una MAC
-// con separadores (17 caracteres) para distinguirlo de otras opciones de NIC.
-func looksLikeMAC(s string) bool {
-	return macaddr.NormalizeSeparated(s) != ""
-}
-
-func normMAC(s string) string {
-	return macaddr.Normalize(s)
 }
 
 // TestResult is what a connection test can tell the user about an endpoint.

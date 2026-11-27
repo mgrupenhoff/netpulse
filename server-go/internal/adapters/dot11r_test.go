@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/gnacho/netpulse/agent/macaddr"
 )
 
 // TestParseUciWirelessFlint2 usa la salida real de `uci show wireless` del
@@ -86,6 +88,9 @@ wireless.wifi5g.ieee80211w='1'
 	if ifaces[0].SSID != "temiscira" {
 		t.Errorf("iface[0].SSID = %q, want temiscira", ifaces[0].SSID)
 	}
+	if ifaces[0].MAC != macaddr.MustParse("1E:C1:05:C9:48:0D") {
+		t.Errorf("iface[0].MAC = %q, want 1E:C1:05:C9:48:0D", ifaces[0].MAC)
+	}
 	if !ifaces[0].Dot11REnabled {
 		t.Errorf("iface[0].Dot11REnabled = false, want true")
 	}
@@ -115,6 +120,9 @@ wireless.wifi5g.ieee80211w='1'
 	}
 	if !ifaces[1].Dot11REnabled {
 		t.Errorf("iface[1].Dot11REnabled = false, want true")
+	}
+	if ifaces[1].MAC != macaddr.MustParse("94:83:C4:BA:BF:AB") {
+		t.Errorf("iface[1].MAC = %q, want 94:83:C4:BA:BF:AB", ifaces[1].MAC)
 	}
 }
 
@@ -249,7 +257,7 @@ func TestDot11rSkip(t *testing.T) {
 // encoding/json no serializaba NINGUNO: la tabla 802.11r del front
 // (Roaming.tsx) pintaba la columna MAC siempre "-". Anti-regresión.
 func TestDot11rIfaceSerializesMAC(t *testing.T) {
-	raw, err := json.Marshal(Dot11rIface{SSID: "temiscira", MAC: "AA:BB:CC:DD:EE:FF"})
+	raw, err := json.Marshal(Dot11rIface{SSID: "temiscira", MAC: macaddr.MustParse("AA:BB:CC:DD:EE:FF")})
 	if err != nil {
 		t.Fatal(err)
 	}

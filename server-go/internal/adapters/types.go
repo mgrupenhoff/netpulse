@@ -16,6 +16,7 @@ import (
 	"net"
 	"strconv"
 
+	"github.com/gnacho/netpulse/agent/macaddr"
 	"github.com/gnacho/netpulse/server-go/internal/alerts"
 )
 
@@ -199,15 +200,15 @@ type WGWindow struct {
 // CPU/RAM/Temp son *int porque el live puede emitir null en el primer tick
 // (primera muestra de /proc/stat; SPEC §7.2 getCpuPercent).
 type Router struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Model      string `json:"model"`
-	ModelShort string `json:"modelShort"`
-	Role       string `json:"role"`
-	RoleBadge  string `json:"roleBadge"`
-	IP         string `json:"ip"`
-	MAC        string `json:"mac,omitempty"`      // ausente si no se conoce (undefined)
-	Firmware   string `json:"firmware,omitempty"` // ausente si no se conoce
+	ID         string      `json:"id"`
+	Name       string      `json:"name"`
+	Model      string      `json:"model"`
+	ModelShort string      `json:"modelShort"`
+	Role       string      `json:"role"`
+	RoleBadge  string      `json:"roleBadge"`
+	IP         string      `json:"ip"`
+	MAC        macaddr.MAC `json:"mac,omitzero"`       // ausente si no se conoce (undefined)
+	Firmware   string      `json:"firmware,omitempty"` // ausente si no se conoce
 	// FirmwareTarget: versión objetivo configurada por el admin (issue #241).
 	// Ausente si no está configurado (sin comprobación).
 	FirmwareTarget string `json:"firmwareTarget,omitempty"`
@@ -336,13 +337,13 @@ type Device struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	// NameSource: evidencia que produjo el nombre visible. Vacío = desconocida.
-	NameSource   string `json:"nameSource,omitempty"`
-	Type         string `json:"type"`
-	Manufacturer string `json:"manufacturer"`
-	IP           string `json:"ip"`
-	MAC          string `json:"mac"`
-	RouterID     string `json:"routerId"`
-	Band         string `json:"band"` // "5 GHz"|"2.4 GHz"|"cable"|"—"
+	NameSource   string      `json:"nameSource,omitempty"`
+	Type         string      `json:"type"`
+	Manufacturer string      `json:"manufacturer"`
+	IP           string      `json:"ip"`
+	MAC          macaddr.MAC `json:"mac"`
+	RouterID     string      `json:"routerId"`
+	Band         string      `json:"band"` // "5 GHz"|"2.4 GHz"|"cable"|"—"
 	// WifiIface/SSID (#1757): interfaz AP y red a la que esta asociado un
 	// cliente inalambrico. El agente los declara desde iw; vacios cuando la
 	// fuente no los expone. La topologia cruza WifiIface con el bridge VLAN
@@ -427,11 +428,11 @@ type Device struct {
 	LastSeenMs  int64 `json:"lastSeenMs,omitempty"`
 	// AliasMacs: MACs enlazadas a este cliente (#1151, mismo dispositivo con
 	// varias MACs - p. ej. una por SSID). Solo viaja en el canónico.
-	AliasMacs    []string `json:"aliasMacs,omitempty"`
-	Traffic24hRx string   `json:"traffic24hRx,omitempty"`
-	Traffic24hTx string   `json:"traffic24hTx,omitempty"`
-	Adguard      *bool    `json:"adguard,omitempty"` // puntero: demo emite true/false explícito; live lo omite (paridad Node)
-	Group        string   `json:"group,omitempty"`
+	AliasMacs    []macaddr.MAC `json:"aliasMacs,omitempty"`
+	Traffic24hRx string        `json:"traffic24hRx,omitempty"`
+	Traffic24hTx string        `json:"traffic24hTx,omitempty"`
+	Adguard      *bool         `json:"adguard,omitempty"` // puntero: demo emite true/false explícito; live lo omite (paridad Node)
+	Group        string        `json:"group,omitempty"`
 	// IsNew: el alta del registro device_seen (#954) es de hoy. Lo fijan
 	// applyDeviceSeen y ghostDevices leyendo first_seen; la app lo usa para el
 	// pill "Nuevo" y para el "+N hoy" de deviceTotals.newToday.
@@ -484,8 +485,8 @@ type DistributionNode struct {
 	// Mac: chassis-MAC del vecino cuando kind='managed' (SPEC-CANON D1). La
 	// app la usa para excluir del mapa el chip del Device del switch (que
 	// existe como Device Y como nodo managed, sin duplicar el render).
-	Mac  string    `json:"mac,omitempty"`
-	Lldp *LldpInfo `json:"lldp,omitempty"`
+	Mac  macaddr.MAC `json:"mac,omitzero"`
+	Lldp *LldpInfo   `json:"lldp,omitempty"`
 	// SpeedMbps: velocidad negociada del enlace por el que cuelga, cuando
 	// alguien la sabe de verdad (hoy: la boca del switch que reporta el
 	// controlador UniFi). 0 = no se conoce, y la UI escribe "—" en vez de
@@ -650,17 +651,17 @@ type UsteerOverview struct {
 // a un AP con mejor señal. Los campos siguen la convención del dominio:
 // señal en -dBm (más cercano a 0 = mejor).
 type ReanchorRecommendation struct {
-	MAC                 string `json:"mac"`
-	CurrentBSSID        string `json:"currentBssid"`
-	CurrentHostname     string `json:"currentHostname"`
-	CurrentIface        string `json:"currentIface"`
-	CurrentHost         string `json:"-"`
-	CurrentSignal       int    `json:"currentSignal"`
-	RecommendedBSSID    string `json:"recommendedBssid"`
-	RecommendedHostname string `json:"recommendedHostname"`
-	RecommendedIface    string `json:"recommendedIface"`
-	RecommendedSignal   int    `json:"recommendedSignal"`
-	DeltaDbm            int    `json:"deltaDbm"`
+	MAC                 macaddr.MAC `json:"mac"`
+	CurrentBSSID        macaddr.MAC `json:"currentBssid"`
+	CurrentHostname     string      `json:"currentHostname"`
+	CurrentIface        string      `json:"currentIface"`
+	CurrentHost         string      `json:"-"`
+	CurrentSignal       int         `json:"currentSignal"`
+	RecommendedBSSID    macaddr.MAC `json:"recommendedBssid"`
+	RecommendedHostname string      `json:"recommendedHostname"`
+	RecommendedIface    string      `json:"recommendedIface"`
+	RecommendedSignal   int         `json:"recommendedSignal"`
+	DeltaDbm            int         `json:"deltaDbm"`
 }
 
 // ReanchorConfig contiene los umbrales de la recomendación.
@@ -728,16 +729,16 @@ type EthPort struct {
 	// #1125: familia para interfaces NO físicas ("lag"|"vlan"|"bridge"|
 	// "tunnel"|"virtual"); vacío/ausente = boca física. El frontend las
 	// agrupa en la sección colapsada de la tarjeta de puertos.
-	Family      string   `json:"family,omitempty"`
-	RxBytes     uint64   `json:"rxBytes,omitempty"`
-	TxBytes     uint64   `json:"txBytes,omitempty"`
-	RxErrs      uint64   `json:"rxErrors,omitempty"`
-	TxErrs      uint64   `json:"txErrors,omitempty"`
-	RxBps       float64  `json:"rxBps,omitempty"`
-	TxBps       float64  `json:"txBps,omitempty"`
-	Sfp         *SfpInfo `json:"sfp,omitempty"`
-	ConnectedTo string   `json:"connectedTo,omitempty"`
-	DeviceMac   string   `json:"deviceMac,omitempty"`
+	Family      string      `json:"family,omitempty"`
+	RxBytes     uint64      `json:"rxBytes,omitempty"`
+	TxBytes     uint64      `json:"txBytes,omitempty"`
+	RxErrs      uint64      `json:"rxErrors,omitempty"`
+	TxErrs      uint64      `json:"txErrors,omitempty"`
+	RxBps       float64     `json:"rxBps,omitempty"`
+	TxBps       float64     `json:"txBps,omitempty"`
+	Sfp         *SfpInfo    `json:"sfp,omitempty"`
+	ConnectedTo string      `json:"connectedTo,omitempty"`
+	DeviceMac   macaddr.MAC `json:"deviceMac,omitzero"`
 	// DeviceCount > 0 indica agregación: hay N MACs detrás de la boca y no
 	// podemos nombrar un único par (hipervisor o switch). El cliente traduce
 	// con su i18n; el server NO pre-formatea (#1036).
@@ -765,8 +766,8 @@ type Radio struct {
 	Congested bool    `json:"congested,omitempty"` // solo demo
 	// #1213/#1206: ruido de la banda y BSSID de la interfaz AP (del agente o
 	// de iwinfo vía SSH). nil/vacío = el driver no los reporta.
-	NoiseDbm *int   `json:"noiseDbm,omitempty"`
-	BSSID    string `json:"bssid,omitempty"`
+	NoiseDbm *int        `json:"noiseDbm,omitempty"`
+	BSSID    macaddr.MAC `json:"bssid,omitzero"`
 }
 
 // Backhaul del AP (null en gateway): {kind:'cable', headline, latencyMs} o el
@@ -791,7 +792,69 @@ type FdbUplink struct {
 type FleetFdbProvider interface {
 	// FleetFdbUplinks: enlaces derivados del FDB de la unidad designada
 	// (#1186). infraID vacío o inexistente → vacío.
-	FleetFdbUplinks(infraID, infraMAC string) map[string]FdbUplink
+	FleetFdbUplinks(infraID string, infraMAC macaddr.MAC) map[string]FdbUplink
+}
+
+// DiscoveryMode es el modo de descubrimiento de clientes elegido para una red o
+// un dispositivo. Solo se guardan los explícitos (On, Off); ausente = Auto.
+type DiscoveryMode string
+
+const (
+	DiscoveryAuto DiscoveryMode = "auto"
+	DiscoveryOn   DiscoveryMode = "on"
+	DiscoveryOff  DiscoveryMode = "off"
+)
+
+// Explicit indica si el modo es un ajuste explícito (On u Off).
+func (m DiscoveryMode) Explicit() bool {
+	return m == DiscoveryOn || m == DiscoveryOff
+}
+
+// Resolve devuelve si con este modo los vecinos cuentan como clientes, dado lo
+// que vale Automático (auto) para esa fila.
+func (m DiscoveryMode) Resolve(auto bool) bool {
+	switch m {
+	case DiscoveryOn:
+		return true
+	case DiscoveryOff:
+		return false
+	}
+	return auto
+}
+
+// DiscoveryKind distingue las filas del panel de descubrimiento.
+type DiscoveryKind string
+
+const (
+	DiscoveryKindNetwork DiscoveryKind = "network" // red lógica de OpenWrt
+	DiscoveryKindDevice  DiscoveryKind = "device"  // dispositivo fuera de toda red
+)
+
+// DiscoveryOverrides guarda el modo explícito de descubrimiento de clientes por
+// red lógica de OpenWrt y por dispositivo Linux (On | Off; ausente = Auto).
+type DiscoveryOverrides struct {
+	Networks map[string]DiscoveryMode `json:"networks,omitempty"` // red -> modo
+	Devices  map[string]DiscoveryMode `json:"devices,omitempty"`  // dispositivo -> modo
+}
+
+// IsZero indica si no hay ningún override explícito guardado, para omitir el
+// campo al serializar a JSON con omitzero.
+func (d DiscoveryOverrides) IsZero() bool {
+	return len(d.Networks) == 0 && len(d.Devices) == 0
+}
+
+// DiscoveryIface describe el estado de descubrimiento de clientes en una red
+// lógica de OpenWrt o en un dispositivo Linux de respaldo para el detalle del
+// router (GET /api/routers/{id}).
+type DiscoveryIface struct {
+	Kind       DiscoveryKind `json:"kind"`
+	Name       string        `json:"name"`              // red o dispositivo
+	Devices    []string      `json:"devices,omitempty"` // solo kind=network
+	Up         *bool         `json:"up,omitempty"`      // solo kind=network
+	Mode       DiscoveryMode `json:"mode"`              // lo guardado
+	Auto       bool          `json:"auto"`
+	Effective  bool          `json:"effective"`
+	Neighbours int           `json:"neighbours"`
 }
 
 type RouterDetail struct {
@@ -813,6 +876,9 @@ type RouterDetail struct {
 	// the router never reported any; an empty uplink list = it reported
 	// and there is nothing to show, which is what removes the panel.
 	MultiWan *MultiWanInfo `json:"multiWan,omitempty"`
+	// Discovery: estado y override de descubrimiento de clientes por red lógica
+	// de OpenWrt (o dispositivo Linux de respaldo). nil si aún no hay sondeo.
+	Discovery []DiscoveryIface `json:"discovery,omitempty"`
 	// --- salud del sondeo SNMP (#930): solo routers sondeados por SNMP ---
 	// Contadores de éxito/fallo del poll SNMP por router (omitempty: ausente
 	// en routers que no se sondean por SNMP).
@@ -865,16 +931,16 @@ type WGTransfer struct {
 
 // DawnClient es un cliente visto por un AP en el hearing map de DAWN.
 type DawnClient struct {
-	MAC    string `json:"mac"`
-	Signal int    `json:"signal"` // -dBm (ej. -65)
-	HT     bool   `json:"ht"`
-	VHT    bool   `json:"vht"`
+	MAC    macaddr.MAC `json:"mac"`
+	Signal int         `json:"signal"` // -dBm (ej. -65)
+	HT     bool        `json:"ht"`
+	VHT    bool        `json:"vht"`
 }
 
 // DawnAP es un punto de acceso visto por DAWN.
 type DawnAP struct {
 	SSID           string       `json:"ssid"`
-	BSSID          string       `json:"bssid"`
+	BSSID          macaddr.MAC  `json:"bssid"`
 	Hostname       string       `json:"hostname"`
 	Band           string       `json:"band"` // freq >= 5000 ? "5 GHz" : "2.4 GHz"
 	Channel        int          `json:"channel"`
@@ -892,14 +958,14 @@ type DawnAP struct {
 // UsteerClient es un cliente WiFi conectado visto por usteer. Signal en -dBm
 // (más cercano a 0 = mejor).
 type UsteerClient struct {
-	MAC    string `json:"mac"`
-	Signal int    `json:"signal"` // -dBm (ej. -65)
+	MAC    macaddr.MAC `json:"mac"`
+	Signal int         `json:"signal"` // -dBm (ej. -65)
 }
 
 // UsteerAP es un punto de acceso visto por usteer (local o remoto).
 type UsteerAP struct {
 	SSID           string         `json:"ssid"`
-	BSSID          string         `json:"bssid"`
+	BSSID          macaddr.MAC    `json:"bssid"`
 	Hostname       string         `json:"hostname"`
 	Band           string         `json:"band"`           // freq >= 5000 ? "5 GHz" : "2.4 GHz"
 	Freq           int            `json:"freq"`           // MHz
@@ -932,13 +998,13 @@ type Usteer struct {
 // relevantes para 802.11r (FT) y sus estándares compañeros (k/v/w) que together
 // habilitan el roaming suave en una malla DAWN/hostapd.
 type Dot11rIface struct {
-	Section string `json:"section"` // uci section name (wifi2g, wifi5g, guest, ...)
-	Device  string `json:"device"`  // radio0, radio1
-	Ifname  string `json:"ifname"`  // wlan0, wlan1 (puede estar vacío en configs muy nuevas)
-	SSID    string `json:"ssid"`
-	MAC     string `json:"mac"`               // macaddr (BSSID del BSS)
-	Channel int    `json:"channel,omitempty"` // mapeado desde radio.channel
-	Band    string `json:"band,omitempty"`    // "2.4 GHz"|"5 GHz" desde radio.band
+	Section string      `json:"section"` // uci section name (wifi2g, wifi5g, guest, ...)
+	Device  string      `json:"device"`  // radio0, radio1
+	Ifname  string      `json:"ifname"`  // wlan0, wlan1 (puede estar vacío en configs muy nuevas)
+	SSID    string      `json:"ssid"`
+	MAC     macaddr.MAC `json:"mac"`               // macaddr (BSSID del BSS)
+	Channel int         `json:"channel,omitempty"` // mapeado desde radio.channel
+	Band    string      `json:"band,omitempty"`    // "2.4 GHz"|"5 GHz" desde radio.band
 
 	// Network es la red del bridge a la que pertenece la iface (lan/guest/iot...)
 	// y Disabled si la iface está desactivada (#541): las redes invitadas/iot y
@@ -1096,7 +1162,10 @@ type RouterConfig struct {
 	// o "ssh" (nunca esperar agente: inventario por SSH, sin alerta de caida
 	// del agente). Derivado de agent_only cuando la fila es anterior.
 	InventoryMode string `json:"inventory_mode,omitempty"`
-	CreatedAt     int64  `json:"created_at"` // epoch ms
+	// DiscoveryOverrides: modo de descubrimiento de clientes por red lógica y
+	// por dispositivo Linux ("on" | "off"; ausente = "auto").
+	DiscoveryOverrides DiscoveryOverrides `json:"discovery_overrides,omitzero"`
+	CreatedAt          int64              `json:"created_at"` // epoch ms
 	// FirmwareTarget: versión objetivo configurada por el admin (issue #241).
 	// "" = sin comprobar (el live no emite aviso de firmware).
 	FirmwareTarget string `json:"firmware_target,omitempty"`
@@ -1219,7 +1288,7 @@ type Snapshotter interface {
 	// DismissUnknownDevice silencia la alerta de "dispositivo desconocido"
 	// para una MAC (#772 "dejar como anónimo"): la marca como ya avisada en
 	// memoria y en kv (sobrevive a reinicios). En demo es no-op.
-	DismissUnknownDevice(mac string)
+	DismissUnknownDevice(mac macaddr.MAC)
 	// GetAlerts lista las alertas (más recientes primero, máx 100).
 	GetAlerts(ctx context.Context) []AlertEvent
 	// AlertsEngine expone el motor de alertas (SPEC-ALERTAS §3): config,
@@ -1232,7 +1301,7 @@ type Snapshotter interface {
 	GetUsteer(ctx context.Context) (*Usteer, error)
 	// KickUsteerClient desconecta un cliente de su AP usteer actual.
 	// Devuelve error si no se encuentra o falla el comando hostapd.
-	KickUsteerClient(ctx context.Context, mac string) error
+	KickUsteerClient(ctx context.Context, mac macaddr.MAC) error
 	// GetReanchorRecommendations devuelve recomendaciones de re-anclaje WiFi
 	// basadas en usteer (preferido) o DAWN, o (slice vacío, "none", nil) si
 	// ningún daemon está disponible.
@@ -1262,7 +1331,7 @@ type NetworkInfo struct {
 	Ports  []string `json:"ports,omitempty"`
 	// ClientMacs (#1942): clientes atribuidos a esta red por puerto FDB, VLAN
 	// observada o wifi-iface declarada. Ausente = ninguno atribuible, no "0".
-	ClientMacs []string `json:"clientMacs,omitempty"`
-	RxBps      float64  `json:"rxBps,omitempty"`
-	TxBps      float64  `json:"txBps,omitempty"`
+	ClientMacs []macaddr.MAC `json:"clientMacs,omitempty"`
+	RxBps      float64       `json:"rxBps,omitempty"`
+	TxBps      float64       `json:"txBps,omitempty"`
 }
